@@ -1,0 +1,9 @@
+[target.'cfg(all())']
+rustflags = ["-Zshare-generics=y"]
+
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold"]
+
+[target.'cfg(target_os = "windows")']
+linker = "rust-lld.exe"

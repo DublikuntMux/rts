@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["android"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+[package]
+name = "rts"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy = "0.20.0"
+log = "0.4.34"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
