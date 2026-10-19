@@ -1,3 +1,0 @@
-[watch]
-# The Gradle project's build output would otherwise trigger rebuilds.
-ignore = ["android"]

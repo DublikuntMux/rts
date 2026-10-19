@@ -3,8 +3,8 @@ plugins {
 }
 
 val minSdkVersion = 31
-// Rust targets are built for each ABI listed here.
 val abis = listOf("arm64-v8a", "x86_64")
+val abiTargets = mapOf("arm64-v8a" to "aarch64-linux-android", "x86_64" to "x86_64-linux-android")
 
 android {
     namespace = "cudzinec.rts"
@@ -34,6 +34,10 @@ android {
         }
     }
 
+    androidResources {
+        noCompress += "pack"
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -50,6 +54,9 @@ dependencies {
 abstract class CargoNdkTask : Exec() {
     @get:OutputDirectory
     abstract val jniLibsDir: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val assetsDir: DirectoryProperty
 }
 
 val ndkDirectory = androidComponents.sdkComponents.ndkDirectory
@@ -62,6 +69,7 @@ androidComponents {
             description = "Builds the Rust library for ${variant.name}."
             workingDir = rootDir
             jniLibsDir.set(layout.buildDirectory.dir("rustJniLibs/${variant.name}"))
+            assetsDir.set(layout.buildDirectory.dir("rustAssets/${variant.name}"))
             // Cargo tracks its own inputs, so always let it decide what to rebuild.
             outputs.upToDateWhen { false }
             doFirst {
@@ -74,7 +82,13 @@ androidComponents {
                         (if (release) listOf("--release") else emptyList())
                 )
             }
+            doLast {
+                val profile = if (release) "release" else "debug"
+                rootDir.resolve("../target/${abiTargets.getValue(abis.first())}/$profile/assets.pack")
+                    .copyTo(assetsDir.get().file("assets.pack").asFile, overwrite = true)
+            }
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoTask, CargoNdkTask::jniLibsDir)
+        variant.sources.assets?.addGeneratedSourceDirectory(cargoTask, CargoNdkTask::assetsDir)
     }
 }

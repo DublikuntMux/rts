@@ -1,0 +1,10 @@
+[watch]
+ignore = ["android"]
+
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = [
+    "-c",
+    "cp \"$TRUNK_SOURCE_DIR/target/wasm32-unknown-unknown/$TRUNK_PROFILE/assets.pack\" \"$TRUNK_STAGING_DIR/\"",
+]

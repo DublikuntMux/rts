@@ -9,6 +9,10 @@ edition = "2024"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+# Bevy systems take `Res`, `Query`, etc. by value.
+needless_pass_by_value = "allow"
+# Too many arguments are OK for Bevy systems.
+too_many_arguments = "allow"
 
 [package]
 name = "rts"
@@ -20,8 +24,15 @@ workspace = true
 
 [dependencies]
 bevy = "0.20.0"
+bevy_asset_packer = "0.5.0"
 log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+
+[build-dependencies]
+bevy_asset_packer = { version = "0.5.0", default-features = false }
 
 [profile.dev.package."*"]
 opt-level = 3
