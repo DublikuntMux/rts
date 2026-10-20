@@ -8,10 +8,10 @@ const PLAYER: PlayerId = PlayerId(0);
 
 fn sim(tiles: &[&str], start: IVec2, speed: &str) -> Sim {
     let rules = Rules::from_ron(&format!(
-        r##"(terrain: [
+        r##"(tile_capacity: 4, terrain: [
             (id: "grass", symbol: '.', walkable: true, color: "#ffffff"),
             (id: "rock", symbol: '#', walkable: false, color: "#000000"),
-        ], units: [(id: "worker", max_health: 40, radius: 0.3, speed: {speed})])"##
+        ], units: [(id: "worker", size: 1, max_health: 40, radius: 0.3, speed: {speed})])"##
     ))
     .unwrap();
     Sim::new(
