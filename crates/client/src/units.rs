@@ -1,10 +1,10 @@
 //! Unit rendering from simulation state.
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use rts_base::{PlayerId, UnitId, UnitKind};
+use rts_base::{IVec2 as SimPos, PlayerId, UnitId, UnitKind};
 
 use crate::{
-    game::{AppState, Match},
+    game::{AppState, Match, PreviousPositions},
     map::{to_world, to_world_distance},
 };
 
@@ -53,6 +53,8 @@ struct UnitVisuals {
 fn sync_units(
     mut commands: Commands,
     game: Res<Match>,
+    previous: Res<PreviousPositions>,
+    fixed: Res<Time<Fixed>>,
     mut visuals: ResMut<UnitVisuals>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -64,7 +66,12 @@ fn sync_units(
         materials: material_cache,
     } = &mut *visuals;
     for (id, unit) in game.sim.units() {
-        let translation = to_world(unit.pos).extend(UNIT_Z);
+        let translation = interpolated_position(
+            previous.0.get(&id).copied(),
+            unit.pos,
+            fixed.overstep_fraction(),
+        )
+        .extend(UNIT_Z);
         if let Some(&entity) = entities.get(&id) {
             if let Ok(mut transform) = transforms.get_mut(entity) {
                 transform.translation = translation;
@@ -95,4 +102,51 @@ fn sync_units(
         }
         alive
     });
+}
+
+fn interpolated_position(previous: Option<SimPos>, current: SimPos, alpha: f32) -> Vec2 {
+    to_world(previous.unwrap_or(current)).lerp(to_world(current), alpha.clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use rts_base::{Command, MapData, Rules, Sim, TILE};
+
+    use super::*;
+
+    #[test]
+    fn interpolates_tick_snapshots_without_changing_simulation() {
+        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "interpolation", players: [(start: (0.5,0.5))],
+            tiles: ["...."], units: [(kind:"worker",owner:0,pos:(0.5,0.5))])"#,
+        )
+        .unwrap();
+        let mut sim = Sim::new(rules, &map).unwrap();
+        let id = UnitId(0);
+        sim.queue_command(
+            PlayerId(0),
+            Command::Move {
+                units: vec![id],
+                target: SimPos::new(3 * TILE, TILE / 2),
+            },
+        );
+        sim.step();
+        let start = sim.unit(id).unwrap().pos;
+        sim.step();
+        let end = sim.unit(id).unwrap().pos;
+        assert_ne!(start, end);
+        let hash = sim.state_hash();
+        assert_eq!(
+            interpolated_position(Some(start), end, 0.0),
+            to_world(start)
+        );
+        assert_eq!(
+            interpolated_position(Some(start), end, 0.5),
+            (to_world(start) + to_world(end)) / 2.0
+        );
+        assert_eq!(interpolated_position(Some(start), end, 1.0), to_world(end));
+        assert_eq!(interpolated_position(None, end, 0.0), to_world(end));
+        assert_eq!(sim.state_hash(), hash);
+    }
 }

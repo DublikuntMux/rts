@@ -1,7 +1,9 @@
 //! Match lifecycle: load data, start the simulation, and run it at the fixed tick rate.
 
+use std::collections::BTreeMap;
+
 use bevy::prelude::*;
-use rts_base::{PlayerId, Sim, TICK_RATE};
+use rts_base::{IVec2 as SimPos, PlayerId, Sim, TICK_RATE, UnitId};
 
 use rts_assets::{MapAsset, RulesAsset};
 
@@ -23,11 +25,16 @@ pub struct Match {
     pub local_player: PlayerId,
 }
 
+/// Presentation-only positions immediately before the latest simulated tick.
+#[derive(Resource, Default)]
+pub struct PreviousPositions(pub BTreeMap<UnitId, SimPos>);
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
+            .init_resource::<PreviousPositions>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(TICK_RATE)))
             .add_systems(Startup, load_match_data)
             .add_systems(Update, start_match.run_if(resource_exists::<PendingMatch>))
@@ -77,6 +84,10 @@ fn start_match(
     }
 }
 
-fn step(mut game: ResMut<Match>) {
+fn step(mut game: ResMut<Match>, mut previous: ResMut<PreviousPositions>) {
+    previous.0.clear();
+    previous
+        .0
+        .extend(game.sim.units().map(|(id, unit)| (id, unit.pos)));
     game.sim.step();
 }

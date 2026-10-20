@@ -80,6 +80,7 @@ Rules for code in `rts_base` (enforced partly by lints, see `crates/base/src/lib
 - Only a unit's owner may command it. Missing IDs, invalid players, blocked/out-of-map targets, and unreachable destinations are ignored; an invalid replacement preserves the existing order.
 - Four-neighbor grid A* uses integer costs with ties resolved by remaining distance and row-major tile index. Routes visit tile centers, including the starting tile center, then the precise destination. This prevents arbitrary starts from cutting blocked corners.
 - Unit `speed` is required, positive, and written in tiles/second. Movement uses integer per-tick budgets with remainders and fixed segment origins, so low speeds make progress without truncation drift. Queued commands, routes, segment progress, and speed remainders are included in the state hash.
+- The client snapshots unit positions before each simulation step and interpolates the latest two snapshots using Bevy's fixed-clock overstep fraction. Rendering, selection hit tests, and selection rings use the displayed positions. Presentation state never changes the deterministic simulation or its hash.
 - M2 tests walkability of unit centers. Radius-aware clearance, unit separation, formations, and large-group pathfinding remain M10.
 
 ### Networking plan (M3)
@@ -147,12 +148,13 @@ Bevy app for desktop/web/Android, asset packing, RTS camera (keyboard/edge/drag 
 - Terrain rendering: the client loads terrain textures from the asset pack and assembles one texture array in `TerrainId` order, preserving the single-draw-call tilemap. Types without a texture use their color. A separate 1×1-per-layer palette keeps the original colors for the future minimap and distant zoom. Below 40 logical screen pixels per tile, terrain switches to flat colors; above 48 it switches back to textures (hysteresis). The minimap remains M9.
 - Notes: terrain colors live in a generated tileset (`map::terrain_colors`). Bevy's tilemap shader treats `TileData::color` tints as linear, which washes colors out, so don't use tints for terrain color.
 
-### 🚧 M2 — Commands, selection, movement
+### ✅ M2 — Commands, selection, movement
 - ✅ Move/stop commands, per-tick queue with local input delay, ownership validation and deterministic hashing.
 - ✅ Deterministic grid A* on walkable terrain and integer movement with required speeds in rules.
 - ✅ Selection: click/tap, box select, two-finger pan, selection markers, touch command bar.
-- ⬜ Render interpolation between ticks and end-to-end verification.
+- ✅ Render interpolation between ticks and end-to-end verification.
 - Done when: units can be selected and moved around obstacles on mouse and touch.
+- Verified: 46 workspace tests, workspace Clippy, wasm32 check, Android arm64 check. A native GPU check at 320 logical pixels wide injected touch/window events through Bevy and verified selection, movement, HUD Stop before arrival, Clear, and the rendered selection rings and responsive HUD. Touch drag, pinch cancellation, desktop selection, delayed orders, and obstacle routing also have automated tests. This did not run on an Android device.
 
 ### ⬜ M3 — Multiplayer
 - Relay server crate (WebSocket), lobby (create/join by code), lockstep turn exchange, input delay, setup checksum, desync detection via state hash, disconnect handling.
