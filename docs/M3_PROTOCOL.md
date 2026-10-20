@@ -1,6 +1,6 @@
-# M3 implementation contract
+# Multiplayer protocol
 
-This document fixes the shared interfaces while the protocol, relay and client are built.
+Shared interfaces for the protocol, relay and client.
 
 - `rts_net` depends on base, serde, RON and thiserror. Wire messages are RON text, protocol version 1. No renderer or socket dependency in the protocol.
 - `MatchSetup { rules: String, map: String, seed: u64, players: u8 }` stores original RON content. `checksum() -> u64` includes content, seed, slot count and protocol version with explicit lengths; `simulation() -> Result<Sim, NetError>` validates content and exact map player count.
@@ -15,3 +15,5 @@ This document fixes the shared interfaces while the protocol, relay and client a
 - Replay `Replay { version: u32, setup: MatchSetup, turns: Vec<Turn>, final_hash: u64 }`. `Replay::new(setup)` validates setup and initializes hash from tick zero. `push(&mut self, turn: Turn, hash: u64)` validates continuity. `to_ron`, `from_ron`, `playback() -> Result<Sim, NetError>` reject invalid version, setup, turn order/players, oversized inputs, or a final hash mismatch. The client records every applied turn, offline and online, and can replay the latest recording without a socket.
 - Networking: ewebsock 0.8 (default features disabled) in client, Tokio/tokio-tungstenite with TLS features disabled in the relay. Native uses `ws://`; the browser also supports `wss://` through its platform WebSocket. For TLS termination use a reverse proxy; native WSS is not enabled because the standard Rustls providers add C/assembly crypto dependencies. Document this limit; do not claim native WSS support.
 - Server socket runtime is native-only. The server crate builds a no-network stub on wasm, while its protocol is cross-platform. All dependency versions are centralized in workspace.dependencies; crate deps use workspace inheritance.
+- Limits also apply to persisted data: 4 MiB per setup RON field, 32 MiB per replay, and one million recorded turns. Wire and replay RON nesting is bounded to 64 levels. Embedded rules/maps use the base parser's 128-level bound. The command limit applies to each player's batch; an eight-player turn may contain 512 commands.
+- The seed participates in the setup checksum but is reserved until simulation randomness is introduced.

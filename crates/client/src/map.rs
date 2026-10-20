@@ -54,7 +54,8 @@ impl Plugin for MapPlugin {
             .add_systems(
                 PostUpdate,
                 update_terrain_detail.run_if(resource_exists::<TerrainTilesets>),
-            );
+            )
+            .add_systems(OnExit(AppState::InGame), clear_map);
     }
 }
 
@@ -105,6 +106,7 @@ fn spawn_terrain(
         })
         .collect();
     commands.spawn((
+        DespawnOnExit(AppState::InGame),
         TerrainChunk,
         TilemapChunk {
             chunk_size,
@@ -121,6 +123,12 @@ fn spawn_terrain(
     });
     commands.insert_resource(PendingTerrainTextures(textures));
     commands.insert_resource(MapBounds(bounds));
+}
+
+fn clear_map(mut commands: Commands) {
+    commands.remove_resource::<MapBounds>();
+    commands.remove_resource::<TerrainTilesets>();
+    commands.remove_resource::<PendingTerrainTextures>();
 }
 
 /// One solid-color 1x1 layer per terrain type, indexed by `TerrainId`.

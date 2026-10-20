@@ -10,11 +10,11 @@ use rts_base::{LoadError, MapData, Rules};
 
 /// A `*.rules.ron` file.
 #[derive(Asset, TypePath)]
-pub struct RulesAsset(pub Rules);
+pub struct RulesAsset(pub Rules, pub String);
 
 /// A `*.map.ron` file.
 #[derive(Asset, TypePath)]
-pub struct MapAsset(pub MapData);
+pub struct MapAsset(pub MapData, pub String);
 
 pub struct DataPlugin;
 
@@ -38,7 +38,7 @@ impl RonAsset for RulesAsset {
     const EXTENSION: &'static str = "rules.ron";
 
     fn parse(text: &str) -> Result<Self, LoadError> {
-        Rules::from_ron(text).map(Self)
+        Rules::from_ron(text).map(|rules| Self(rules, text.to_owned()))
     }
 }
 
@@ -46,7 +46,7 @@ impl RonAsset for MapAsset {
     const EXTENSION: &'static str = "map.ron";
 
     fn parse(text: &str) -> Result<Self, LoadError> {
-        MapData::from_ron(text).map(Self)
+        MapData::from_ron(text).map(|map| Self(map, text.to_owned()))
     }
 }
 

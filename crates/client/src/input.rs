@@ -13,6 +13,7 @@ use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
     hud::HUD_HEIGHT,
+    lobby::SESSION_BAR_HEIGHT,
     map::{TILE_PX, to_world_distance},
     units::{SyncUnits, UnitVisual},
 };
@@ -28,12 +29,9 @@ pub struct Selection {
 impl Selection {
     pub fn stop(&self, game: &mut Match) {
         if !self.units.is_empty() {
-            game.sim.queue_command(
-                game.local_player,
-                Command::Stop {
-                    units: self.units.iter().copied().collect(),
-                },
-            );
+            game.queue_command(Command::Stop {
+                units: self.units.iter().copied().collect(),
+            });
         }
     }
 }
@@ -55,8 +53,14 @@ impl Plugin for SelectionPlugin {
             .add_systems(
                 PostUpdate,
                 draw_selection.run_if(in_state(AppState::InGame)),
-            );
+            )
+            .add_systems(OnExit(AppState::InGame), reset_pointer);
     }
+}
+
+fn reset_pointer(mut pointer: ResMut<PointerState>, mut feedback: ResMut<OrderFeedback>) {
+    *pointer = PointerState::default();
+    feedback.0 = None;
 }
 
 #[derive(Clone, Copy)]
@@ -160,7 +164,7 @@ impl ScreenView {
     }
 
     fn playable(&self, screen: Vec2) -> bool {
-        screen.cmpge(Vec2::ZERO).all()
+        screen.cmpge(Vec2::new(0.0, SESSION_BAR_HEIGHT)).all()
             && screen.x < self.size.x
             && screen.y < self.size.y - HUD_HEIGHT
     }
@@ -362,13 +366,10 @@ fn issue_move(
     let walkable = game.sim.terrain().is_walkable(target, game.sim.rules());
     feedback.0 = Some((position, walkable, now));
     if walkable {
-        game.sim.queue_command(
-            game.local_player,
-            Command::Move {
-                units: selection.units.iter().copied().collect(),
-                target,
-            },
-        );
+        game.queue_command(Command::Move {
+            units: selection.units.iter().copied().collect(),
+            target,
+        });
     }
 }
 
@@ -475,10 +476,7 @@ mod tests {
         let sim = Sim::new(rules, &map).unwrap();
         let mut app = App::new();
         app.insert_resource(Time::<()>::default())
-            .insert_resource(Match {
-                sim,
-                local_player: PlayerId(0),
-            })
+            .insert_resource(Match::new(sim, PlayerId(0), true))
             .init_resource::<Selection>()
             .init_resource::<PointerState>()
             .init_resource::<OrderFeedback>()
@@ -588,16 +586,21 @@ mod tests {
     }
 
     #[test]
-    fn right_click_moves_and_x_stops_through_delayed_queue() {
+    fn right_click_and_x_queue_orders_without_changing_simulation() {
         let mut app = test_app();
         click(&mut app, Vec2::new(336.0, 236.0));
         mouse_event(&mut app, Vec2::new(400.0, 300.0), MouseButton::Right, true);
         {
             let mut game = app.world_mut().resource_mut::<Match>();
-            for _ in 0..rts_base::INPUT_DELAY_TICKS {
-                game.sim.step();
-            }
-            assert!(game.sim.move_target(UnitId(0)).is_some());
+            assert_eq!(game.sim.tick(), 0);
+            assert_eq!(
+                game.pending,
+                vec![Command::Move {
+                    units: vec![UnitId(0)],
+                    target: SimPos::splat(2 * rts_base::TILE)
+                }]
+            );
+            game.pending.clear();
         }
         app.world_mut()
             .resource_mut::<ButtonInput<MouseButton>>()
@@ -606,10 +609,13 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyX);
         app.update();
-        let mut game = app.world_mut().resource_mut::<Match>();
-        for _ in 0..rts_base::INPUT_DELAY_TICKS {
-            game.sim.step();
-        }
+        let game = app.world().resource::<Match>();
+        assert_eq!(
+            game.pending,
+            vec![Command::Stop {
+                units: vec![UnitId(0)]
+            }]
+        );
         assert_eq!(game.sim.move_target(UnitId(0)), None);
     }
 
@@ -623,14 +629,14 @@ mod tests {
         );
         tap(&mut app, Vec2::new(400.0, 300.0));
         {
-            let mut game = app.world_mut().resource_mut::<Match>();
+            let game = app.world().resource::<Match>();
             assert_eq!(game.sim.move_target(UnitId(0)), None);
-            for _ in 0..rts_base::INPUT_DELAY_TICKS {
-                game.sim.step();
-            }
             assert_eq!(
-                game.sim.move_target(UnitId(0)),
-                Some(SimPos::splat(2 * rts_base::TILE))
+                game.pending,
+                vec![Command::Move {
+                    units: vec![UnitId(0)],
+                    target: SimPos::splat(2 * rts_base::TILE)
+                }]
             );
         }
         let hash = app.world().resource::<Match>().sim.state_hash();

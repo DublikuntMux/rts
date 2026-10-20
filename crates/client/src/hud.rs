@@ -276,9 +276,10 @@ fn update_selection_text(
 fn update_button_availability(
     mut commands: Commands,
     selection: Res<Selection>,
+    game: Res<Match>,
     buttons: Query<(Entity, Has<InteractionDisabled>), With<NeedsSelection>>,
 ) {
-    let disable = selection.units.is_empty();
+    let disable = selection.units.is_empty() || !game.accepts_orders;
     for (entity, disabled) in &buttons {
         if disable && !disabled {
             commands.entity(entity).insert(InteractionDisabled);

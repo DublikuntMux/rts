@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use rts_base::{IVec2 as SimPos, PlayerId, Sim, TICK_RATE, UnitId};
+use rts_base::{Command, IVec2 as SimPos, PlayerId, Sim, TICK_RATE, UnitId};
+use rts_net::{MAX_COMMANDS_PER_TURN, MatchSetup};
 
 use rts_assets::{MapAsset, RulesAsset};
 
@@ -14,6 +15,7 @@ const MAP: &str = "maps/proving_grounds.map.ron";
 pub enum AppState {
     #[default]
     Loading,
+    Menu,
     InGame,
 }
 
@@ -23,7 +25,30 @@ pub struct Match {
     pub sim: Sim,
     /// The player this client controls.
     pub local_player: PlayerId,
+    pub accepts_orders: bool,
+    pub pending: Vec<Command>,
 }
+
+impl Match {
+    pub const fn new(sim: Sim, local_player: PlayerId, accepts_orders: bool) -> Self {
+        Self {
+            sim,
+            local_player,
+            accepts_orders,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Collects input for the next delayed local/network batch, never applying it optimistically.
+    pub fn queue_command(&mut self, command: Command) {
+        if self.accepts_orders && self.pending.len() < MAX_COMMANDS_PER_TURN {
+            self.pending.push(command);
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct MatchData(pub MatchSetup);
 
 /// Presentation-only positions immediately before the latest simulated tick.
 #[derive(Resource, Default)]
@@ -37,8 +62,7 @@ impl Plugin for GamePlugin {
             .init_resource::<PreviousPositions>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(TICK_RATE)))
             .add_systems(Startup, load_match_data)
-            .add_systems(Update, start_match.run_if(resource_exists::<PendingMatch>))
-            .add_systems(FixedUpdate, step.run_if(in_state(AppState::InGame)));
+            .add_systems(Update, start_match.run_if(resource_exists::<PendingMatch>));
     }
 }
 
@@ -67,27 +91,17 @@ fn start_match(
         return;
     };
     commands.remove_resource::<PendingMatch>();
-    match Sim::new(rules.0.clone(), &map.0) {
-        Ok(sim) => {
-            info!(
-                "starting `{}` with {} units",
-                map.0.name,
-                sim.units().count()
-            );
-            commands.insert_resource(Match {
-                sim,
-                local_player: PlayerId(0),
-            });
-            next_state.set(AppState::InGame);
+    let setup = MatchSetup {
+        rules: rules.1.clone(),
+        map: map.1.clone(),
+        seed: 0,
+        players: u8::try_from(map.0.players.len()).unwrap_or(0),
+    };
+    match setup.simulation() {
+        Ok(_) => {
+            commands.insert_resource(MatchData(setup));
+            next_state.set(AppState::Menu);
         }
         Err(error) => error!("cannot start `{MAP}`: {error}"),
     }
-}
-
-fn step(mut game: ResMut<Match>, mut previous: ResMut<PreviousPositions>) {
-    previous.0.clear();
-    previous
-        .0
-        .extend(game.sim.units().map(|(id, unit)| (id, unit.pos)));
-    game.sim.step();
 }

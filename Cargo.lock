@@ -5075,6 +5075,8 @@ dependencies = [
  "rts_assets",
  "rts_base",
  "rts_net",
+ "rts_server",
+ "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

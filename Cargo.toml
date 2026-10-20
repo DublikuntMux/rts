@@ -28,6 +28,7 @@ rts_assets = { path = "crates/assets" }
 rts_base = { path = "crates/base" }
 rts_client = { path = "crates/client" }
 rts_net = { path = "crates/net" }
+rts_server = { path = "crates/server" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

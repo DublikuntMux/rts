@@ -32,12 +32,14 @@ pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UnitVisuals>().add_systems(
-            Update,
-            sync_units
-                .in_set(SyncUnits)
-                .run_if(in_state(AppState::InGame)),
-        );
+        app.init_resource::<UnitVisuals>()
+            .add_systems(
+                Update,
+                sync_units
+                    .in_set(SyncUnits)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(OnExit(AppState::InGame), clear_units);
     }
 }
 
@@ -87,6 +89,7 @@ fn sync_units(
         });
         let entity = commands
             .spawn((
+                DespawnOnExit(AppState::InGame),
                 UnitVisual(id),
                 Mesh2d(mesh.clone()),
                 MeshMaterial2d(material.clone()),
@@ -102,6 +105,10 @@ fn sync_units(
         }
         alive
     });
+}
+
+fn clear_units(mut visuals: ResMut<UnitVisuals>) {
+    *visuals = UnitVisuals::default();
 }
 
 fn interpolated_position(previous: Option<SimPos>, current: SimPos, alpha: f32) -> Vec2 {
