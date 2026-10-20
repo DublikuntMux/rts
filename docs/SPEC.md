@@ -98,7 +98,7 @@ AI is a virtual player that issues ordinary commands. It runs on one machine (th
 
 ### Data formats
 
-- Rules: `assets/data/core.rules.ron`, with terrain types (`id`, map `symbol`, `walkable`, display `color`) and unit types (`id`, `max_health`, `radius` in tiles).
+- Rules: `assets/data/core.rules.ron`, with terrain types (`id`, map `symbol`, `walkable`, strategic/minimap `color`, optional `texture` asset path) and unit types (`id`, `max_health`, `radius` in tiles). Terrain textures are equally sized square images; the bundled tiles are 128×128 PNGs in `assets/textures/terrain/`. Textures are presentation data only.
 - Maps: `assets/maps/*.map.ron`, with `name`, `players` (start positions), `tiles` (rows of terrain symbols, top to bottom), and `units` (pre-placed units: kind, owner index, position in tiles). M6 adds regions and a `script` path. M7 makes the editor write the same format.
 - Distances and positions in data files are written in tiles (decimals allowed) and converted to world units on load.
 - Data is validated on load: unknown symbols/kinds, ragged rows, out-of-bounds or unwalkable placements, and duplicate IDs are errors.
@@ -136,7 +136,8 @@ Bevy app for desktop/web/Android, asset packing, RTS camera (keyboard/edge/drag 
 - Client: RON asset loaders, loading → in-game state, terrain rendered from map data (`TilemapChunk`), units rendered from sim state, camera bounded by the map and starting at the local player's start.
 - Sample content: `core.rules.ron`, `proving_grounds.map.ron`.
 - Done when: the game opens on the sample map with pre-placed units on desktop and web, and `cargo test -p rts_base` passes (including validation and hash tests).
-- Notes: terrain colors live in a generated tileset with one layer per terrain type (`map::terrain_tileset`). Bevy's tilemap shader treats `TileData::color` tints as linear, which washes colors out, so don't use tints for terrain color.
+- Terrain rendering: the client loads terrain textures from the asset pack and assembles one texture array in `TerrainId` order, preserving the single-draw-call tilemap. Types without a texture use their color. A separate 1×1-per-layer palette keeps the original colors for the future minimap and distant zoom. Below 40 logical screen pixels per tile, terrain switches to flat colors; above 48 it switches back to textures (hysteresis). The minimap remains M9.
+- Notes: terrain colors live in a generated tileset (`map::terrain_colors`). Bevy's tilemap shader treats `TileData::color` tints as linear, which washes colors out, so don't use tints for terrain color.
 
 ### 🚧 M2 — Commands, selection, movement (next)
 - `Command` type (move/stop), a per-tick command queue with input delay (local loopback for now).

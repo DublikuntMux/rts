@@ -19,8 +19,11 @@ pub struct TerrainDef {
     /// Character that stands for this terrain in map files.
     pub symbol: char,
     pub walkable: bool,
-    /// Display color as `#rrggbb`. Only the client reads it.
+    /// Minimap and distant-zoom color as `#rrggbb`. Only the client reads it.
     pub color: String,
+    /// Optional square terrain texture in the asset pack. Only the client reads it.
+    #[serde(default)]
+    pub texture: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
