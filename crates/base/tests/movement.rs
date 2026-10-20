@@ -9,8 +9,8 @@ const PLAYER: PlayerId = PlayerId(0);
 fn sim(tiles: &[&str], start: IVec2, speed: &str) -> Sim {
     let rules = Rules::from_ron(&format!(
         r##"(tile_capacity: 4, terrain: [
-            (id: "grass", symbol: '.', walkable: true, color: "#ffffff"),
-            (id: "rock", symbol: '#', walkable: false, color: "#000000"),
+            (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#ffffff"),
+            (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#000000"),
         ], units: [(id: "worker", size: 1, max_health: 40, radius: 0.3, speed: {speed})])"##
     ))
     .unwrap();
@@ -89,7 +89,7 @@ fn astar_uses_the_shortest_route_and_breaks_equal_cost_ties_by_tile_index() {
     ] {
         sim.step();
         assert_eq!(pos(&sim), expected);
-        assert!(sim.terrain().is_walkable(pos(&sim), sim.rules()));
+        assert!(sim.terrain().speed_modifier(pos(&sim), sim.rules()) > 0);
     }
     assert_eq!(sim.move_target(UNIT), None);
 }
@@ -106,7 +106,7 @@ fn arbitrary_start_visits_its_center_before_neighbor_centers() {
     assert_eq!(tile_of(pos(&sim)), tile_of(start));
     for _ in 0..150 {
         sim.step();
-        assert!(sim.terrain().is_walkable(pos(&sim), sim.rules()));
+        assert!(sim.terrain().speed_modifier(pos(&sim), sim.rules()) > 0);
     }
     assert_eq!(pos(&sim), target);
 }
@@ -245,7 +245,7 @@ fn ordered_replay_matches_hashes_through_moves_replacements_and_stops() {
         a.step();
         b.step();
         assert_eq!(a.state_hash(), b.state_hash());
-        assert!(a.terrain().is_walkable(pos(&a), a.rules()));
+        assert!(a.terrain().speed_modifier(pos(&a), a.rules()) > 0);
     }
     assert_eq!(pos(&a), center(4, 0));
 }

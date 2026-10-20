@@ -10,8 +10,8 @@ const MOVER: UnitId = UnitId(0);
 fn rules(speed: &str) -> Rules {
     Rules::from_ron(&format!(
         r##"(tile_capacity: 4, terrain: [
-            (id: "grass", symbol: '.', walkable: true, color: "#ffffff"),
-            (id: "rock", symbol: '#', walkable: false, color: "#000000"),
+            (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#ffffff"),
+            (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#000000"),
         ], units: [
             (id: "worker", size: 1, max_health: 40, radius: 0.75, speed: {speed}),
             (id: "soldier", size: 2, max_health: 80, radius: 0.75, speed: {speed}),
@@ -55,7 +55,7 @@ const fn move_command(units: Vec<UnitId>, target: IVec2) -> (PlayerId, Command) 
 fn assert_capacity(sim: &Sim) {
     let mut usage = BTreeMap::<(i32, i32), u32>::new();
     for (_, unit) in sim.units() {
-        assert!(sim.terrain().is_walkable(unit.pos, sim.rules()));
+        assert!(sim.terrain().speed_modifier(unit.pos, sim.rules()) > 0);
         let tile = tile_of(unit.pos);
         *usage.entry((tile.x, tile.y)).or_default() += u32::from(sim.rules().unit(unit.kind).size);
     }

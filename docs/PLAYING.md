@@ -31,6 +31,8 @@ Select units by click/tap or drag, then right-click ground on desktop or tap gro
 
 Each tile holds four size points: a worker uses one and a soldier uses two. Four workers, two soldiers, or two workers with one soldier can share a tile. Units route around full tiles and wait if a route or destination stays full; they retry automatically as space opens.
 
+Terrain movement is configured with `speed_modifier` in `assets/data/core.rules.ron`: `1.0` is normal speed, `0.0` blocks movement, `2.0` doubles speed, and `0.5` halves it. Units choose routes by travel time, so a longer fast route can beat a short slow one.
+
 **Replay last** plays the latest in-memory recording. **Save replay** exports the turns played so far. Native **Load saved replay** reads the saved file; browser **Load replay** opens a file picker. Playback verifies the final state hash and accepts no unit orders.
 
 Native files are stored at:

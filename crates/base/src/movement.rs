@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use crate::rules::TRAVEL_SCALE;
 use crate::{IVec2, Rules, TICK_RATE, Terrain, path::find_path, tile_of};
 
 /// Every field affects subsequent movement and is included in the simulation hash.
@@ -8,7 +9,8 @@ pub struct MoveOrder {
     target: IVec2,
     waypoints: VecDeque<IVec2>,
     segment_start: IVec2,
-    segment_progress: u32,
+    /// Travel effort, including fractional world-unit progress.
+    segment_progress: u64,
     speed_remainder: u32,
 }
 
@@ -93,44 +95,96 @@ impl MoveOrder {
         &mut self,
         pos: &mut IVec2,
         speed: i32,
+        terrain: &Terrain,
+        rules: &Rules,
         can_enter: &impl Fn(IVec2) -> bool,
     ) -> bool {
-        let numerator = u32::try_from(speed).unwrap() + self.speed_remainder;
-        let mut budget = numerator / TICK_RATE;
-        self.speed_remainder = numerator % TICK_RATE;
+        let numerator =
+            u64::try_from(speed).unwrap() * TRAVEL_SCALE + u64::from(self.speed_remainder);
+        let mut budget = numerator / u64::from(TICK_RATE);
+        self.speed_remainder = u32::try_from(numerator % u64::from(TICK_RATE)).unwrap();
         while let Some(&waypoint) = self.waypoints.front() {
             // Check every traversed tile, even when a high speed crosses several in one tick.
             if !can_enter(tile_of(waypoint)) {
                 break;
             }
-            let dx = i64::from(waypoint.x) - i64::from(self.segment_start.x);
-            let dy = i64::from(waypoint.y) - i64::from(self.segment_start.y);
-            let squared = dx * dx + dy * dy;
-            let floor = squared.isqrt();
-            // Round length up so a diagonal segment never consumes less than its true length.
-            let length = u32::try_from(floor + i64::from(floor * floor < squared)).unwrap();
-            let spent = budget.min(length - self.segment_progress);
+            let segment = Segment::new(self.segment_start, waypoint, terrain, rules);
+            let cost = segment.cost();
+            let spent = budget.min(cost - self.segment_progress);
             self.segment_progress += spent;
             budget -= spent;
-            if self.segment_progress == length {
+            if self.segment_progress == cost {
                 *pos = waypoint;
                 self.waypoints.pop_front();
                 self.segment_start = waypoint;
                 self.segment_progress = 0;
             } else {
-                // Interpolate from the fixed segment origin instead of repeatedly truncating
-                // small per-tick deltas. All endpoints are bounded by MAX_MAP_SIDE * TILE.
-                let progress = i64::from(self.segment_progress);
-                let length = i64::from(length);
-                *pos = IVec2::new(
-                    i32::try_from(i64::from(self.segment_start.x) + dx * progress / length)
-                        .unwrap(),
-                    i32::try_from(i64::from(self.segment_start.y) + dy * progress / length)
-                        .unwrap(),
-                );
+                *pos = segment.position(self.segment_progress);
                 break;
             }
         }
         !self.waypoints.is_empty()
+    }
+}
+
+/// A route leg stays within a tile, or joins two adjacent tile centers. Split the latter at
+/// its boundary so faster terrain cannot carry a unit through slower terrain for free.
+struct Segment {
+    start: IVec2,
+    delta: IVec2,
+    length: u64,
+    first_length: u64,
+    first_cost: u64,
+    last_cost: u64,
+}
+
+impl Segment {
+    fn new(start: IVec2, end: IVec2, terrain: &Terrain, rules: &Rules) -> Self {
+        let delta = end - start;
+        let squared = i64::from(delta.x).pow(2) + i64::from(delta.y).pow(2);
+        let floor = squared.isqrt();
+        // Ceil the Euclidean length, as with the original integer movement.
+        let length = u64::try_from(floor + i64::from(floor * floor < squared)).unwrap();
+        let first_length = if tile_of(start) == tile_of(end) {
+            length
+        } else {
+            debug_assert_eq!(length, u64::try_from(crate::TILE).unwrap());
+            length / 2
+        };
+        let cost = |pos| {
+            rules
+                .terrain(terrain.get(tile_of(pos)).unwrap())
+                .travel_cost()
+                .unwrap()
+        };
+        Self {
+            start,
+            delta,
+            length,
+            first_length,
+            first_cost: cost(start),
+            last_cost: cost(end),
+        }
+    }
+
+    const fn cost(&self) -> u64 {
+        self.first_length * self.first_cost + (self.length - self.first_length) * self.last_cost
+    }
+
+    fn position(&self, progress: u64) -> IVec2 {
+        let first_effort = self.first_length * self.first_cost;
+        let distance = if progress <= first_effort {
+            progress / self.first_cost
+        } else {
+            self.first_length + (progress - first_effort) / self.last_cost
+        };
+        let distance = i64::try_from(distance).unwrap();
+        let length = i64::try_from(self.length).unwrap();
+        IVec2::new(
+            i32::try_from(i64::from(self.start.x) + i64::from(self.delta.x) * distance / length)
+                .unwrap(),
+            i32::try_from(i64::from(self.start.y) + i64::from(self.delta.y) * distance / length)
+                .unwrap(),
+        )
     }
 }

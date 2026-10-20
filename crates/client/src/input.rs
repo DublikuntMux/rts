@@ -363,9 +363,9 @@ fn issue_move(
     let target =
         (position * Vec2::new(1.0, -1.0) * (rts_base::TILE as f32 / TILE_PX as f32)).round();
     let target = SimPos::new(target.x as i32, target.y as i32);
-    let walkable = game.sim.terrain().is_walkable(target, game.sim.rules());
-    feedback.0 = Some((position, walkable, now));
-    if walkable {
+    let traversable = game.sim.terrain().speed_modifier(target, game.sim.rules()) > 0;
+    feedback.0 = Some((position, traversable, now));
+    if traversable {
         game.queue_command(Command::Move {
             units: selection.units.iter().copied().collect(),
             target,

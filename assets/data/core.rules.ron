@@ -3,11 +3,11 @@
 (
     tile_capacity: 4,
     terrain: [
-        (id: "grass", symbol: '.', walkable: true, color: "#4a7a3e", texture: Some("textures/terrain/grass.png")),
-        (id: "dirt", symbol: ',', walkable: true, color: "#8a7350", texture: Some("textures/terrain/dirt.png")),
-        (id: "sand", symbol: ':', walkable: true, color: "#c9b27a", texture: Some("textures/terrain/sand.png")),
-        (id: "water", symbol: '~', walkable: false, color: "#2e5d8c", texture: Some("textures/terrain/water.png")),
-        (id: "rock", symbol: '#', walkable: false, color: "#5a5852", texture: Some("textures/terrain/rock.png")),
+        (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#4a7a3e", texture: Some("textures/terrain/grass.png")),
+        (id: "dirt", symbol: ',', speed_modifier: 1.0, color: "#8a7350", texture: Some("textures/terrain/dirt.png")),
+        (id: "sand", symbol: ':', speed_modifier: 1.0, color: "#c9b27a", texture: Some("textures/terrain/sand.png")),
+        (id: "water", symbol: '~', speed_modifier: 0.0, color: "#2e5d8c", texture: Some("textures/terrain/water.png")),
+        (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#5a5852", texture: Some("textures/terrain/rock.png")),
     ],
     units: [
         (id: "worker", size: 1, max_health: 40, radius: 0.3, speed: 2.5),

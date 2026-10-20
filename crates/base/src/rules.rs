@@ -2,7 +2,16 @@ use std::collections::BTreeSet;
 
 use serde::Deserialize;
 
-use crate::{LoadError, coords::de_tiles};
+use crate::{
+    LoadError,
+    coords::{de_speed_modifier, de_tiles},
+};
+
+/// Fixed-point terrain speed multiplier representing normal speed.
+pub const SPEED_SCALE: i32 = 1024;
+
+/// Precision of movement effort per world unit at normal speed.
+pub const TRAVEL_SCALE: u64 = 1 << 32;
 
 /// Game data shared by every match: terrain and unit types (`*.rules.ron`).
 #[derive(Debug, Clone, Deserialize)]
@@ -19,12 +28,25 @@ pub struct TerrainDef {
     pub id: String,
     /// Character that stands for this terrain in map files.
     pub symbol: char,
-    pub walkable: bool,
+    /// Q10 movement multiplier (written as a decimal); zero blocks movement.
+    #[serde(deserialize_with = "de_speed_modifier")]
+    pub speed_modifier: i32,
     /// Minimap and distant-zoom color as `#rrggbb`. Only the client reads it.
     pub color: String,
     /// Optional square terrain texture in the asset pack. Only the client reads it.
     #[serde(default)]
     pub texture: Option<String>,
+}
+
+impl TerrainDef {
+    /// Movement effort per world unit, rounded up; nonpositive modifiers block movement.
+    pub(crate) fn travel_cost(&self) -> Option<u64> {
+        let speed = u64::try_from(self.speed_modifier).ok()?;
+        if speed == 0 {
+            return None;
+        }
+        Some((TRAVEL_SCALE * u64::from(SPEED_SCALE.unsigned_abs())).div_ceil(speed))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -157,7 +179,94 @@ impl Rules {
 mod tests {
     use super::*;
 
-    const TERRAIN: &str = r##"(id: "grass", symbol: 'g', walkable: true, color: "#00ff00")"##;
+    const TERRAIN: &str = r##"(id: "grass", symbol: 'g', speed_modifier: 1.0, color: "#00ff00")"##;
+
+    #[test]
+    fn parses_terrain_speed_modifiers_as_q10() {
+        for (modifier, scaled) in [
+            ("0", 0),
+            ("0.0", 0),
+            ("0.5", SPEED_SCALE / 2),
+            ("1", SPEED_SCALE),
+            ("1.0", SPEED_SCALE),
+            ("2", SPEED_SCALE * 2),
+            ("2.0", SPEED_SCALE * 2),
+            ("0.0009765625", 1),
+            ("2097151.9990234375", i32::MAX),
+        ] {
+            let terrain = TERRAIN.replace("1.0", modifier);
+            let rules = Rules::from_ron(&format!(
+                "(tile_capacity: 4, terrain: [{terrain}], units: [])"
+            ))
+            .unwrap();
+            assert_eq!(rules.terrain(TerrainId(0)).speed_modifier, scaled);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_terrain_speed_modifiers() {
+        for modifier in [
+            "-1.0",
+            "-0.0001",
+            "-5e-324",
+            "0.0001",
+            "5e-324",
+            "2097152.0",
+            "1e20",
+            "NaN",
+            "inf",
+            "-inf",
+            "true",
+        ] {
+            let terrain = TERRAIN.replace("1.0", modifier);
+            assert!(
+                Rules::from_ron(&format!(
+                    "(tile_capacity: 4, terrain: [{terrain}], units: [])"
+                ))
+                .is_err(),
+                "accepted terrain speed_modifier `{modifier}`"
+            );
+        }
+    }
+
+    #[test]
+    fn terrain_speed_modifier_is_required_and_legacy_walkable_is_rejected() {
+        for field in [
+            "",
+            "walkable: true,",
+            "walkable: false,",
+            "speed_modifier: 1.0, walkable: true,",
+        ] {
+            assert!(
+                Rules::from_ron(&format!(
+                    r##"(tile_capacity: 4, terrain: [(id: "grass", symbol: 'g', {field} color: "#00ff00")], units: [])"##
+                ))
+                .is_err(),
+                "accepted terrain fields `{field}`"
+            );
+        }
+    }
+
+    #[test]
+    fn terrain_travel_cost_is_integer_and_rounds_up() {
+        let mut terrain: TerrainDef = ron::from_str(TERRAIN).unwrap();
+        for (speed, cost) in [
+            (-1, None),
+            (0, None),
+            (1, Some(TRAVEL_SCALE * 1024)),
+            (SPEED_SCALE / 2, Some(TRAVEL_SCALE * 2)),
+            (SPEED_SCALE, Some(TRAVEL_SCALE)),
+            (SPEED_SCALE * 3 / 2, Some((TRAVEL_SCALE * 2).div_ceil(3))),
+            (SPEED_SCALE * 2, Some(TRAVEL_SCALE / 2)),
+            (
+                i32::MAX,
+                Some((TRAVEL_SCALE * 1024).div_ceil(2_147_483_647)),
+            ),
+        ] {
+            terrain.speed_modifier = speed;
+            assert_eq!(terrain.travel_cost(), cost, "speed_modifier {speed}");
+        }
+    }
 
     #[test]
     fn parses_tile_distances() {
@@ -174,7 +283,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_symbols() {
         let error = Rules::from_ron(&format!(
-            r##"(tile_capacity: 4, terrain: [{TERRAIN}, (id: "moss", symbol: 'g', walkable: true, color: "#000000")], units: [])"##
+            r##"(tile_capacity: 4, terrain: [{TERRAIN}, (id: "moss", symbol: 'g', speed_modifier: 1.0, color: "#000000")], units: [])"##
         ))
         .unwrap_err();
         assert!(error.to_string().contains("reuses symbol"), "{error}");

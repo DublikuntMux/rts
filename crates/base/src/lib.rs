@@ -23,7 +23,7 @@ pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
-pub use rules::{Rules, TerrainDef, TerrainId, UnitDef, UnitKind};
+pub use rules::{Rules, SPEED_SCALE, TerrainDef, TerrainId, UnitDef, UnitKind};
 
 use crate::hash::StateHasher;
 use crate::movement::MoveOrder;
@@ -92,7 +92,7 @@ impl Sim {
     /// # Errors
     ///
     /// Returns an error if the map does not fit the rules: unknown terrain or unit types, ragged
-    /// rows, a bad player count, starts/units outside walkable terrain, or over-capacity tiles.
+    /// rows, a bad player count, starts/units outside traversable terrain, or over-capacity tiles.
     pub fn new(rules: Rules, map: &MapData) -> Result<Self, LoadError> {
         let terrain = Terrain::parse(&map.tiles, &rules)?;
         if map.players.is_empty() || map.players.len() > MAX_PLAYERS {
@@ -103,9 +103,9 @@ impl Sim {
         }
         let mut players = Vec::with_capacity(map.players.len());
         for (index, slot) in map.players.iter().enumerate() {
-            if !terrain.is_walkable(slot.start, &rules) {
+            if terrain.speed_modifier(slot.start, &rules) == 0 {
                 return Err(LoadError::invalid(format!(
-                    "player {index} starts outside the map or on unwalkable terrain"
+                    "player {index} starts outside the map or on blocked terrain"
                 )));
             }
             players.push(Player { start: slot.start });
@@ -134,9 +134,9 @@ impl Sim {
                     placement.owner
                 )));
             }
-            if !sim.terrain.is_walkable(placement.pos, &sim.rules) {
+            if sim.terrain.speed_modifier(placement.pos, &sim.rules) == 0 {
                 return Err(LoadError::invalid(format!(
-                    "unit {index} is outside the map or on unwalkable terrain"
+                    "unit {index} is outside the map or on blocked terrain"
                 )));
             }
             let size = sim.rules.unit(kind).size;
@@ -183,7 +183,13 @@ impl Sim {
             let can_enter =
                 |tile| occupancy.fits(tile, definition.size, self.rules.tile_capacity());
             let active = !order.refresh(unit.pos, &self.terrain, &self.rules, &can_enter)
-                || order.advance(&mut unit.pos, definition.speed, &can_enter);
+                || order.advance(
+                    &mut unit.pos,
+                    definition.speed,
+                    &self.terrain,
+                    &self.rules,
+                    &can_enter,
+                );
             occupancy.add(unit.pos, definition.size);
             active
         });
@@ -206,7 +212,7 @@ impl Sim {
     fn apply_command(&mut self, player: PlayerId, command: Command) {
         let (units, target) = match command {
             Command::Move { units, target } => {
-                if !self.terrain.is_walkable(target, &self.rules) {
+                if self.terrain.speed_modifier(target, &self.rules) == 0 {
                     return;
                 }
                 (units, Some(target))

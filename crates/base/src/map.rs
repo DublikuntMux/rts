@@ -126,10 +126,11 @@ impl Terrain {
         self.tiles.get(index).copied()
     }
 
-    /// Whether ground units may stand at a world position.
+    /// Terrain speed multiplier at a world position, scaled by [`crate::SPEED_SCALE`].
+    /// Zero blocks movement and is also returned outside the map.
     #[must_use]
-    pub fn is_walkable(&self, pos: IVec2, rules: &Rules) -> bool {
+    pub fn speed_modifier(&self, pos: IVec2, rules: &Rules) -> i32 {
         self.get(tile_of(pos))
-            .is_some_and(|id| rules.terrain(id).walkable)
+            .map_or(0, |id| rules.terrain(id).speed_modifier)
     }
 }

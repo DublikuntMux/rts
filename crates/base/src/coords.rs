@@ -20,13 +20,35 @@ pub const TILE: i32 = 1024;
 )]
 fn tiles_to_units(tiles: f64) -> Option<i32> {
     let units = (tiles * f64::from(TILE)).round();
-    (units.abs() <= f64::from(i32::MAX)).then_some(units as i32)
+    if units.abs() <= f64::from(i32::MAX) {
+        Some(units as i32)
+    } else {
+        None
+    }
 }
 
 /// Deserializes a distance written in tiles into world units.
 pub fn de_tiles<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i32, D::Error> {
     let tiles = f64::deserialize(deserializer)?;
     tiles_to_units(tiles).ok_or_else(|| D::Error::custom(format!("{tiles} tiles is out of range")))
+}
+
+/// Deserializes a nonnegative terrain speed multiplier into Q10 fixed point.
+pub fn de_speed_modifier<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i32, D::Error> {
+    let modifier = f64::deserialize(deserializer)?;
+    if !modifier.is_finite() || modifier < 0.0 {
+        return Err(D::Error::custom(
+            "speed_modifier must be finite and nonnegative",
+        ));
+    }
+    let scaled = tiles_to_units(modifier)
+        .ok_or_else(|| D::Error::custom("speed_modifier is out of range"))?;
+    if modifier > 0.0 && scaled == 0 {
+        return Err(D::Error::custom(
+            "positive speed_modifier is below Q10 resolution",
+        ));
+    }
+    Ok(scaled)
 }
 
 /// Deserializes an `(x, y)` position written in tiles into world units.

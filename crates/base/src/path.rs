@@ -1,4 +1,4 @@
-//! Four-neighbor A* with a fully specified search order.
+//! Four-neighbor A* weighted by travel time, with a fully specified search order.
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
@@ -12,15 +12,15 @@ pub fn find_path(
     goal: IVec2,
     can_enter: &impl Fn(IVec2) -> bool,
 ) -> Option<Vec<IVec2>> {
-    let walkable = |tile| {
+    let traversable = |tile| {
         terrain
             .get(tile)
-            .is_some_and(|id| rules.terrain(id).walkable)
+            .is_some_and(|id| rules.terrain(id).speed_modifier > 0)
             // Approach a full destination and wait outside it. Movement still checks capacity
             // before entering it; intermediate occupied tiles must be routed around.
             && (tile == start || tile == goal || can_enter(tile))
     };
-    if !walkable(start) || !walkable(goal) {
+    if !traversable(start) || !traversable(goal) {
         return None;
     }
     let width = terrain.size().x;
@@ -29,14 +29,29 @@ pub fn find_path(
         let index = i32::try_from(index).unwrap();
         IVec2::new(index % width, index / width)
     };
-    let heuristic = |pos: IVec2| pos.x.abs_diff(goal.x) + pos.y.abs_diff(goal.y);
-    let mut costs = vec![u32::MAX; terrain.tiles().len()];
+    let tile_cost = |tile| {
+        rules
+            .terrain(terrain.get(tile).unwrap())
+            .travel_cost()
+            .unwrap()
+    };
+    let minimum_cost = rules
+        .terrain_types()
+        .iter()
+        .filter_map(crate::TerrainDef::travel_cost)
+        .min()
+        .unwrap();
+    // Even the fastest terrain needs this much time per edge. An unscaled Manhattan
+    // heuristic would overestimate routes through terrain faster than normal.
+    let heuristic =
+        |pos: IVec2| u64::from(pos.x.abs_diff(goal.x) + pos.y.abs_diff(goal.y)) * 2 * minimum_cost;
+    let mut costs = vec![u64::MAX; terrain.tiles().len()];
     let mut parents = vec![usize::MAX; costs.len()];
     let mut open = BinaryHeap::new();
     let start_index = index(start);
     let goal_index = index(goal);
     costs[start_index] = 0;
-    // Lowest total cost, then lowest remaining distance, then row-major tile index.
+    // Lowest total travel cost, then lowest remaining time, then row-major tile index.
     open.push(Reverse((heuristic(start), heuristic(start), start_index)));
     while let Some(Reverse((estimate, remaining, current))) = open.pop() {
         if estimate != costs[current] + remaining {
@@ -60,11 +75,13 @@ pub fn find_path(
         let pos = tile(current);
         for offset in [IVec2::NEG_Y, IVec2::NEG_X, IVec2::X, IVec2::Y] {
             let neighbor = pos + offset;
-            if !walkable(neighbor) {
+            if !traversable(neighbor) {
                 continue;
             }
             let next = index(neighbor);
-            let cost = costs[current] + 1;
+            // A center-to-center edge spends half its distance in each tile. The common
+            // TILE / 2 distance factor can be omitted from every path cost.
+            let cost = costs[current] + tile_cost(pos) + tile_cost(neighbor);
             if cost < costs[next] {
                 costs[next] = cost;
                 parents[next] = current;
