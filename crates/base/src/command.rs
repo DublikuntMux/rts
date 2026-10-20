@@ -1,9 +1,12 @@
 use std::hash::{Hash, Hasher};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{IVec2, UnitId};
 
 /// Commands issued by a player. The simulation checks ownership when applying them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Command {
     Move { units: Vec<UnitId>, target: IVec2 },
     Stop { units: Vec<UnitId> },

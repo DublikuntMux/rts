@@ -16,10 +16,18 @@ ron = "0.12"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2"
 wasm-bindgen-futures = "0.4"
+ewebsock = { version = "0.8", default-features = false }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "Event", "FileList", "File"] }
 
 rts_assets = { path = "crates/assets" }
 rts_base = { path = "crates/base" }
 rts_client = { path = "crates/client" }
+rts_net = { path = "crates/net" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

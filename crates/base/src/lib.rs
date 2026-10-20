@@ -26,6 +26,7 @@ pub use rules::{Rules, TerrainDef, TerrainId, UnitDef, UnitKind};
 
 use crate::hash::StateHasher;
 use crate::movement::MoveOrder;
+use serde::{Deserialize, Serialize};
 
 /// Simulation ticks per second.
 pub const TICK_RATE: u32 = 20;
@@ -48,11 +49,11 @@ impl LoadError {
 }
 
 /// Stable unit identifier. IDs are never reused within a match.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct UnitId(pub u32);
 
 /// Index of a player slot in the map.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u8);
 
 #[derive(Debug, Clone, Hash)]
@@ -142,11 +143,17 @@ impl Sim {
 
     /// Advances the match by one tick.
     pub fn step(&mut self) {
+        self.step_with_commands(std::iter::empty());
+    }
+
+    /// Advances one tick, applying agreed commands in their supplied order before movement.
+    /// Unlike [`Self::queue_command`], these commands incur no additional input delay.
+    /// Local commands already queued for this tick execute first.
+    pub fn step_with_commands(&mut self, commands: impl IntoIterator<Item = (PlayerId, Command)>) {
         self.tick += 1;
-        if let Some(commands) = self.commands.remove(&self.tick) {
-            for (player, command) in commands {
-                self.apply_command(player, command);
-            }
+        let queued = self.commands.remove(&self.tick).unwrap_or_default();
+        for (player, command) in queued.into_iter().chain(commands) {
+            self.apply_command(player, command);
         }
         self.move_orders.retain(|id, order| {
             let Some(unit) = self.units.get_mut(id) else {
