@@ -5076,6 +5076,7 @@ dependencies = [
  "rts_base",
  "rts_net",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
