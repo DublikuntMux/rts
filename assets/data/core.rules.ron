@@ -1,4 +1,4 @@
-// Core game data. Distances are in tiles.
+// Core game data. Distances are in tiles; speeds are in tiles per second.
 (
     terrain: [
         (id: "grass", symbol: '.', walkable: true, color: "#4a7a3e", texture: Some("textures/terrain/grass.png")),
@@ -8,7 +8,7 @@
         (id: "rock", symbol: '#', walkable: false, color: "#5a5852", texture: Some("textures/terrain/rock.png")),
     ],
     units: [
-        (id: "worker", max_health: 40, radius: 0.3),
-        (id: "soldier", max_health: 80, radius: 0.4),
+        (id: "worker", max_health: 40, radius: 0.3, speed: 2.5),
+        (id: "soldier", max_health: 80, radius: 0.4, speed: 3.0),
     ],
 )

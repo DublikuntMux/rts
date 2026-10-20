@@ -9,6 +9,8 @@ mod command;
 mod coords;
 mod hash;
 mod map;
+mod movement;
+mod path;
 mod rules;
 
 use std::{
@@ -23,6 +25,7 @@ pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
 pub use rules::{Rules, TerrainDef, TerrainId, UnitDef, UnitKind};
 
 use crate::hash::StateHasher;
+use crate::movement::MoveOrder;
 
 /// Simulation ticks per second.
 pub const TICK_RATE: u32 = 20;
@@ -77,7 +80,7 @@ pub struct Sim {
     units: BTreeMap<UnitId, Unit>,
     next_unit_id: u32,
     commands: BTreeMap<u32, Vec<(PlayerId, Command)>>,
-    move_targets: BTreeMap<UnitId, IVec2>,
+    move_orders: BTreeMap<UnitId, MoveOrder>,
 }
 
 impl Sim {
@@ -112,7 +115,7 @@ impl Sim {
             units: BTreeMap::new(),
             next_unit_id: 0,
             commands: BTreeMap::new(),
-            move_targets: BTreeMap::new(),
+            move_orders: BTreeMap::new(),
         };
         for (index, placement) in map.units.iter().enumerate() {
             let kind = sim.rules.unit_kind(&placement.kind).ok_or_else(|| {
@@ -145,6 +148,12 @@ impl Sim {
                 self.apply_command(player, command);
             }
         }
+        self.move_orders.retain(|id, order| {
+            let Some(unit) = self.units.get_mut(id) else {
+                return false;
+            };
+            order.advance(&mut unit.pos, self.rules.unit(unit.kind).speed)
+        });
     }
 
     /// Schedules a local command at the current tick plus [`INPUT_DELAY_TICKS`].
@@ -172,12 +181,16 @@ impl Sim {
             Command::Stop { units } => (units, None),
         };
         for id in units {
-            if self.units.get(&id).is_some_and(|unit| unit.owner == player) {
-                if let Some(target) = target {
-                    self.move_targets.insert(id, target);
-                } else {
-                    self.move_targets.remove(&id);
+            let Some(unit) = self.units.get(&id).filter(|unit| unit.owner == player) else {
+                continue;
+            };
+            if let Some(target) = target {
+                // An unreachable replacement leaves the current order intact.
+                if let Some(order) = MoveOrder::new(unit.pos, target, &self.terrain, &self.rules) {
+                    self.move_orders.insert(id, order);
                 }
+            } else {
+                self.move_orders.remove(&id);
             }
         }
     }
@@ -185,7 +198,7 @@ impl Sim {
     /// Destination of the unit's active move order, if any.
     #[must_use]
     pub fn move_target(&self, id: UnitId) -> Option<IVec2> {
-        self.move_targets.get(&id).copied()
+        self.move_orders.get(&id).map(MoveOrder::target)
     }
 
     fn spawn_unit(&mut self, kind: UnitKind, owner: PlayerId, pos: IVec2) -> UnitId {
@@ -244,7 +257,7 @@ impl Sim {
         self.next_unit_id.hash(&mut hasher);
         self.units.hash(&mut hasher);
         self.commands.hash(&mut hasher);
-        self.move_targets.hash(&mut hasher);
+        self.move_orders.hash(&mut hasher);
         hasher.finish()
     }
 }

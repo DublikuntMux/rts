@@ -34,6 +34,9 @@ pub struct UnitDef {
     /// Collision radius in world units (written in tiles).
     #[serde(deserialize_with = "de_tiles")]
     pub radius: i32,
+    /// Movement speed in world units per second (written in tiles per second).
+    #[serde(deserialize_with = "de_tiles")]
+    pub speed: i32,
 }
 
 /// Index of a terrain type in [`Rules`].
@@ -89,9 +92,9 @@ impl Rules {
             if !ids.insert(&unit.id) {
                 return Err(LoadError::invalid(format!("duplicate unit `{}`", unit.id)));
             }
-            if unit.max_health <= 0 || unit.radius <= 0 {
+            if unit.max_health <= 0 || unit.radius <= 0 || unit.speed <= 0 {
                 return Err(LoadError::invalid(format!(
-                    "unit `{}` needs positive max_health and radius",
+                    "unit `{}` needs positive max_health, radius, and speed",
                     unit.id
                 )));
             }
@@ -141,11 +144,12 @@ mod tests {
     #[test]
     fn parses_tile_distances() {
         let rules = Rules::from_ron(&format!(
-            r#"(terrain: [{TERRAIN}], units: [(id: "worker", max_health: 40, radius: 0.25)])"#
+            r#"(terrain: [{TERRAIN}], units: [(id: "worker", max_health: 40, radius: 0.25, speed: 1.25)])"#
         ))
         .unwrap();
         let kind = rules.unit_kind("worker").unwrap();
         assert_eq!(rules.unit(kind).radius, crate::TILE / 4);
+        assert_eq!(rules.unit(kind).speed, crate::TILE * 5 / 4);
         assert_eq!(rules.terrain_by_symbol('g'), Some(TerrainId(0)));
     }
 
@@ -161,5 +165,21 @@ mod tests {
     #[test]
     fn rejects_unknown_fields() {
         assert!(Rules::from_ron(&format!("(terrain: [{TERRAIN}], units: [], extra: 1)")).is_err());
+    }
+
+    #[test]
+    fn speed_is_required_positive_and_in_range() {
+        for speed in [
+            "",
+            ", speed: 0.0",
+            ", speed: -1.0",
+            ", speed: 0.0001",
+            ", speed: 1e20",
+            ", speed: NaN",
+        ] {
+            assert!(Rules::from_ron(&format!(
+                r#"(terrain: [{TERRAIN}], units: [(id: "worker", max_health: 40, radius: 0.25{speed})])"#
+            )).is_err(), "accepted speed field `{speed}`");
+        }
     }
 }
