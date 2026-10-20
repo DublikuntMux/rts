@@ -1,7 +1,9 @@
 use rts_base::{MapData, Rules, Sim};
 use serde::{Deserialize, Serialize};
 
-use crate::{NetError, PROTOCOL_VERSION, check_size, validate_players};
+use crate::{NetError, PROTOCOL_VERSION, check_size, minify::minify_ron, validate_players};
+
+pub mod wire;
 
 /// Maximum bytes in each original rules/map document.
 pub const MAX_SETUP_BYTES: usize = 4 * 1024 * 1024;
@@ -17,17 +19,30 @@ pub struct MatchSetup {
 }
 
 impl MatchSetup {
-    /// FNV-1a over version, length-prefixed original RON, seed and player count.
+    /// Removes comments and unnecessary whitespace without changing RON literals.
+    /// Validation remains the responsibility of [`Self::simulation`].
+    #[must_use]
+    pub fn minified(&self) -> Self {
+        Self {
+            rules: minify_ron(&self.rules),
+            map: minify_ron(&self.map),
+            seed: self.seed,
+            players: self.players,
+        }
+    }
+
+    /// FNV-1a over version, length-prefixed minified RON, seed and player count.
     /// All multibyte integers have explicit fixed widths and little-endian encoding.
     #[must_use]
     pub fn checksum(&self) -> u64 {
+        let compact = self.minified();
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;
         for bytes in [
             PROTOCOL_VERSION.to_le_bytes().as_slice(),
-            (self.rules.len() as u64).to_le_bytes().as_slice(),
-            self.rules.as_bytes(),
-            (self.map.len() as u64).to_le_bytes().as_slice(),
-            self.map.as_bytes(),
+            (compact.rules.len() as u64).to_le_bytes().as_slice(),
+            compact.rules.as_bytes(),
+            (compact.map.len() as u64).to_le_bytes().as_slice(),
+            compact.map.as_bytes(),
             self.seed.to_le_bytes().as_slice(),
             &[self.players],
         ] {

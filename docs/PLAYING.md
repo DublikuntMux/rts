@@ -6,15 +6,25 @@ Start the native client from the repository root:
 cargo run
 ```
 
-Choose **Play solo** to test movement, or start a relay for multiplayer:
+Choose **Play solo** to test movement, or start a server for multiplayer:
 
 ```sh
 cargo run -p rts_server --bin rts-server -- 127.0.0.1:9001
 ```
 
-The optional bind address defaults to `127.0.0.1:9001`; `RTS_SERVER_ADDR` supplies a default when no argument is passed. Bind to `0.0.0.0:9001` for LAN access. On each client enter `ws://<relay-address>:9001`. The host creates a room and shares its six-character code; the other player joins. The host starts when both slots are filled. Clients must have identical map and rules content.
+The optional bind address defaults to `127.0.0.1:9001`; `RTS_SERVER_ADDR` supplies a default when no argument is passed. Bind to `0.0.0.0:9001` for LAN access. On each client enter `ws://<server-address>:9001`. The host creates a room and shares its six-character code; the other player joins. The host starts when both slots are filled. The server minifies and zlib-compresses its map and unit/terrain rules before sending them as raw binary WebSocket frames to each client; the clients decompress, validate and acknowledge loading before the host can start. Bundled client content may differ, but game code and protocol versions must be compatible. The server simulates at 20 Hz and validates commands; missing input does not pause the match.
 
-On Android 17 and newer, allow Nearby devices access when the app requests it to connect to LAN relays. If denied, solo play and public Internet relays remain available; grant the permission in system app settings before retrying a LAN relay.
+To run a content mod, edit copies of the RON files and pass their paths to the server:
+
+```sh
+cargo run -p rts_server --bin rts-server -- 0.0.0.0:9001 \
+  --rules mods/my-mod/core.rules.ron \
+  --map mods/my-mod/battle.map.ron
+```
+
+Each option is optional; omitted files use bundled defaults. `--seed 42` sets the reserved match seed. Player capacity comes from the map's player starts. Invalid maps/rules fail at startup. Restart the server after editing files. Clients receive all unit definitions, terrain properties, map tiles, starts and initial unit placements, and replays embed that exact configuration. No client rebuild is needed for these content changes. Mod files can use existing texture paths, or `texture: None` to render terrain with its configured color. Texture images and executable game code are not downloaded.
+
+On Android 17 and newer, allow Nearby devices access when the app requests it to connect to LAN servers. If denied, solo play and public Internet servers remain available; grant the permission in system app settings before retrying a LAN server.
 
 For a browser client, install Trunk and the wasm target, then run:
 
@@ -23,7 +33,7 @@ rustup target add wasm32-unknown-unknown
 trunk serve
 ```
 
-Open the address Trunk prints. A browser served over HTTPS needs a `wss://` relay behind a TLS reverse proxy. Native clients currently support `ws://` only.
+Open the address Trunk prints. A browser served over HTTPS needs a `wss://` server behind a TLS reverse proxy. Native clients currently support `ws://` only.
 
 When hosting the built web files elsewhere, the server must support HTTP byte-range requests (`206 Partial Content`) for `assets.pack`. The asset pack loader reads its index and individual assets on demand; a basic server that always returns the whole file is insufficient.
 
@@ -42,4 +52,4 @@ Native files are stored at:
 - Android: `replays/latest.replay.ron` inside the app's internal data directory.
 - Other native platforms: `$XDG_DATA_HOME`, then `LOCALAPPDATA`, then `~/.local/share`, with the same `rts/replays/latest.replay.ron` suffix.
 
-Browser saves download `match.replay.ron`. Leaving a match preserves its recording until another match is recorded. Replays contain the original map and rules; asset textures remain local presentation data.
+Browser saves download `match.replay.ron`. Leaving a match preserves its recording until another match is recorded. Online replays contain the received minified map and rules as readable RON strings; asset textures remain local presentation data.

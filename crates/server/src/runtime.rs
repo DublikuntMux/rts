@@ -1,16 +1,20 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     io,
-    time::Instant,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use futures_util::{SinkExt, StreamExt};
-use rts_net::{ClientMessage, MAX_MESSAGE_BYTES, ServerMessage, decode_client, encode_server};
+use rts_net::{
+    ClientMessage, MAX_MESSAGE_BYTES, MAX_SERVER_MESSAGE_BYTES, ServerFrame, ServerMessage,
+    decode_client, encode_server,
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
     task::JoinSet,
-    time::{interval, timeout},
+    time::{MissedTickBehavior, interval, timeout},
 };
 use tokio_tungstenite::{
     accept_async_with_config,
@@ -25,7 +29,7 @@ enum Event {
     Activity(ClientId),
 }
 
-/// Runs the plain-WebSocket relay with default limits until cancelled.
+/// Runs the plain-WebSocket server with default limits until cancelled.
 ///
 /// # Errors
 /// Returns a TCP listener accept error. All connection tasks are aborted when
@@ -34,7 +38,7 @@ pub async fn serve(listener: TcpListener) -> io::Result<()> {
     serve_with_config(listener, Config::default()).await
 }
 
-/// Runs the relay with explicit resource limits and timeouts.
+/// Runs the server with explicit resource limits and timeouts.
 ///
 /// # Errors
 /// Returns an error for invalid limits or a TCP listener accept error.
@@ -50,15 +54,21 @@ pub async fn serve_with_config(listener: TcpListener, config: Config) -> io::Res
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "relay limits and timeouts must be positive",
+            "server limits and timeouts must be positive",
         ));
     }
+    config
+        .setup
+        .simulation()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let mut coordinator = Coordinator::new(config.clone());
+    let config = Arc::new(config);
     let (events_tx, mut events_rx) = mpsc::channel(config.event_queue_capacity);
     let mut outbound = BTreeMap::new();
     let mut tasks = JoinSet::new();
-    let mut timer = interval(config.poll_interval);
+    let mut timer = interval(config.poll_interval.min(Duration::from_millis(10)));
+    timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let started = Instant::now();
-    let mut coordinator = Coordinator::new(config.clone());
     let mut next_id: ClientId = 0;
     loop {
         tokio::select! {
@@ -89,7 +99,7 @@ pub async fn serve_with_config(listener: TcpListener, config: Config) -> io::Res
                         coordinator.touch(id, started.elapsed());
                         Vec::new()
                     }
-                    None => return Err(io::Error::other("relay event channel closed")),
+                    None => return Err(io::Error::other("server event channel closed")),
                 };
                 dispatch(deliveries, &mut coordinator, &mut outbound);
             }
@@ -101,7 +111,9 @@ pub async fn serve_with_config(listener: TcpListener, config: Config) -> io::Res
                 }
             }
             _ = timer.tick() => {
-                let deliveries = coordinator.expire(started.elapsed());
+                let now = started.elapsed();
+                let mut deliveries = coordinator.expire(now);
+                deliveries.extend(coordinator.advance(now));
                 dispatch(deliveries, &mut coordinator, &mut outbound);
                 outbound.retain(|id, _| coordinator.is_connected(*id));
             }
@@ -119,7 +131,10 @@ fn dispatch(
         let Some(sender) = outbound.get(&client) else {
             continue;
         };
-        let encoded = encode_server(&message).map(|text| Message::Text(text.into()));
+        let encoded = encode_server(&message).map(|frame| match frame {
+            ServerFrame::Text(text) => Message::Text(text.into()),
+            ServerFrame::Binary(bytes) => Message::Binary(bytes.into()),
+        });
         if encoded.is_err() || sender.try_send(encoded.expect("checked encoding")).is_err() {
             outbound.remove(&client);
             pending.extend(coordinator.disconnect(client));
@@ -137,7 +152,7 @@ async fn connection(
     let websocket_config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(8192)
-        .max_write_buffer_size(MAX_MESSAGE_BYTES * 2)
+        .max_write_buffer_size(MAX_SERVER_MESSAGE_BYTES * 2)
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
     let Ok(Ok(mut socket)) = timeout(
@@ -148,8 +163,14 @@ async fn connection(
     else {
         return;
     };
+    // Socket liveness is independent of gameplay input. Browsers automatically pong.
+    let mut heartbeat = interval((config.peer_timeout / 3).max(Duration::from_millis(1)));
+    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = heartbeat.tick() => {
+                if !matches!(timeout(config.peer_timeout, socket.send(Message::Ping(Vec::new().into()))).await, Ok(Ok(()))) { return; }
+            }
             incoming = socket.next() => {
                 let event = match incoming {
                     Some(Ok(Message::Text(text))) => decode_client(&text)

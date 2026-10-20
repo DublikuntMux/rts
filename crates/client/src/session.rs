@@ -1,4 +1,4 @@
-//! Match sessions: local delayed input, WebSocket lockstep, and replay playback.
+//! Match sessions: local delayed input, server-authoritative turns, and replay playback.
 
 #[cfg(test)]
 mod tests;
@@ -13,8 +13,8 @@ use bevy::prelude::*;
 use ewebsock::{WsEvent, WsMessage, WsSender};
 use rts_base::{Command, PlayerId};
 use rts_net::{
-    ClientMessage, INPUT_DELAY_TICKS, MAX_MESSAGE_BYTES, MatchSetup, PROTOCOL_VERSION, PlayerInput,
-    Replay, ServerMessage, Turn, decode_server, encode_client,
+    ClientMessage, INPUT_DELAY_TICKS, MAX_SERVER_MESSAGE_BYTES, MatchSetup, PROTOCOL_VERSION,
+    PlayerInput, Replay, ServerMessage, Turn, decode_server, decode_server_binary, encode_client,
 };
 
 use crate::{
@@ -96,9 +96,10 @@ enum Mode {
 pub struct Session {
     mode: Mode,
     local_frames: BTreeMap<u32, Vec<Command>>,
-    turns: BTreeMap<u32, Turn>,
+    turns: BTreeMap<u32, (Turn, u64)>,
     received_tick: u32,
-    hashes: BTreeMap<u32, u64>,
+    online_setup: Option<MatchSetup>,
+    submitted_tick: u32,
     recording: Option<Replay>,
     last_replay: Option<Replay>,
     playback: Option<Replay>,
@@ -116,7 +117,8 @@ impl Session {
         }
         self.local_frames.clear();
         self.turns.clear();
-        self.hashes.clear();
+        self.online_setup = None;
+        self.submitted_tick = 0;
         self.received_tick = 0;
         self.playback = None;
     }
@@ -169,12 +171,12 @@ impl Connection {
     fn connect(url: &str, hello: ClientMessage, now: f64) -> Result<Self, String> {
         let url = url.trim();
         if url.len() > 2048 || !(url.starts_with("ws://") || url.starts_with("wss://")) {
-            return Err("Enter a relay address beginning with ws:// or wss://.".into());
+            return Err("Enter a server address beginning with ws:// or wss://.".into());
         }
         #[cfg(not(target_arch = "wasm32"))]
         if url.starts_with("wss://") {
             return Err(
-                "This native build uses ws:// relays. Secure browser connections use wss://."
+                "This native build uses ws:// servers. Secure browser connections use wss://."
                     .into(),
             );
         }
@@ -183,7 +185,7 @@ impl Connection {
         let sender = ewebsock::ws_connect(
             url.into(),
             ewebsock::Options {
-                max_incoming_frame_size: MAX_MESSAGE_BYTES,
+                max_incoming_frame_size: MAX_SERVER_MESSAGE_BYTES,
                 ..default()
             },
             Box::new(move |event| {
@@ -283,20 +285,18 @@ fn handle_actions(
                     ClientMessage::Join {
                         version: PROTOCOL_VERSION,
                         code: code.trim().to_ascii_uppercase(),
-                        checksum: data.0.checksum(),
                     }
                 } else {
                     ClientMessage::Create {
                         version: PROTOCOL_VERSION,
-                        checksum: data.0.checksum(),
-                        players: data.0.players,
                     }
                 };
                 network.leave();
+                session.online_setup = None;
                 Connection::connect(url, hello, now).map(|connection| {
                     network.0 = Some(connection);
                     *status = SessionStatus {
-                        message: "Connecting to relay…".into(),
+                        message: "Connecting to server…".into(),
                         busy: true,
                         has_replay: session.replay().is_some(),
                         ..default()
@@ -360,7 +360,6 @@ fn poll_network(
     mut network: NonSendMut<Network>,
     mut session: ResMut<Session>,
     mut status: ResMut<SessionStatus>,
-    data: Option<Res<MatchData>>,
     mut game: Option<ResMut<Match>>,
     mut next: ResMut<NextState<AppState>>,
     time: Res<Time>,
@@ -387,21 +386,20 @@ fn poll_network(
                     .take()
                     .map_or(Ok(()), |hello| connection.send(&hello))
             }
-            WsEvent::Message(WsMessage::Text(text)) => decode_server(&text)
-                .map_err(|error| format!("Invalid relay response: {error}"))
-                .and_then(|message| {
-                    receive_message(
-                        message,
-                        &mut session,
-                        &mut status,
-                        data.as_deref(),
-                        &mut commands,
-                        &mut next,
-                        now,
-                    )
-                }),
-            WsEvent::Message(WsMessage::Ping(_) | WsMessage::Pong(_)) => Ok(()),
-            WsEvent::Message(_) => Err("Relay sent an unsupported message.".into()),
+            WsEvent::Message(message) => decode_message(message).and_then(|message| {
+                let Some(message) = message else {
+                    return Ok(());
+                };
+                receive_message(
+                    message,
+                    &mut session,
+                    &mut status,
+                    &mut commands,
+                    &mut next,
+                    now,
+                )
+                .and_then(|reply| reply.map_or(Ok(()), |reply| connection.send(&reply)))
+            }),
             WsEvent::Error(error) => Err(format!("Connection failed: {error}")),
             WsEvent::Closed => Err("Connection closed.".into()),
         };
@@ -411,7 +409,7 @@ fn poll_network(
         }
     }
     if !connection.opened && now - connection.created > 10.0 {
-        failure = Some("Relay connection timed out.".into());
+        failure = Some("Server connection timed out.".into());
     }
     if let Some(reason) = failure {
         network.leave();
@@ -429,46 +427,71 @@ fn poll_network(
     }
 }
 
+fn decode_message(message: WsMessage) -> Result<Option<ServerMessage>, String> {
+    match message {
+        WsMessage::Text(text) => decode_server(&text),
+        WsMessage::Binary(bytes) => decode_server_binary(&bytes),
+        WsMessage::Ping(_) | WsMessage::Pong(_) => return Ok(None),
+        WsMessage::Unknown(_) => return Err("Server sent an unsupported message.".into()),
+    }
+    .map(Some)
+    .map_err(|error| format!("Invalid server response: {error}"))
+}
+
 fn receive_message(
     message: ServerMessage,
     session: &mut Session,
     status: &mut SessionStatus,
-    data: Option<&MatchData>,
     commands: &mut Commands,
     next: &mut NextState<AppState>,
     now: f64,
-) -> Result<(), String> {
+) -> Result<Option<ClientMessage>, String> {
     match message {
+        ServerMessage::Setup(setup) => {
+            if status.running || session.online_setup.is_some() {
+                return Err("Unexpected match configuration.".into());
+            }
+            setup
+                .simulation()
+                .map_err(|error| format!("Invalid server configuration: {error}"))?;
+            let checksum = setup.checksum();
+            session.online_setup = Some(setup);
+            return Ok(Some(ClientMessage::Ready { checksum }));
+        }
         ServerMessage::Lobby {
             code,
             player,
             players,
             capacity,
+            ready,
         } => {
             if status.running {
                 return Err("Unexpected lobby update during a match.".into());
             }
-            status.message = format!("Room {code}: {players}/{capacity} players");
+            status.message = format!("Room {code}: {players}/{capacity} players, {ready} ready");
             status.room_code = Some(code);
             status.player = player.0;
             status.joined = players;
             status.capacity = capacity;
-            status.can_start = player.0 == 0 && players == capacity;
+            status.can_start = player.0 == 0 && players == capacity && ready == capacity;
             status.busy = false;
         }
         ServerMessage::Started {
             players,
             input_delay,
         } => {
-            let data = data.ok_or("Match data is not loaded.")?;
+            let setup = session
+                .online_setup
+                .take()
+                .ok_or("Server configuration is not loaded.")?;
             if status.running
                 || status.room_code.is_none()
-                || players != data.0.players
+                || players != setup.players
                 || input_delay != INPUT_DELAY_TICKS
             {
-                return Err("Relay started an incompatible match.".into());
+                return Err("Server started an incompatible match.".into());
             }
-            let game = session.begin(data.0.clone(), Mode::Online, PlayerId(status.player), now)?;
+            let game = session.begin(setup, Mode::Online, PlayerId(status.player), now)?;
             commands.insert_resource(game);
             next.set(AppState::InGame);
             status.message = format!("Online match (player {})", status.player + 1);
@@ -476,33 +499,23 @@ fn receive_message(
             status.can_start = false;
             status.has_replay = true;
         }
-        ServerMessage::Turn(turn) => {
-            if session.mode != Mode::Online || session.turns.len() >= 8 {
+        ServerMessage::Turn { turn, hash } => {
+            if session.mode != Mode::Online || session.turns.len() >= 128 {
                 return Err("Unexpected or excessive turn data.".into());
             }
             turn.validate(session.received_tick + 1, status.capacity)
                 .map_err(|error| format!("Invalid turn: {error}"))?;
             session.received_tick = turn.tick;
-            session.turns.insert(turn.tick, turn);
-        }
-        ServerMessage::HashConfirmed { tick, hash } => {
-            if session.hashes.get(&tick) != Some(&hash) {
-                return Err("The relay reported a different match state. Play has stopped.".into());
-            }
-            session
-                .hashes
-                .retain(|&pending_tick, _| pending_tick > tick);
+            session.turns.insert(turn.tick, (turn, hash));
         }
         ServerMessage::Ended { reason } => return Err(reason),
         ServerMessage::Error { message } => {
-            if status.running {
-                return Err(message);
-            }
+            // Request rejection (for example, late input) does not end the server match.
             status.message = message;
             status.busy = false;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn advance_session(
@@ -513,7 +526,7 @@ fn advance_session(
     mut network: NonSendMut<Network>,
     time: Res<Time>,
 ) {
-    if let Err(reason) = advance(
+    if let Err(reason) = advance_buffered(
         &mut game,
         &mut previous,
         &mut session,
@@ -528,6 +541,24 @@ fn advance_session(
         previous.0.clear();
         status.message = reason;
     }
+}
+
+/// A slow render frame may skip fixed ticks; consume the server backlog with bounded work.
+fn advance_buffered(
+    game: &mut Match,
+    previous: &mut PreviousPositions,
+    session: &mut Session,
+    status: &mut SessionStatus,
+    network: &mut Network,
+    now: f64,
+) -> Result<(), String> {
+    for _ in 0..8 {
+        advance(game, previous, session, status, network, now)?;
+        if session.mode != Mode::Online || session.turns.is_empty() {
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn local_turn(
@@ -571,53 +602,56 @@ fn advance(
         .tick()
         .checked_add(1)
         .ok_or("Match tick limit reached.")?;
-    let turn = match session.mode {
-        Mode::Offline => local_turn(game, &mut session.local_frames, next_tick)?,
-        Mode::Online => {
-            let Some(turn) = session.turns.remove(&next_tick) else {
-                // A stalled fixed clock must not repeatedly interpolate the previous tick backwards.
+    let mut authoritative_hash = None;
+    let turn =
+        match session.mode {
+            Mode::Offline => local_turn(game, &mut session.local_frames, next_tick)?,
+            Mode::Online => {
+                let Some((turn, hash)) = session.turns.remove(&next_tick) else {
+                    // A stalled fixed clock must not repeatedly interpolate the previous tick backwards.
+                    previous.0.clear();
+                    if now - session.last_step > 15.0 {
+                        return Err("The server stopped responding. Play has stopped.".into());
+                    }
+                    if now - session.last_step > 0.25 {
+                        status.message = "Waiting for the server…".into();
+                    }
+                    return Ok(());
+                };
+                authoritative_hash = Some(hash);
+                let target = session
+                    .received_tick
+                    .checked_add(INPUT_DELAY_TICKS)
+                    .ok_or("Match tick limit reached.")?;
+                if target > session.submitted_tick {
+                    network.0.as_mut().ok_or("Connection closed.")?.send(
+                        &ClientMessage::Input {
+                            tick: target,
+                            commands: std::mem::take(&mut game.pending),
+                        },
+                    )?;
+                    session.submitted_tick = target;
+                }
+                turn
+            }
+            Mode::Playback => {
+                let replay = session.playback.as_ref().ok_or("Replay is not loaded.")?;
+                let Some(turn) = replay.turns.get(game.sim.tick() as usize) else {
+                    if game.sim.state_hash() != replay.final_hash {
+                        return Err("Replay ended with a different match state.".into());
+                    }
+                    session.mode = Mode::Stopped;
+                    previous.0.clear();
+                    status.message = "Replay finished and verified.".into();
+                    return Ok(());
+                };
+                turn.clone()
+            }
+            Mode::Idle | Mode::Stopped => {
                 previous.0.clear();
-                if now - session.last_step > 15.0 {
-                    return Err("The other player stopped responding. Play has stopped.".into());
-                }
-                if now - session.last_step > 0.25 {
-                    status.message = "Waiting for the other player…".into();
-                }
                 return Ok(());
-            };
-            let target = game
-                .sim
-                .tick()
-                .checked_add(INPUT_DELAY_TICKS)
-                .ok_or("Match tick limit reached.")?;
-            network
-                .0
-                .as_mut()
-                .ok_or("Connection closed.")?
-                .send(&ClientMessage::Input {
-                    tick: target,
-                    commands: std::mem::take(&mut game.pending),
-                })?;
-            turn
-        }
-        Mode::Playback => {
-            let replay = session.playback.as_ref().ok_or("Replay is not loaded.")?;
-            let Some(turn) = replay.turns.get(game.sim.tick() as usize) else {
-                if game.sim.state_hash() != replay.final_hash {
-                    return Err("Replay ended with a different match state.".into());
-                }
-                session.mode = Mode::Stopped;
-                previous.0.clear();
-                status.message = "Replay finished and verified.".into();
-                return Ok(());
-            };
-            turn.clone()
-        }
-        Mode::Idle | Mode::Stopped => {
-            previous.0.clear();
-            return Ok(());
-        }
-    };
+            }
+        };
     previous.0.clear();
     previous
         .0
@@ -626,18 +660,11 @@ fn advance(
         .map_err(|error| format!("Cannot advance match: {error}"))?;
     let hash = game.sim.state_hash();
     if session.mode == Mode::Online {
-        if session.hashes.len() >= 64 {
-            return Err("Relay stopped confirming match state.".into());
+        if authoritative_hash != Some(hash) {
+            return Err(
+                "Match state differs from the authoritative server. Play has stopped.".into(),
+            );
         }
-        session.hashes.insert(next_tick, hash);
-        network
-            .0
-            .as_mut()
-            .ok_or("Connection closed.")?
-            .send(&ClientMessage::Hash {
-                tick: next_tick,
-                hash,
-            })?;
         if status.message.starts_with("Waiting for") {
             status.message = format!("Online match (player {})", game.local_player.0 + 1);
         }

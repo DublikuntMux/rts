@@ -1,12 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use rts_base::{Command, IVec2, PlayerId, TILE, UnitId};
 use rts_net::{
-    ClientMessage, MatchSetup, PROTOCOL_VERSION, Replay, ServerMessage, Turn, decode_server,
-    encode_client,
+    ClientMessage, MAX_MESSAGE_BYTES, MatchSetup, PROTOCOL_VERSION, Replay, ServerMessage,
+    decode_server, decode_server_binary, encode_client,
 };
 use rts_server::{Config, serve_with_config};
 use tokio::{
@@ -59,62 +59,60 @@ async fn send(client: &mut Client, message: &ClientMessage) {
 }
 
 async fn receive(client: &mut Client) -> ServerMessage {
-    let message = timeout(Duration::from_secs(3), client.next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    let Message::Text(text) = message else {
-        panic!("expected RON text, got {message:?}")
-    };
-    decode_server(&text).unwrap()
+    timeout(Duration::from_secs(3), async {
+        loop {
+            match client.next().await.unwrap().unwrap() {
+                Message::Text(text) => return decode_server(&text).unwrap(),
+                Message::Binary(bytes) => return decode_server_binary(&bytes).unwrap(),
+                Message::Ping(_) => client.flush().await.unwrap(),
+                message => panic!("expected server frame, got {message:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap()
 }
 
 async fn expect_error(client: &mut Client) {
     assert!(matches!(receive(client).await, ServerMessage::Error { .. }));
 }
 
-fn setup() -> MatchSetup {
-    MatchSetup {
-        rules: include_str!("../../../assets/data/core.rules.ron").to_owned(),
-        map: include_str!("../../../assets/maps/proving_grounds.map.ron").to_owned(),
-        seed: 123,
-        players: 2,
-    }
-}
-
-async fn create(host: &mut Client, checksum: u64) -> String {
+async fn create(host: &mut Client) -> (String, MatchSetup) {
     send(
         host,
         &ClientMessage::Create {
             version: PROTOCOL_VERSION,
-            checksum,
-            players: 2,
         },
     )
     .await;
+    let ServerMessage::Setup(setup) = receive(host).await else {
+        panic!("expected setup first")
+    };
     let ServerMessage::Lobby {
         code,
         player: PlayerId(0),
         players: 1,
-        capacity: 2,
+        ready: 0,
+        ..
     } = receive(host).await
     else {
         panic!("expected host lobby")
     };
-    code
+    (code, setup)
 }
 
-async fn join(host: &mut Client, guest: &mut Client, code: &str, checksum: u64) {
+async fn join(host: &mut Client, guest: &mut Client, code: &str) -> MatchSetup {
     send(
         guest,
         &ClientMessage::Join {
             version: PROTOCOL_VERSION,
             code: code.to_owned(),
-            checksum,
         },
     )
     .await;
+    let ServerMessage::Setup(setup) = receive(guest).await else {
+        panic!("expected setup first")
+    };
     assert!(matches!(
         receive(host).await,
         ServerMessage::Lobby {
@@ -131,9 +129,27 @@ async fn join(host: &mut Client, guest: &mut Client, code: &str, checksum: u64) 
             ..
         }
     ));
+    setup
 }
 
-async fn start(host: &mut Client, guest: &mut Client) -> Turn {
+async fn ready(host: &mut Client, guest: &mut Client, checksum: u64) {
+    send(host, &ClientMessage::Ready { checksum }).await;
+    for client in [&mut *host, &mut *guest] {
+        assert!(matches!(
+            receive(client).await,
+            ServerMessage::Lobby { ready: 1, .. }
+        ));
+    }
+    send(guest, &ClientMessage::Ready { checksum }).await;
+    for client in [&mut *host, &mut *guest] {
+        assert!(matches!(
+            receive(client).await,
+            ServerMessage::Lobby { ready: 2, .. }
+        ));
+    }
+}
+
+async fn start(host: &mut Client, guest: &mut Client) {
     send(host, &ClientMessage::Start).await;
     for client in [&mut *host, &mut *guest] {
         assert_eq!(
@@ -144,285 +160,265 @@ async fn start(host: &mut Client, guest: &mut Client) -> Turn {
             }
         );
     }
-    let first = receive(host).await;
-    assert_eq!(first, receive(guest).await);
-    let ServerMessage::Turn(turn) = first else {
-        panic!("expected bootstrap turn")
-    };
-    turn
-}
-
-async fn hash(host: &mut Client, guest: &mut Client, tick: u32, value: u64) {
-    for client in [&mut *host, &mut *guest] {
-        send(client, &ClientMessage::Hash { tick, hash: value }).await;
-    }
-    for client in [&mut *host, &mut *guest] {
-        assert_eq!(
-            receive(client).await,
-            ServerMessage::HashConfirmed { tick, hash: value }
-        );
-    }
 }
 
 #[tokio::test]
-async fn two_websocket_clients_exchange_moves_empty_frames_hashes_and_replay() {
+async fn websocket_server_simulates_moves_rejects_forged_ownership_and_produces_replay_hashes() {
     let server = Server::new(Config::default()).await;
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
-    let setup = setup();
-    let code = create(&mut host, setup.checksum()).await;
-    join(&mut host, &mut guest, &code, setup.checksum()).await;
-    let mut turn = start(&mut host, &mut guest).await;
-    let mut host_sim = setup.simulation().unwrap();
-    let mut guest_sim = setup.simulation().unwrap();
-    let initial_position = host_sim.unit(UnitId(0)).unwrap().pos;
+    let (code, setup) = create(&mut host).await;
+    assert_eq!(join(&mut host, &mut guest, &code).await, setup);
+    ready(&mut host, &mut guest, setup.checksum()).await;
+    start(&mut host, &mut guest).await;
+    let mut sim = setup.simulation().unwrap();
+    let initial = sim.unit(UnitId(0)).unwrap().pos;
     let mut replay = Replay::new(setup).unwrap();
-    for tick in 1..=24 {
-        if tick > 1 {
-            let host_commands = match tick {
-                2 => vec![Command::Move {
-                    units: vec![UnitId(0)],
-                    target: IVec2::new(10 * TILE, 8 * TILE),
-                }],
-                12 => vec![Command::Stop {
-                    units: vec![UnitId(0)],
-                }],
-                _ => Vec::new(),
-            };
-            let guest_commands = if tick == 2 {
-                vec![Command::Move {
-                    units: vec![UnitId(7)],
-                    target: IVec2::new(38 * TILE, 24 * TILE),
-                }]
-            } else {
-                Vec::new()
-            };
-            // The relay waits for both slots, even if the guest submits first.
-            send(
-                &mut guest,
-                &ClientMessage::Input {
-                    tick,
-                    commands: guest_commands,
-                },
-            )
-            .await;
-            send(
-                &mut host,
-                &ClientMessage::Input {
-                    tick,
-                    commands: host_commands,
-                },
-            )
-            .await;
-            let message = receive(&mut host).await;
-            assert_eq!(message, receive(&mut guest).await);
-            let ServerMessage::Turn(next) = message else {
-                panic!("expected agreed turn")
-            };
-            turn = next;
+    send(
+        &mut host,
+        &ClientMessage::Input {
+            tick: 2,
+            commands: vec![Command::Move {
+                units: vec![UnitId(0)],
+                target: IVec2::new(10 * TILE, 8 * TILE),
+            }],
+        },
+    )
+    .await;
+    send(
+        &mut host,
+        &ClientMessage::Input {
+            tick: 8,
+            commands: vec![Command::Stop {
+                units: vec![UnitId(0)],
+            }],
+        },
+    )
+    .await;
+    send(
+        &mut guest,
+        &ClientMessage::Input {
+            tick: 4,
+            commands: vec![Command::Stop {
+                units: vec![UnitId(0)],
+            }],
+        },
+    )
+    .await;
+    for tick in 1..=12 {
+        let message = receive(&mut host).await;
+        assert_eq!(message, receive(&mut guest).await);
+        let ServerMessage::Turn { turn, hash } = message else {
+            panic!("expected authoritative turn")
+        };
+        assert_eq!(turn.tick, tick);
+        turn.apply(&mut sim).unwrap();
+        assert_eq!(sim.state_hash(), hash);
+        replay.push(turn, hash).unwrap();
+        if tick == 5 {
+            assert!(sim.move_target(UnitId(0)).is_some());
         }
-        turn.validate(tick, 2).unwrap();
-        turn.apply(&mut host_sim).unwrap();
-        turn.apply(&mut guest_sim).unwrap();
-        let state_hash = host_sim.state_hash();
-        assert_eq!(state_hash, guest_sim.state_hash());
-        replay.push(turn.clone(), state_hash).unwrap();
-        hash(&mut host, &mut guest, tick, state_hash).await;
     }
-    assert_ne!(host_sim.unit(UnitId(0)).unwrap().pos, initial_position);
-    assert!(host_sim.move_target(UnitId(0)).is_none());
-    let recording = Replay::from_ron(&replay.to_ron().unwrap()).unwrap();
+    assert_ne!(sim.unit(UnitId(0)).unwrap().pos, initial);
+    assert!(sim.move_target(UnitId(0)).is_none());
     assert_eq!(
-        recording.playback().unwrap().state_hash(),
-        host_sim.state_hash()
+        Replay::from_ron(&replay.to_ron().unwrap())
+            .unwrap()
+            .playback()
+            .unwrap()
+            .state_hash(),
+        sim.state_hash()
     );
 }
 
 #[tokio::test]
-async fn websocket_bad_joins_full_room_and_unauthorized_start_are_retryable() {
+async fn readiness_is_required_and_invalid_joins_or_starts_remain_retryable() {
     let server = Server::new(Config::default()).await;
     let (mut host, mut guest, mut outsider) = (
         server.connect().await,
         server.connect().await,
         server.connect().await,
     );
-    let code = create(&mut host, 17).await;
+    let (code, setup) = create(&mut host).await;
     send(&mut host, &ClientMessage::Start).await;
     expect_error(&mut host).await;
-    // Use raw RON for a version rejected by the protocol encoder itself.
     guest
         .send(Message::Text(
-            format!("Join(version:99,code:\"{code}\",checksum:17)").into(),
+            format!("Join(version:1,code:\"{code}\")").into(),
         ))
         .await
         .unwrap();
     expect_error(&mut guest).await;
-    send(
-        &mut guest,
-        &ClientMessage::Join {
-            version: 1,
-            code: code.clone(),
-            checksum: 18,
-        },
-    )
-    .await;
-    expect_error(&mut guest).await;
-    join(&mut host, &mut guest, &code, 17).await;
+    join(&mut host, &mut guest, &code).await;
     send(
         &mut outsider,
         &ClientMessage::Join {
-            version: 1,
-            code: code.clone(),
-            checksum: 17,
+            version: PROTOCOL_VERSION,
+            code,
         },
     )
     .await;
     expect_error(&mut outsider).await;
+    send(&mut host, &ClientMessage::Start).await;
+    expect_error(&mut host).await;
+    send(
+        &mut guest,
+        &ClientMessage::Ready {
+            checksum: setup.checksum() ^ 1,
+        },
+    )
+    .await;
+    expect_error(&mut guest).await;
+    ready(&mut host, &mut guest, setup.checksum()).await;
     send(&mut guest, &ClientMessage::Start).await;
     expect_error(&mut guest).await;
     start(&mut host, &mut guest).await;
 }
 
 #[tokio::test]
-async fn websocket_unauthorized_duplicate_and_future_inputs_are_retryable() {
+async fn runtime_clock_has_no_initial_turn_and_runs_without_input_even_with_slow_config_poll() {
+    let server = Server::new(Config {
+        poll_interval: Duration::from_millis(250),
+        ..Config::default()
+    })
+    .await;
+    let (mut host, mut guest) = (server.connect().await, server.connect().await);
+    let (code, setup) = create(&mut host).await;
+    join(&mut host, &mut guest, &code).await;
+    ready(&mut host, &mut guest, setup.checksum()).await;
+    let started = Instant::now();
+    start(&mut host, &mut guest).await;
+    assert!(
+        timeout(Duration::from_millis(20), receive(&mut host))
+            .await
+            .is_err()
+    );
+    for tick in 1..=6 {
+        let message = receive(&mut host).await;
+        assert_eq!(message, receive(&mut guest).await);
+        let ServerMessage::Turn { turn, .. } = message else {
+            panic!("expected turn")
+        };
+        assert_eq!(turn.tick, tick);
+        assert!(turn.inputs.iter().all(|input| input.commands.is_empty()));
+        assert!(started.elapsed() >= Duration::from_millis(u64::from(tick) * 50));
+    }
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn inputs_cannot_vote_for_speed_change_and_invalid_ticks_are_retryable() {
     let server = Server::new(Config::default()).await;
     let (mut host, mut guest, mut outsider) = (
         server.connect().await,
         server.connect().await,
         server.connect().await,
     );
-    let code = create(&mut host, 17).await;
-    join(&mut host, &mut guest, &code, 17).await;
+    let (code, setup) = create(&mut host).await;
+    join(&mut host, &mut guest, &code).await;
+    ready(&mut host, &mut guest, setup.checksum()).await;
     start(&mut host, &mut guest).await;
     send(
         &mut outsider,
         &ClientMessage::Input {
             tick: 2,
-            commands: Vec::new(),
+            commands: vec![],
         },
     )
     .await;
     expect_error(&mut outsider).await;
-    // Slots are never accepted from the wire.
-    guest
-        .send(Message::Text("Input(tick:2,player:0,commands:[])".into()))
-        .await
-        .unwrap();
-    expect_error(&mut guest).await;
-    for tick in [3, u32::MAX] {
+    // The owner and state are never accepted from the wire; Hash is removed too.
+    for raw in ["Input(tick:2,player:0,commands:[])", "Hash(tick:1,hash:0)"] {
+        guest.send(Message::Text(raw.into())).await.unwrap();
+        expect_error(&mut guest).await;
+    }
+    for tick in [2, 8] {
         send(
             &mut guest,
             &ClientMessage::Input {
                 tick,
-                commands: Vec::new(),
+                commands: vec![],
             },
         )
         .await;
-        expect_error(&mut guest).await;
     }
-    send(
-        &mut guest,
-        &ClientMessage::Input {
-            tick: 2,
-            commands: Vec::new(),
-        },
-    )
-    .await;
-    send(
-        &mut guest,
-        &ClientMessage::Input {
-            tick: 2,
-            commands: Vec::new(),
-        },
-    )
-    .await;
-    expect_error(&mut guest).await;
-    // No turn is emitted while the host is still missing.
-    assert!(
-        timeout(Duration::from_millis(30), host.next())
-            .await
-            .is_err()
-    );
-    send(
-        &mut host,
-        &ClientMessage::Input {
-            tick: 2,
-            commands: Vec::new(),
-        },
-    )
-    .await;
-    assert!(matches!(
-        receive(&mut host).await,
-        ServerMessage::Turn(Turn { tick: 2, .. })
-    ));
-    assert!(matches!(
-        receive(&mut guest).await,
-        ServerMessage::Turn(Turn { tick: 2, .. })
-    ));
+    // Invalid submissions are checked by the deterministic coordinator tests; avoid
+    // racing the 50 ms clock while checking socket errors here.
+    let first = receive(&mut host).await;
+    assert_eq!(first, receive(&mut guest).await);
+    assert!(matches!(first, ServerMessage::Turn { turn, .. } if turn.tick == 1));
 }
 
 #[tokio::test]
-async fn websocket_hash_mismatch_ends_both_clients_and_connection_can_rejoin() {
-    let server = Server::new(Config::default()).await;
-    let (mut host, mut guest) = (server.connect().await, server.connect().await);
-    let code = create(&mut host, 17).await;
-    join(&mut host, &mut guest, &code, 17).await;
-    start(&mut host, &mut guest).await;
-    send(&mut host, &ClientMessage::Hash { tick: 1, hash: 9 }).await;
-    send(&mut guest, &ClientMessage::Hash { tick: 1, hash: 10 }).await;
-    for client in [&mut host, &mut guest] {
-        assert!(
-            matches!(receive(client).await, ServerMessage::Ended { reason } if reason.contains("mismatch"))
-        );
-    }
-    let code = create(&mut host, 18).await;
-    join(&mut host, &mut guest, &code, 18).await;
-}
-
-#[tokio::test]
-async fn websocket_disconnect_updates_lobby_but_ends_running_match() {
-    let server = Server::new(Config::default()).await;
-    let (mut host, mut guest) = (server.connect().await, server.connect().await);
-    let code = create(&mut host, 17).await;
-    join(&mut host, &mut guest, &code, 17).await;
-    guest.close(None).await.unwrap();
-    assert!(matches!(
-        receive(&mut host).await,
-        ServerMessage::Lobby { players: 1, .. }
-    ));
-    let mut replacement = server.connect().await;
-    join(&mut host, &mut replacement, &code, 17).await;
-    start(&mut host, &mut replacement).await;
-    replacement.close(None).await.unwrap();
-    assert!(matches!(
-        receive(&mut host).await,
-        ServerMessage::Ended { .. }
-    ));
-}
-
-#[tokio::test]
-async fn websocket_stalled_match_times_out_while_waiting_lobby_survives() {
+async fn socket_heartbeats_keep_game_running_with_no_client_input_or_hashes() {
     let server = Server::new(Config {
         peer_timeout: Duration::from_millis(180),
-        poll_interval: Duration::from_millis(5),
         ..Config::default()
     })
     .await;
-    let mut host = server.connect().await;
-    let code = create(&mut host, 17).await;
-    sleep(Duration::from_millis(240)).await;
-    let mut guest = server.connect().await;
-    join(&mut host, &mut guest, &code, 17).await;
+    let (mut host, mut guest) = (server.connect().await, server.connect().await);
+    let (code, setup) = create(&mut host).await;
+    join(&mut host, &mut guest, &code).await;
+    ready(&mut host, &mut guest, setup.checksum()).await;
     start(&mut host, &mut guest).await;
-    // Both sockets remain responsive while their match fails to produce a turn/hash.
-    for _ in 0..3 {
-        send(&mut host, &ClientMessage::Start).await;
-        send(&mut guest, &ClientMessage::Start).await;
-        expect_error(&mut host).await;
-        expect_error(&mut guest).await;
-        sleep(Duration::from_millis(40)).await;
+    for tick in 1..=16 {
+        let message = receive(&mut host).await;
+        assert_eq!(message, receive(&mut guest).await);
+        assert!(matches!(message, ServerMessage::Turn { turn, .. } if turn.tick == tick));
     }
-    for client in [&mut host, &mut guest] {
-        assert!(matches!(receive(client).await, ServerMessage::Ended { .. }));
+}
+
+#[tokio::test]
+async fn large_setup_is_minified_and_compressed_before_lobby() {
+    let mut config = Config::default();
+    config
+        .setup
+        .rules
+        .push_str(&" ".repeat(MAX_MESSAGE_BYTES * 3));
+    config
+        .setup
+        .map
+        .push_str(&" ".repeat(MAX_MESSAGE_BYTES * 3));
+    config.setup.seed = 123;
+    let expected = config.setup.minified();
+    let server = Server::new(config).await;
+    let (mut host, mut guest) = (server.connect().await, server.connect().await);
+    let (code, setup) = create(&mut host).await;
+    assert_eq!(setup, expected);
+    assert_eq!(join(&mut host, &mut guest, &code).await, expected);
+    ready(&mut host, &mut guest, setup.checksum()).await;
+    start(&mut host, &mut guest).await;
+}
+
+#[tokio::test]
+async fn guest_disconnect_updates_lobby_and_oversized_client_input_ends_match() {
+    let server = Server::new(Config::default()).await;
+    let (mut host, mut guest) = (server.connect().await, server.connect().await);
+    let (code, setup) = create(&mut host).await;
+    join(&mut host, &mut guest, &code).await;
+    guest.close(None).await.unwrap();
+    assert!(matches!(
+        receive(&mut host).await,
+        ServerMessage::Lobby {
+            players: 1,
+            ready: 0,
+            ..
+        }
+    ));
+    let mut guest = server.connect().await;
+    join(&mut host, &mut guest, &code).await;
+    ready(&mut host, &mut guest, setup.checksum()).await;
+    start(&mut host, &mut guest).await;
+    guest
+        .send(Message::Text(" ".repeat(MAX_MESSAGE_BYTES + 1).into()))
+        .await
+        .unwrap();
+    // A close may cross the first tick on slow machines.
+    loop {
+        match receive(&mut host).await {
+            ServerMessage::Ended { .. } => break,
+            ServerMessage::Turn { .. } => {}
+            message => panic!("unexpected {message:?}"),
+        }
     }
 }
 
@@ -431,12 +427,35 @@ async fn stalled_handshake_is_bounded_and_releases_connection_capacity() {
     let server = Server::new(Config {
         max_connections: 1,
         handshake_timeout: Duration::from_millis(50),
-        poll_interval: Duration::from_millis(5),
         ..Config::default()
     })
     .await;
     let _stalled = TcpStream::connect(server.address).await.unwrap();
     sleep(Duration::from_millis(120)).await;
-    let mut host = server.connect().await;
-    create(&mut host, 17).await;
+    create(&mut server.connect().await).await;
+}
+
+#[tokio::test]
+async fn invalid_setup_and_resource_limits_fail_before_accepting_connections() {
+    for config in [
+        Config {
+            setup: MatchSetup {
+                rules: "invalid".to_owned(),
+                ..Config::default().setup
+            },
+            ..Config::default()
+        },
+        Config {
+            max_connections: 0,
+            ..Config::default()
+        },
+        Config {
+            poll_interval: Duration::ZERO,
+            ..Config::default()
+        },
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let error = serve_with_config(listener, config).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    }
 }

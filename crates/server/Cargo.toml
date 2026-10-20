@@ -1,6 +1,6 @@
 [package]
 name = "rts_server"
-description = "WebSocket lobby and deterministic lockstep relay."
+description = "WebSocket lobby and authoritative fixed-rate simulation server."
 version.workspace = true
 edition.workspace = true
 

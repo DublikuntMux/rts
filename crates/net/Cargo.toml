@@ -15,3 +15,4 @@ rts_base.workspace = true
 serde.workspace = true
 ron.workspace = true
 thiserror.workspace = true
+miniz_oxide.workspace = true

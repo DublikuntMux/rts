@@ -1,20 +1,21 @@
 use std::{collections::BTreeMap, time::Duration};
 
-use rts_base::{Command, MAX_PLAYERS, PlayerId};
+use rts_base::{Command, PlayerId, Sim, TICK_RATE};
 use rts_net::{
-    ClientMessage, INPUT_DELAY_TICKS, PROTOCOL_VERSION, PlayerInput, ServerMessage, Turn,
-    validate_commands,
+    ClientMessage, INPUT_DELAY_TICKS, MatchSetup, PROTOCOL_VERSION, PlayerInput, ServerMessage,
+    Turn, encode_client, encode_server, validate_commands,
 };
 
 /// Connection identity allocated by the socket runtime, never supplied by a client.
 pub type ClientId = u64;
 
-/// Maximum buffered input/hash lead. Also bounds retained, unconfirmed turns.
+/// Maximum buffered input lead relative to the authoritative simulation tick.
 pub const MAX_FUTURE_TICKS: u32 = 8;
 
-/// Resource and timeout limits for one relay process.
+/// Resource limits, socket timeouts and server-owned match content.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub setup: MatchSetup,
     pub max_connections: usize,
     pub max_rooms: usize,
     pub event_queue_capacity: usize,
@@ -28,6 +29,12 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            setup: MatchSetup {
+                rules: include_str!("../../../assets/data/core.rules.ron").to_owned(),
+                map: include_str!("../../../assets/maps/proving_grounds.map.ron").to_owned(),
+                seed: 0,
+                players: 2,
+            },
             max_connections: 1024,
             max_rooms: 256,
             event_queue_capacity: 256,
@@ -35,7 +42,7 @@ impl Default for Config {
             peer_timeout: Duration::from_secs(15),
             lobby_timeout: Duration::from_mins(30),
             handshake_timeout: Duration::from_secs(5),
-            poll_interval: Duration::from_millis(250),
+            poll_interval: Duration::from_millis(10),
         }
     }
 }
@@ -53,25 +60,26 @@ struct Peer {
 }
 
 struct Room {
-    checksum: u64,
     slots: Vec<Option<ClientId>>,
+    ready: Vec<bool>,
     game: Option<Game>,
 }
 
+const TICK_DURATION: Duration = Duration::from_millis(1000 / TICK_RATE as u64);
+/// A long scheduler stall advances at most this many turns before resetting the deadline.
+pub const MAX_CATCH_UP_TURNS: usize = 4;
+
 struct Game {
-    next_input: Vec<u32>,
-    next_hash: Vec<u32>,
-    inputs: BTreeMap<u32, Vec<Option<Vec<Command>>>>,
-    hashes: BTreeMap<u32, Vec<Option<u64>>>,
-    emitted: u32,
-    confirmed: u32,
-    last_turn: Duration,
-    last_hash: Duration,
+    sim: Sim,
+    last_input: Vec<u32>,
+    inputs: BTreeMap<u32, Vec<Vec<Command>>>,
+    next_turn: Duration,
 }
 
 /// Pure room coordinator. Callers supply monotonically increasing elapsed time.
 pub struct Coordinator {
     config: Config,
+    initial_sim: Option<Sim>,
     peers: BTreeMap<ClientId, Peer>,
     rooms: BTreeMap<String, Room>,
     next_code: u64,
@@ -79,9 +87,11 @@ pub struct Coordinator {
 
 impl Coordinator {
     #[must_use]
-    pub const fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Self {
+        let initial_sim = config.setup.simulation().ok();
         Self {
             config,
+            initial_sim,
             peers: BTreeMap::new(),
             rooms: BTreeMap::new(),
             next_code: 0,
@@ -90,7 +100,10 @@ impl Coordinator {
 
     /// Reserves a connection, including connections still doing their handshake.
     pub fn connect(&mut self, client: ClientId, now: Duration) -> bool {
-        if self.peers.len() >= self.config.max_connections || self.peers.contains_key(&client) {
+        if self.initial_sim.is_none()
+            || self.peers.len() >= self.config.max_connections
+            || self.peers.contains_key(&client)
+        {
             return false;
         }
         self.peers.insert(
@@ -128,16 +141,8 @@ impl Coordinator {
         }
         self.touch(client, now);
         let result = match message {
-            ClientMessage::Create {
-                version,
-                checksum,
-                players,
-            } => self.create(client, version, checksum, players),
-            ClientMessage::Join {
-                version,
-                code,
-                checksum,
-            } => self.join(client, version, &code, checksum),
+            ClientMessage::Create { version } => self.create(client, version),
+            ClientMessage::Join { version, code } => self.join(client, version, &code),
             message => self.in_room(client, message, now),
         };
         result.unwrap_or_else(|message| vec![error(client, message)])
@@ -157,9 +162,10 @@ impl Coordinator {
         if room.game.is_some() || room.slots[0] == Some(client) {
             return self.end_room(room, "a player disconnected");
         }
-        for slot in &mut room.slots {
+        for (slot, ready) in room.slots.iter_mut().zip(&mut room.ready) {
             if *slot == Some(client) {
                 *slot = None;
+                *ready = false;
             }
         }
         let messages = lobby(&code, &room);
@@ -167,7 +173,7 @@ impl Coordinator {
         messages
     }
 
-    /// Expires silent sockets and matches with stalled inputs or hash reports.
+    /// Expires silent sockets. Match progress never depends on input or hash reports.
     /// Pregame sockets have a separate, generous lobby timeout.
     pub fn expire(&mut self, now: Duration) -> Vec<Delivery> {
         let expired: Vec<_> = self
@@ -191,47 +197,43 @@ impl Coordinator {
         for id in expired {
             messages.extend(self.disconnect(id));
         }
-        let stalled: Vec<_> = self
-            .rooms
-            .iter()
-            .filter_map(|(code, room)| {
-                room.game
-                    .as_ref()
-                    .filter(|game| {
-                        now.saturating_sub(game.last_turn) >= self.config.peer_timeout
-                            || now.saturating_sub(game.last_hash) >= self.config.peer_timeout
-                    })
-                    .map(|_| code.clone())
-            })
-            .collect();
-        for code in stalled {
+        messages
+    }
+
+    /// Advances every match on its own 20 Hz clock, with bounded catch-up after stalls.
+    /// The first turn is due 50 ms after Started; missing player input is empty.
+    pub fn advance(&mut self, now: Duration) -> Vec<Delivery> {
+        let mut messages = Vec::new();
+        let mut failed = Vec::new();
+        for (code, room) in &mut self.rooms {
+            let Some(game) = &mut room.game else { continue };
+            match game.advance(now) {
+                Ok(turns) => {
+                    for turn in turns {
+                        messages.extend(broadcast(room, turn));
+                    }
+                }
+                Err(reason) => failed.push((code.clone(), reason)),
+            }
+        }
+        for (code, reason) in failed {
             if let Some(room) = self.rooms.remove(&code) {
-                messages
-                    .extend(self.end_room(room, "match timed out waiting for inputs or hashes"));
+                messages.extend(self.end_room(room, reason));
             }
         }
         messages
     }
 
-    fn create(
-        &mut self,
-        client: ClientId,
-        version: u32,
-        checksum: u64,
-        players: u8,
-    ) -> Result<Vec<Delivery>, &'static str> {
+    fn create(&mut self, client: ClientId, version: u32) -> Result<Vec<Delivery>, &'static str> {
         self.available(client, version)?;
-        if players == 0 || usize::from(players) > MAX_PLAYERS {
-            return Err("invalid player count");
-        }
         if self.rooms.len() >= self.config.max_rooms {
             return Err("server room limit reached");
         }
         let code = self.allocate_code();
-        let mut slots = vec![None; usize::from(players)];
+        let mut slots = vec![None; usize::from(self.config.setup.players)];
         slots[0] = Some(client);
         let room = Room {
-            checksum,
+            ready: vec![false; slots.len()],
             slots,
             game: None,
         };
@@ -239,7 +241,11 @@ impl Coordinator {
             .get_mut(&client)
             .expect("registered connection")
             .room = Some(code.clone());
-        let messages = lobby(&code, &room);
+        let mut messages = vec![Delivery {
+            client,
+            message: ServerMessage::Setup(self.config.setup.clone()),
+        }];
+        messages.extend(lobby(&code, &room));
         self.rooms.insert(code, room);
         Ok(messages)
     }
@@ -249,7 +255,6 @@ impl Coordinator {
         client: ClientId,
         version: u32,
         code: &str,
-        checksum: u64,
     ) -> Result<Vec<Delivery>, &'static str> {
         self.available(client, version)?;
         if code.len() != 6
@@ -263,9 +268,6 @@ impl Coordinator {
         if room.game.is_some() {
             return Err("match has already started");
         }
-        if room.checksum != checksum {
-            return Err("setup checksum does not match");
-        }
         let slot = room
             .slots
             .iter_mut()
@@ -276,7 +278,12 @@ impl Coordinator {
             .get_mut(&client)
             .expect("registered connection")
             .room = Some(code.to_owned());
-        Ok(lobby(code, room))
+        let mut messages = vec![Delivery {
+            client,
+            message: ServerMessage::Setup(self.config.setup.clone()),
+        }];
+        messages.extend(lobby(code, room));
+        Ok(messages)
     }
 
     fn available(&self, client: ClientId, version: u32) -> Result<(), &'static str> {
@@ -330,6 +337,7 @@ impl Coordinator {
                 return Ok(self.end_room(room, "a player left the room"));
             }
             room.slots[slot] = None;
+            room.ready[slot] = false;
             self.peers
                 .get_mut(&client)
                 .expect("registered connection")
@@ -344,32 +352,34 @@ impl Coordinator {
             self.rooms.insert(code, room);
             return Ok(messages);
         }
-        let action = room.receive(slot, message, now);
-        match action {
-            Ok(RoomAction::End(reason)) => Ok(self.end_room(room, reason)),
-            Ok(RoomAction::Messages(messages)) => {
-                // Lobby silence is allowed for much longer than match silence.
-                // Give every slot a complete heartbeat window after starting.
-                if messages
-                    .iter()
-                    .any(|message| matches!(message, ServerMessage::Started { .. }))
-                {
-                    for &id in room.slots.iter().flatten() {
-                        self.touch(id, now);
+        let action = if let ClientMessage::Ready { checksum } = message {
+            if room.game.is_some() {
+                Err("match has already started")
+            } else if checksum != self.config.setup.checksum() {
+                Err("setup checksum does not match")
+            } else {
+                room.ready[slot] = true;
+                Ok(lobby(&code, &room))
+            }
+        } else {
+            room.receive(slot, message, now, self.initial_sim.as_ref())
+                .map(|messages| {
+                    if messages
+                        .iter()
+                        .any(|m| matches!(m, ServerMessage::Started { .. }))
+                    {
+                        for &id in room.slots.iter().flatten() {
+                            self.touch(id, now);
+                        }
                     }
-                }
-                let result = messages
-                    .into_iter()
-                    .flat_map(|message| broadcast(&room, message))
-                    .collect();
-                self.rooms.insert(code, room);
-                Ok(result)
-            }
-            Err(error) => {
-                self.rooms.insert(code, room);
-                Err(error)
-            }
-        }
+                    messages
+                        .into_iter()
+                        .flat_map(|m| broadcast(&room, m))
+                        .collect()
+                })
+        };
+        self.rooms.insert(code, room);
+        action
     }
 
     fn end_room(&mut self, room: Room, reason: &str) -> Vec<Delivery> {
@@ -387,18 +397,14 @@ impl Coordinator {
     }
 }
 
-enum RoomAction {
-    Messages(Vec<ServerMessage>),
-    End(&'static str),
-}
-
 impl Room {
     fn receive(
         &mut self,
         slot: usize,
         message: ClientMessage,
         now: Duration,
-    ) -> Result<RoomAction, &'static str> {
+        initial_sim: Option<&Sim>,
+    ) -> Result<Vec<ServerMessage>, &'static str> {
         if matches!(message, ClientMessage::Start) {
             if slot != 0 {
                 return Err("only the host can start the match");
@@ -409,39 +415,28 @@ impl Room {
             if self.slots.iter().any(Option::is_none) {
                 return Err("room is not full");
             }
+            if !self.ready.iter().all(|&ready| ready) {
+                return Err("all players must acknowledge the setup");
+            }
+            let sim = initial_sim.ok_or("invalid server setup")?.clone();
             let players = u8::try_from(self.slots.len()).expect("bounded player count");
             self.game = Some(Game {
-                next_input: vec![2; self.slots.len()],
-                next_hash: vec![1; self.slots.len()],
+                sim,
+                last_input: vec![0; self.slots.len()],
                 inputs: BTreeMap::new(),
-                hashes: BTreeMap::new(),
-                emitted: 1,
-                confirmed: 0,
-                last_turn: now,
-                last_hash: now,
+                next_turn: now.saturating_add(TICK_DURATION),
             });
-            return Ok(RoomAction::Messages(vec![
-                ServerMessage::Started {
-                    players,
-                    input_delay: INPUT_DELAY_TICKS,
-                },
-                ServerMessage::Turn(Turn {
-                    tick: 1,
-                    inputs: (0..players)
-                        .map(|player| PlayerInput {
-                            player: PlayerId(player),
-                            commands: Vec::new(),
-                        })
-                        .collect(),
-                }),
-            ]));
+            return Ok(vec![ServerMessage::Started {
+                players,
+                input_delay: INPUT_DELAY_TICKS,
+            }]);
         }
         let game = self.game.as_mut().ok_or("match has not started")?;
         match message {
-            ClientMessage::Input { tick, commands } => game
-                .input(slot, tick, commands, now)
-                .map(RoomAction::Messages),
-            ClientMessage::Hash { tick, hash } => game.hash(slot, tick, hash, now),
+            ClientMessage::Input { tick, commands } => {
+                game.input(slot, tick, commands)?;
+                Ok(Vec::new())
+            }
             _ => Err("invalid message for a running match"),
         }
     }
@@ -452,95 +447,85 @@ impl Game {
         &mut self,
         slot: usize,
         tick: u32,
-        commands: Vec<Command>,
-        now: Duration,
-    ) -> Result<Vec<ServerMessage>, &'static str> {
-        if tick != self.next_input[slot] {
-            return Err("input ticks must be sequential without duplicates");
+        mut commands: Vec<Command>,
+    ) -> Result<(), &'static str> {
+        if tick <= self.sim.tick() || tick <= self.last_input[slot] {
+            return Err("input tick is past, duplicate or out of order");
         }
-        if tick == u32::MAX
-            || tick > self.emitted.saturating_add(MAX_FUTURE_TICKS)
-            || tick > self.confirmed.saturating_add(MAX_FUTURE_TICKS)
-        {
+        if tick > self.sim.tick().saturating_add(MAX_FUTURE_TICKS) {
             return Err("input tick exceeds the permitted future lead");
         }
         validate_commands(&commands).map_err(|_| "input exceeds command limits")?;
-        let players = self.next_input.len();
-        self.inputs
-            .entry(tick)
-            .or_insert_with(|| vec![None; players])[slot] = Some(commands);
-        self.next_input[slot] += 1;
-        let mut messages = Vec::new();
-        while self
+        encode_client(&ClientMessage::Input {
+            tick,
+            commands: commands.clone(),
+        })
+        .map_err(|_| "input exceeds message limits")?;
+        let player = PlayerId(u8::try_from(slot).expect("bounded player count"));
+        for command in &mut commands {
+            let (Command::Move { units, .. } | Command::Stop { units }) = command;
+            units.retain(|&id| self.sim.unit(id).is_some_and(|unit| unit.owner == player));
+        }
+        commands.retain(|command| {
+            let (Command::Move { units, .. } | Command::Stop { units }) = command;
+            !units.is_empty()
+        });
+        let mut inputs = self
             .inputs
-            .get(&(self.emitted + 1))
-            .is_some_and(|inputs| inputs.iter().all(Option::is_some))
-        {
-            self.emitted += 1;
+            .get(&tick)
+            .cloned()
+            .unwrap_or_else(|| vec![Vec::new(); self.last_input.len()]);
+        inputs[slot] = commands;
+        // Bound the combined broadcast too, reserving the longest possible hash encoding.
+        encode_server(&ServerMessage::Turn {
+            turn: make_turn(tick, inputs.clone()),
+            hash: u64::MAX,
+        })
+        .map_err(|_| "combined turn exceeds message limits")?;
+        self.inputs.insert(tick, inputs);
+        self.last_input[slot] = tick;
+        Ok(())
+    }
+
+    fn advance(&mut self, now: Duration) -> Result<Vec<ServerMessage>, &'static str> {
+        let mut messages = Vec::new();
+        while now >= self.next_turn && messages.len() < MAX_CATCH_UP_TURNS {
+            let tick = self
+                .sim
+                .tick()
+                .checked_add(1)
+                .ok_or("match tick overflow")?;
             let inputs = self
                 .inputs
-                .remove(&self.emitted)
-                .expect("complete input frame");
-            messages.push(ServerMessage::Turn(Turn {
-                tick: self.emitted,
-                inputs: inputs
-                    .into_iter()
-                    .enumerate()
-                    .map(|(player, commands)| PlayerInput {
-                        player: PlayerId(u8::try_from(player).expect("bounded player count")),
-                        commands: commands.expect("complete input frame"),
-                    })
-                    .collect(),
-            }));
-            self.last_turn = now;
+                .remove(&tick)
+                .unwrap_or_else(|| vec![Vec::new(); self.last_input.len()]);
+            let turn = make_turn(tick, inputs);
+            turn.apply(&mut self.sim)
+                .map_err(|_| "invalid authoritative turn")?;
+            messages.push(ServerMessage::Turn {
+                turn,
+                hash: self.sim.state_hash(),
+            });
+            self.next_turn = self.next_turn.saturating_add(TICK_DURATION);
+        }
+        if now >= self.next_turn {
+            self.next_turn = now.saturating_add(TICK_DURATION);
         }
         Ok(messages)
     }
+}
 
-    fn hash(
-        &mut self,
-        slot: usize,
-        tick: u32,
-        hash: u64,
-        now: Duration,
-    ) -> Result<RoomAction, &'static str> {
-        if tick != self.next_hash[slot]
-            || tick > self.emitted
-            || tick == u32::MAX
-            || tick > self.confirmed.saturating_add(MAX_FUTURE_TICKS)
-        {
-            return Err(
-                "hash ticks must be sequential and refer to emitted turns within the permitted lead",
-            );
-        }
-        let players = self.next_hash.len();
-        let hashes = self
-            .hashes
-            .entry(tick)
-            .or_insert_with(|| vec![None; players]);
-        if hashes.iter().flatten().any(|&reported| reported != hash) {
-            return Ok(RoomAction::End("state hash mismatch"));
-        }
-        hashes[slot] = Some(hash);
-        self.next_hash[slot] += 1;
-        let mut messages = Vec::new();
-        while self
-            .hashes
-            .get(&(self.confirmed + 1))
-            .is_some_and(|hashes| hashes.iter().all(Option::is_some))
-        {
-            self.confirmed += 1;
-            let hashes = self
-                .hashes
-                .remove(&self.confirmed)
-                .expect("complete hash frame");
-            messages.push(ServerMessage::HashConfirmed {
-                tick: self.confirmed,
-                hash: hashes[0].expect("complete hash frame"),
-            });
-            self.last_hash = now;
-        }
-        Ok(RoomAction::Messages(messages))
+fn make_turn(tick: u32, inputs: Vec<Vec<Command>>) -> Turn {
+    Turn {
+        tick,
+        inputs: inputs
+            .into_iter()
+            .enumerate()
+            .map(|(slot, commands)| PlayerInput {
+                player: PlayerId(u8::try_from(slot).expect("bounded player count")),
+                commands,
+            })
+            .collect(),
     }
 }
 
@@ -567,6 +552,8 @@ fn lobby(code: &str, room: &Room) -> Vec<Delivery> {
                     player: PlayerId(u8::try_from(player).expect("bounded player count")),
                     players,
                     capacity,
+                    ready: u8::try_from(room.ready.iter().filter(|&&ready| ready).count())
+                        .expect("bounded player count"),
                 },
             })
         })

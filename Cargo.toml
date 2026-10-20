@@ -13,6 +13,7 @@ bevy_asset_packer = { version = "0.5.0", default-features = false }
 # Same as in Bevy
 glam = "0.33"
 ron = "0.12"
+miniz_oxide = "0.9.1"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2"
 wasm-bindgen-futures = "0.4"

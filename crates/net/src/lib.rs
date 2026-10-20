@@ -1,7 +1,10 @@
-//! Transport-independent lockstep protocol and replay files.
+//! Transport-independent authoritative turn protocol, match setup and verified replay files.
 
+mod minify;
 mod replay;
 mod setup;
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use rts_base::{Command, MAX_PLAYERS, PlayerId, Sim};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -10,11 +13,20 @@ pub use replay::{MAX_REPLAY_BYTES, MAX_REPLAY_TURNS, Replay};
 pub use rts_base::INPUT_DELAY_TICKS;
 pub use setup::{MAX_SETUP_BYTES, MatchSetup};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 4;
+/// Maximum client message and small server message size.
 pub const MAX_MESSAGE_BYTES: usize = 65_536;
+/// One bounded input per player, plus turn framing and authoritative hash overhead.
+pub const MAX_TURN_MESSAGE_BYTES: usize = MAX_MESSAGE_BYTES * (MAX_PLAYERS + 1);
+/// Bounds the binary setup header and both compressed RON documents.
+pub const MAX_SERVER_MESSAGE_BYTES: usize = setup::wire::MAX_FRAME_BYTES;
 /// Maximum commands in each player's batch for a turn.
 pub const MAX_COMMANDS_PER_TURN: usize = 64;
 pub const MAX_UNITS_PER_COMMAND: usize = 1024;
+/// Total selected unit occurrences across a single player's batch.
+pub const MAX_UNIT_SELECTIONS_PER_TURN: usize = 1024;
+/// Allows ordered replacements such as Move then Stop without unbounded repeated pathfinding.
+pub const MAX_ORDERS_PER_UNIT_PER_TURN: usize = 4;
 const RON_RECURSION_LIMIT: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -103,44 +115,33 @@ impl Turn {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ClientMessage {
-    Create {
-        version: u32,
-        checksum: u64,
-        players: u8,
-    },
-    Join {
-        version: u32,
-        code: String,
-        checksum: u64,
-    },
+    Create { version: u32 },
+    Join { version: u32, code: String },
+    Ready { checksum: u64 },
     Start,
-    Input {
-        tick: u32,
-        commands: Vec<Command>,
-    },
-    Hash {
-        tick: u32,
-        hash: u64,
-    },
+    Input { tick: u32, commands: Vec<Command> },
     Leave,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ServerMessage {
+    #[serde(skip)]
+    Setup(MatchSetup),
     Lobby {
         code: String,
         player: PlayerId,
         players: u8,
         capacity: u8,
+        ready: u8,
     },
     Started {
         players: u8,
         input_delay: u32,
     },
-    Turn(Turn),
-    HashConfirmed {
-        tick: u32,
+    Turn {
+        turn: Turn,
+        /// Authoritative simulation hash after applying this turn.
         hash: u64,
     },
     Ended {
@@ -151,18 +152,45 @@ pub enum ServerMessage {
     },
 }
 
-/// Validates limits on a single player's command batch, including unit selections.
+/// An encoded WebSocket application message, without a socket-library dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerFrame {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+/// Validates a player's batch, bounding selections and repeated orders per unit.
 ///
 /// # Errors
-/// Returns an error when either the command count or a unit selection exceeds its limit.
+/// Returns an error for excessive commands/selections, duplicate selected IDs or too many
+/// orders for one unit across the batch.
 pub fn validate_commands(commands: &[Command]) -> Result<(), NetError> {
     if commands.len() > MAX_COMMANDS_PER_TURN {
         return Err(NetError::invalid("too many commands in player batch"));
     }
+    let mut selections = 0;
+    let mut orders = BTreeMap::new();
     for command in commands {
         let (Command::Move { units, .. } | Command::Stop { units }) = command;
         if units.len() > MAX_UNITS_PER_COMMAND {
             return Err(NetError::invalid("too many units in command"));
+        }
+        selections += units.len();
+        if selections > MAX_UNIT_SELECTIONS_PER_TURN {
+            return Err(NetError::invalid("too many selected units in player batch"));
+        }
+        let mut unique = BTreeSet::new();
+        for &unit in units {
+            if !unique.insert(unit) {
+                return Err(NetError::invalid("duplicate unit in command"));
+            }
+            let count = orders.entry(unit).or_insert(0);
+            *count += 1;
+            if *count > MAX_ORDERS_PER_UNIT_PER_TURN {
+                return Err(NetError::invalid(
+                    "too many orders for one unit in player batch",
+                ));
+            }
         }
     }
     Ok(())
@@ -205,12 +233,7 @@ fn validate_tick(tick: u32) -> Result<(), NetError> {
 impl ClientMessage {
     fn validate(&self) -> Result<(), NetError> {
         match self {
-            Self::Create {
-                version, players, ..
-            } => {
-                validate_version(*version)?;
-                validate_players(*players)
-            }
+            Self::Create { version } => validate_version(*version),
             Self::Join { version, code, .. } => {
                 validate_version(*version)?;
                 validate_code(code)
@@ -219,25 +242,34 @@ impl ClientMessage {
                 validate_tick(*tick)?;
                 validate_commands(commands)
             }
-            Self::Hash { tick, .. } => validate_tick(*tick),
-            Self::Start | Self::Leave => Ok(()),
+            Self::Ready { .. } | Self::Start | Self::Leave => Ok(()),
         }
     }
 }
 
 impl ServerMessage {
+    const fn wire_limit(&self) -> usize {
+        match self {
+            Self::Setup(_) => MAX_SERVER_MESSAGE_BYTES,
+            Self::Turn { .. } => MAX_TURN_MESSAGE_BYTES,
+            _ => MAX_MESSAGE_BYTES,
+        }
+    }
+
     fn validate(&self) -> Result<(), NetError> {
         match self {
+            Self::Setup(setup) => setup.simulation().map(|_| ()),
             Self::Lobby {
                 code,
                 player,
                 players,
                 capacity,
+                ready,
             } => {
                 validate_code(code)?;
                 validate_players(*players)?;
                 validate_players(*capacity)?;
-                if players > capacity || player.0 >= *capacity {
+                if players > capacity || player.0 >= *capacity || ready > players {
                     return Err(NetError::invalid("invalid lobby slots"));
                 }
                 Ok(())
@@ -252,12 +284,11 @@ impl ServerMessage {
                 }
                 Ok(())
             }
-            Self::Turn(turn) => {
+            Self::Turn { turn, .. } => {
                 let players = u8::try_from(turn.inputs.len())
                     .map_err(|_| NetError::invalid("too many turn inputs"))?;
                 turn.validate(turn.tick, players)
             }
-            Self::HashConfirmed { tick, .. } => validate_tick(*tick),
             Self::Ended { .. } | Self::Error { .. } => Ok(()),
         }
     }
@@ -265,7 +296,7 @@ impl ServerMessage {
 
 pub(crate) fn check_size(size: usize, limit: usize) -> Result<(), NetError> {
     if size > limit {
-        return Err(NetError::invalid(format!("RON data exceeds {limit} bytes")));
+        return Err(NetError::invalid(format!("data exceeds {limit} bytes")));
     }
     Ok(())
 }
@@ -293,10 +324,23 @@ pub fn decode_client(text: &str) -> Result<ClientMessage, NetError> {
     Ok(message)
 }
 
+/// Decodes a server text frame. Setup is accepted only by [`decode_server_binary`].
+///
 /// # Errors
 /// Returns an error for malformed, incompatible, or oversized messages.
 pub fn decode_server(text: &str) -> Result<ServerMessage, NetError> {
-    let message: ServerMessage = decode(text, MAX_MESSAGE_BYTES)?;
+    let message: ServerMessage = decode(text, MAX_TURN_MESSAGE_BYTES)?;
+    check_size(text.len(), message.wire_limit())?;
+    message.validate()?;
+    Ok(message)
+}
+
+/// Decodes a binary setup frame and validates its decompressed configuration.
+///
+/// # Errors
+/// Returns an error for an incompatible header, invalid lengths, corrupt streams or setup.
+pub fn decode_server_binary(bytes: &[u8]) -> Result<ServerMessage, NetError> {
+    let message = ServerMessage::Setup(setup::wire::decode(bytes)?);
     message.validate()?;
     Ok(message)
 }
@@ -308,11 +352,16 @@ pub fn encode_client(message: &ClientMessage) -> Result<String, NetError> {
     encode(message, MAX_MESSAGE_BYTES)
 }
 
+/// Encodes setup as raw binary and other messages as RON text.
+///
 /// # Errors
-/// Returns an error for invalid or oversized messages or failed RON serialization.
-pub fn encode_server(message: &ServerMessage) -> Result<String, NetError> {
+/// Returns an error for invalid setup/messages, excessive sizes or failed serialization.
+pub fn encode_server(message: &ServerMessage) -> Result<ServerFrame, NetError> {
     message.validate()?;
-    encode(message, MAX_MESSAGE_BYTES)
+    match message {
+        ServerMessage::Setup(setup) => setup::wire::encode(setup).map(ServerFrame::Binary),
+        _ => encode(message, message.wire_limit()).map(ServerFrame::Text),
+    }
 }
 
 #[cfg(test)]

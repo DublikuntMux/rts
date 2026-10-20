@@ -17,7 +17,7 @@ A top-down 2D real-time strategy game in the classic style (gather, build, fight
 |---|---|
 | Pure Rust | No C/C++ dependencies. Scripting uses `omnilua` (pure-Rust Lua), not `mlua`/Luau. |
 | Desktop + web (`wasm32-unknown-unknown`) + Android | Every dependency must build for all three. Networking must work in browsers (WebSocket or WebRTC). |
-| Multiplayer | Deterministic lockstep simulation (see below). This constrains all simulation and script code. |
+| Multiplayer | Server-authoritative deterministic simulation with verified client replicas (see below). This constrains all simulation and script code. |
 | Mobile controls | Every action reachable by touch; no hover or hotkey-only features. |
 
 ## Tech stack
@@ -25,7 +25,7 @@ A top-down 2D real-time strategy game in the classic style (gather, build, fight
 - Engine/client: Bevy 0.20 (nightly toolchain, edition 2024).
 - Simulation: `rts_base` crate, plain Rust, no Bevy dependency.
 - Data: RON files via `serde` + `ron`.
-- Networking: WebSocket relay with `ewebsock` clients and Tokio/`tokio-tungstenite` server; shared protocol in `rts_net`.
+- Networking: Authoritative WebSocket server with `ewebsock` clients and Tokio/`tokio-tungstenite` server; shared protocol in `rts_net`.
 - Assets: `bevy_asset_packer` bundles `assets/` into `assets.pack` at build time (`crates/assets/build.rs`).
 - Scripting (M6): `omnilua` built with `default-features = false` (only base/string/table/math), run through `Lua::sandboxed` with an instruction limit.
 - Web build: Trunk (`index.html`, `Trunk.toml` at the root). Android: Gradle project in `android/`, which builds `crates/android` with `cargo ndk`.
@@ -42,7 +42,7 @@ The root `Cargo.toml` only defines the workspace (shared package fields, depende
 | `rts_assets` | `crates/assets` | Builds `assets.pack` (`build.rs`), opens it per platform, Bevy loaders for `*.rules.ron` / `*.map.ron`. | base |
 | `rts_client` | `crates/client` | The game: rendering, input, camera, lobby, match sessions and replay files. Binary `rts`; `cargo run` starts it. | base, assets, net |
 | `rts_net` | `crates/net` | Bounded RON protocol, setup checksums, ordered turns and verified replays. No renderer or sockets. | base |
-| `rts_server` | `crates/server` | WebSocket relay: lobbies, turn ordering, hash comparisons and timeouts. Binary `rts-server`. Doesn't run the simulation. | base, net |
+| `rts_server` | `crates/server` | Authoritative WebSocket server: configuration delivery, lobbies, fixed-rate simulation, validated commands and state hashes. Binary `rts-server`. | base, net |
 | `rts_android` | `crates/android` | Android entry point (cdylib). | client |
 
 Planned crates, created when their milestone starts (no empty placeholders):
@@ -57,9 +57,9 @@ Dependency direction: base ← assets/net ← client ← android; net ← server
 
 The client never changes simulation state directly. It reads `Sim` to draw, and from M2 on it sends **commands** that the sim applies at a tick boundary.
 
-### Deterministic lockstep
+### Deterministic simulation
 
-All peers run the same simulation from the same start state and the same ordered command stream, so their states stay identical. Only commands go over the network.
+The server owns the rules, map, tick clock and simulation. It sends the complete match configuration on room creation/join, then ordered commands and its resulting state hash every tick. Clients run deterministic replicas for rendering and replays, verify each tick against the server, and stop locally on divergence. Client state and hashes never determine server state. Replication currently sends all commands to all players; visibility filtering and snapshot resynchronization are not implemented.
 
 Rules for code in `rts_base` (enforced partly by lints, see `crates/base/src/lib.rs` and `crates/base/clippy.toml`):
 
@@ -68,7 +68,7 @@ Rules for code in `rts_base` (enforced partly by lints, see `crates/base/src/lib
 3. **No wall clock, OS randomness, or thread timing.** Randomness comes from a seeded PRNG stored in sim state (added when first needed).
 4. **Iteration order is defined by stable IDs.** Units have monotonically increasing `UnitId`s.
 5. **Fixed tick rate:** `TICK_RATE = 20` ticks per second. Rendering interpolates between ticks (M2).
-6. **State hash:** `Sim::state_hash()` uses FNV-1a with explicit little-endian, fixed-width encoding (`usize` is hashed as `u64`), so native and wasm32 peers agree. Peers compare hashes to detect desyncs (M3).
+6. **State hash:** `Sim::state_hash()` uses FNV-1a with explicit little-endian, fixed-width encoding (`usize` is hashed as `u64`), so native and wasm32 peers agree. Clients compare their hashes with the server to detect desyncs (M3).
 
 ### Coordinates
 
@@ -91,10 +91,11 @@ Rules for code in `rts_base` (enforced partly by lints, see `crates/base/src/lib
 
 ### Networking (M3)
 
-- Deterministic lockstep with a two-tick input delay (100 ms at 20 Hz). Clients submit the batch for `t + 2` before applying agreed turn `t + 1`; the relay supplies the initial empty turn. A missing turn freezes simulation and retains pending input. Offline play uses the same turn format and delay.
-- The WebSocket relay binds each connection to its player slot, orders batches by slot, and compares state hashes every tick. It never simulates. A desync, in-game departure, or 15-second stall ends play for everyone. Disconnecting guests free their slots before the match; host departure closes the room.
-- Six-character room codes, slot-zero host, fixed map capacity (two on the sample map). Joining implies ready; only the host starts a full room. Protocol version and setup checksum must match.
-- The setup checksum covers original rules/map RON, seed and player count. Original text is retained by asset loaders because parsed positions/speeds are already converted into world units. The seed is reserved for future deterministic randomness.
+- The server advances each match at 20 Hz independently of client submissions; absent input becomes an empty batch. Clients send commands for the latest received server tick plus two (100 ms). Delayed input cannot slow the game; past, duplicate, out-of-order and excessively future submissions are rejected. Offline play uses the same turn format and two-tick delay.
+- Each server room owns a `Sim`. Connections are bound to player slots; ownership, targets, path validity, movement and tile capacity are checked by the server simulation. The server publishes a turn and its resulting hash each tick. Clients apply only server turns, verify the hash before recording, and stop locally on divergence. No client hash votes, client state uploads or client-controlled tick advancement exist.
+- Six-character room codes, slot-zero host, map-defined capacity (two on the sample map). The server sends `MatchSetup` containing minified map/rules RON, seed and player count to each new room member. Protocol v4 strips comments/extra whitespace without changing literal bytes, zlib-compresses each document with pure-Rust `miniz_oxide`, and sends raw compressed bytes in a binary WebSocket frame. A 33-byte header identifies setup/version, seed/player count, and each document's compressed/decompressed lengths; lobby and gameplay messages remain RON text. Clients check compressed/decompressed limits and stream integrity before accepting the setup. Clients validate and acknowledge the setup checksum; only the host may start a full room after every member is ready. Clients need compatible game code/protocol, but their bundled map and rules may differ.
+- The server defaults to bundled map/rules and supports `--rules PATH`, `--map PATH`, and `--seed N` for server-side content mods without rebuilding clients. The checksum covers minified rules/map RON, seed and player count, so source formatting/comments do not affect readiness. Lexical minification preserves string/character/raw literals and decimal spelling, avoiding reserialization of positions/speeds already converted to world units. The seed remains reserved for future randomness. Terrain texture files remain local presentation assets; mods can use bundled texture paths or colors (`texture: None`).
+- An in-game departure or connection timeout ends the room; a guest leaving before start frees its slot. Host departure closes the room. Simulation catch-up and per-connection queues are bounded.
 - Native clients use `ws://`. Browsers also support `wss://` through their platform WebSocket; HTTPS hosting requires a TLS reverse proxy. Native TLS is disabled to preserve the pure-Rust dependency requirement: standard Rustls providers add C/assembly. The server runtime is native-only, with a wasm build stub.
 - Replays store the setup and every applied turn, and verify the final hash when loaded, exported or played back. Playback accepts no orders. Wire/setup/replay sizes and nesting are bounded; see [protocol details](M3_PROTOCOL.md).
 - The menu exposes solo play, server address, create/join/start/leave, replay last and replay save/load. Touching an editable lobby field opens an in-game keypad because Bevy's platform keyboard support is incomplete; desktop typing uses built-in text input. Menu and keypad scroll on small screens.
@@ -102,7 +103,7 @@ Rules for code in `rts_base` (enforced partly by lints, see `crates/base/src/lib
 
 ### AI
 
-AI is a virtual player that issues ordinary commands. It runs on one machine (the host) and its commands travel through lockstep like a human's, so AI code does **not** need to be deterministic.
+AI is a virtual player that issues ordinary commands. It will run on the server and submit commands through the same authoritative validation as human input, so AI decision code does **not** need to be deterministic.
 
 ### Scripting (M6)
 
@@ -167,10 +168,13 @@ Bevy app for desktop/web/Android, asset packing, RTS camera (keyboard/edge/drag 
 - Verified: 46 workspace tests, workspace Clippy, wasm32 check, Android arm64 check. A native GPU check at 320 logical pixels wide injected touch/window events through Bevy and verified selection, movement, HUD Stop before arrival, Clear, and the rendered selection rings and responsive HUD. Touch drag, pinch cancellation, desktop selection, delayed orders, and obstacle routing also have automated tests. This did not run on an Android device.
 
 ### ✅ M3 — Multiplayer
-- ✅ Relay server crate (WebSocket), lobby (create/join by code), lockstep turn exchange, input delay, setup checksum, desync detection via state hash, disconnect handling.
+- ✅ Authoritative server crate (WebSocket), lobby (create/join by code), server-owned map/rules delivery, readiness handshake, fixed-rate simulation, input delay, command ownership validation, per-turn server hashes and disconnect handling.
 - ✅ Replay recording, playback, native persistence and browser import/export controls; touch keypad for lobby fields.
-- Done when: two clients (native and web) play the same match in sync, and a recorded replay reproduces the final hash.
-- Verified: 90 workspace tests, workspace Clippy with warnings denied, formatting, wasm32 check, Android arm64 Rust check, and Android activity/manifest compilation. Real native and browser clients using the full client app and session plugin exchanged commands through the relay: both players queued Move at tick 4 (applied on 6) and Stop at tick 12 (applied on 14). Both reached tick 40 with identical unit positions and hash `4f7f7cc668b22cbd`; the saved 40-turn replay loaded and reproduced the same hash. Native used NVIDIA Vulkan; browser used headless Chromium with software WebGPU via Playwright after T3 preview snapshots timed out twice.
+- Done when: two clients (native and web) play the server's match in sync, and a recorded replay reproduces the final hash.
+- Binary setup follow-up verified with 152 workspace tests, strict workspace Clippy, formatting, full-workspace wasm32 and Android arm64 checks. Protocol v4 sends raw zlib bytes with a fixed little-endian setup header and retains RON text for lobby/gameplay. The base64 setup codec and direct dependency were removed. Tests verify exact framing, both WebSocket message types, all truncated prefixes, invalid tags/versions/counts/lengths, corrupt/trailing streams, readiness, deterministic turns and replay export through real client/server sockets. Rendered browser/device sessions were not rerun for this transport change.
+- Earlier setup compression follow-up verified with 151 workspace tests, strict workspace Clippy, formatting, full-workspace wasm32 and Android arm64 checks. Protocol v3 delivers lexically minified, zlib/base64-compressed map/rules and compares checksums over minified text. Tests preserve decimals, Unicode, characters, escaped/raw/byte literals, identifiers and RON attributes; reject corrupt/truncated/trailing/oversized compression envelopes and invalid UTF-8; and verify compressed setup readiness, deterministic turns and plain-RON replay export through real client/server sockets. Rendered browser/device sessions were not rerun for this transport change.
+- Authoritative-server follow-up verified with 134 workspace tests, workspace Clippy with warnings denied, formatting, full-workspace wasm32 and Android arm64 checks (`cargo ndk -t arm64-v8a check --workspace`). Real-socket headless Bevy clients loaded a server-only unit type and changed stats, checked matching hashes through 40 turns, applied Move/Stop and exported a replay reproducing the final hash. Tests cover readiness, server-owned cadence without input, ownership filtering, invalid/stale/duplicate/future input, command-work bounds, client backlog catch-up, large escaped setup transfer, eight-player wire fan-in and bounded scheduler stalls. This follow-up compiled web/Android but did not rerun rendered browser or device sessions.
+- Initial M3 verification (before the authoritative-server follow-up): 90 workspace tests, workspace Clippy with warnings denied, formatting, wasm32 check, Android arm64 Rust check, and Android activity/manifest compilation. Real native and browser clients using the full client app and session plugin exchanged commands through the relay: both players queued Move at tick 4 (applied on 6) and Stop at tick 12 (applied on 14). Both reached tick 40 with identical unit positions and hash `4f7f7cc668b22cbd`; the saved 40-turn replay loaded and reproduced the same hash. Native used NVIDIA Vulkan; browser used headless Chromium with software WebGPU via Playwright after T3 preview snapshots timed out twice.
 - A native GPU run at 320 logical pixels wide injected touch/window events through Bevy to type a room code, commit it, cancel address editing, start solo play, save, leave, replay the recording, and load the saved file. Both playback paths verified their final hash. Keypad, lobby and session bars were visually inspected. Android permissions are configured, including Android 17 LAN access; this milestone did not run on an Android device. Browser file-picker/download controls were source-reviewed and compiled, but not exercised in the browser match.
 
 ### ⬜ M4 — Combat

@@ -43,6 +43,9 @@ impl Match {
     pub fn queue_command(&mut self, command: Command) {
         if self.accepts_orders && self.pending.len() < MAX_COMMANDS_PER_TURN {
             self.pending.push(command);
+            if rts_net::validate_commands(&self.pending).is_err() {
+                self.pending.pop();
+            }
         }
     }
 }
