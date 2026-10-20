@@ -15,14 +15,22 @@ use crate::{
 /// Top-down RTS camera.
 ///
 /// - Desktop: pan with WASD/arrows, screen edges, or middle-mouse drag; zoom with the wheel.
-/// - Touch: drag with one or more fingers to pan; pinch to zoom.
+/// - Touch: drag with two fingers to pan; pinch to zoom.
 pub struct RtsCameraPlugin;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CameraControl;
 
 impl Plugin for RtsCameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
             .add_systems(OnEnter(AppState::InGame), focus_on_start)
-            .add_systems(Update, control_camera.run_if(resource_exists::<MapBounds>));
+            .add_systems(
+                Update,
+                control_camera
+                    .in_set(CameraControl)
+                    .run_if(resource_exists::<MapBounds>),
+            );
     }
 }
 
@@ -111,6 +119,9 @@ fn control_camera(
     }
     if window.focused
         && touches.iter().next().is_none()
+        && !touches.any_just_pressed()
+        && !touches.any_just_released()
+        && !touches.any_just_canceled()
         && let Some(cursor) = window.cursor_position()
     {
         let far = window_size - settings.edge_margin;
@@ -209,7 +220,7 @@ impl TouchGesture {
     fn between(previous: &[(u64, Vec2)], current: &[(u64, Vec2)]) -> Option<Self> {
         let same_fingers = previous.len() == current.len()
             && previous.iter().zip(current).all(|(a, b)| a.0 == b.0);
-        if current.is_empty() || !same_fingers {
+        if current.len() < 2 || !same_fingers {
             return None;
         }
         let from = centroid(previous);
@@ -314,5 +325,6 @@ mod tests {
         assert_eq!(TouchGesture::between(&one, &two), None);
         assert_eq!(TouchGesture::between(&two, &one), None);
         assert_eq!(TouchGesture::between(&[], &[]), None);
+        assert_eq!(TouchGesture::between(&one, &one), None);
     }
 }

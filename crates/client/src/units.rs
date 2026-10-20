@@ -22,12 +22,22 @@ const PLAYER_COLORS: [Color; 8] = [
 
 const UNIT_Z: f32 = 1.0;
 
+#[derive(Component)]
+pub struct UnitVisual(pub UnitId);
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SyncUnits;
+
 pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UnitVisuals>()
-            .add_systems(Update, sync_units.run_if(in_state(AppState::InGame)));
+        app.init_resource::<UnitVisuals>().add_systems(
+            Update,
+            sync_units
+                .in_set(SyncUnits)
+                .run_if(in_state(AppState::InGame)),
+        );
     }
 }
 
@@ -70,6 +80,7 @@ fn sync_units(
         });
         let entity = commands
             .spawn((
+                UnitVisual(id),
                 Mesh2d(mesh.clone()),
                 MeshMaterial2d(material.clone()),
                 Transform::from_translation(translation),

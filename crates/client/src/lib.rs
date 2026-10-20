@@ -1,6 +1,8 @@
 mod camera;
 mod font;
 mod game;
+mod hud;
+mod input;
 mod map;
 mod units;
 
@@ -8,7 +10,8 @@ use bevy::prelude::*;
 use rts_assets::{AssetBundle, BundledAssetPlugin, DataPlugin};
 
 use crate::{
-    camera::RtsCameraPlugin, font::GameFont, game::GamePlugin, map::MapPlugin, units::UnitsPlugin,
+    camera::RtsCameraPlugin, font::GameFont, game::GamePlugin, hud::HudPlugin,
+    input::SelectionPlugin, map::MapPlugin, units::UnitsPlugin,
 };
 
 /// Starts the game.
@@ -40,6 +43,8 @@ fn build_app(bundle: AssetBundle) -> App {
             MapPlugin,
             UnitsPlugin,
             RtsCameraPlugin,
+            SelectionPlugin,
+            HudPlugin,
         ))
         .init_resource::<GameFont>();
     app

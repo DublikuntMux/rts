@@ -74,6 +74,14 @@ Rules for code in `rts_base` (enforced partly by lints, see `crates/base/src/lib
 - Sim: integer world units, `TILE = 1024` per tile. x grows right, **y grows down**. Tile `(0, 0)` is the top-left; map file rows are listed top to bottom, so the file looks like the map.
 - Client: Bevy world space, y up. `map::to_world` converts: one tile is `TILE_PX = 128` pixels, and sim `y` is negated. The map spans from `(0, 0)` to `(width_px, -height_px)`.
 
+### Commands and movement (M2)
+
+- `Command::Move` and `Command::Stop` contain stable unit IDs. The local loopback queues commands for the current tick plus 2 (100 ms), preserving submission order. Each step advances the tick, applies that tick's commands, then moves units. M3 replaces local submission with agreed tick bundles.
+- Only a unit's owner may command it. Missing IDs, invalid players, blocked/out-of-map targets, and unreachable destinations are ignored; an invalid replacement preserves the existing order.
+- Four-neighbor grid A* uses integer costs with ties resolved by remaining distance and row-major tile index. Routes visit tile centers, including the starting tile center, then the precise destination. This prevents arbitrary starts from cutting blocked corners.
+- Unit `speed` is required, positive, and written in tiles/second. Movement uses integer per-tick budgets with remainders and fixed segment origins, so low speeds make progress without truncation drift. Queued commands, routes, segment progress, and speed remainders are included in the state hash.
+- M2 tests walkability of unit centers. Radius-aware clearance, unit separation, formations, and large-group pathfinding remain M10.
+
 ### Networking plan (M3)
 
 - Model: deterministic lockstep with an input delay. A command issued on tick `t` is scheduled for tick `t + delay` (around 100–200 ms). The sim only advances when the commands for the next tick have arrived from every player.
@@ -98,7 +106,7 @@ AI is a virtual player that issues ordinary commands. It runs on one machine (th
 
 ### Data formats
 
-- Rules: `assets/data/core.rules.ron`, with terrain types (`id`, map `symbol`, `walkable`, strategic/minimap `color`, optional `texture` asset path) and unit types (`id`, `max_health`, `radius` in tiles). Terrain textures are equally sized square images; the bundled tiles are 128×128 PNGs in `assets/textures/terrain/`. Textures are presentation data only.
+- Rules: `assets/data/core.rules.ron`, with terrain types (`id`, map `symbol`, `walkable`, strategic/minimap `color`, optional `texture` asset path) and unit types (`id`, `max_health`, `radius` in tiles, `speed` in tiles/second). Terrain textures are equally sized square images; the bundled tiles are 128×128 PNGs in `assets/textures/terrain/`. Textures are presentation data only.
 - Maps: `assets/maps/*.map.ron`, with `name`, `players` (start positions), `tiles` (rows of terrain symbols, top to bottom), and `units` (pre-placed units: kind, owner index, position in tiles). M6 adds regions and a `script` path. M7 makes the editor write the same format.
 - Distances and positions in data files are written in tiles (decimals allowed) and converted to world units on load.
 - Data is validated on load: unknown symbols/kinds, ragged rows, out-of-bounds or unwalkable placements, and duplicate IDs are errors.
@@ -115,9 +123,9 @@ AI is a virtual player that issues ordinary commands. It runs on one machine (th
 | Long-press | Context menu (attack-move, patrol, …) |
 | Minimap tap/drag | Jump camera |
 
-Desktop keeps mouse plus keyboard: left-click/box select, right-click order, WASD/edge/middle-drag pan, wheel zoom.
+Desktop: left-click/box select, Shift to add/toggle selection, right-click to move, X to stop, Escape to clear selection, WASD/arrows/edge/middle-drag pan, wheel zoom. The command bar has touch-accessible Stop and Clear buttons; HUD input never issues world orders.
 
-The current camera (M0) pans with one-finger drag. M2 moves panning to two fingers.
+One-finger drag selects; two-finger drag/pinch controls the camera and cancels any pending selection/order until all fingers lift. Touch cancellation and loss of window focus also cancel pending input. Touch picking has at least a 48-pixel diameter. Long-press context orders arrive with combat, and the minimap remains M9.
 
 ### Map editor (M7)
 
@@ -139,10 +147,11 @@ Bevy app for desktop/web/Android, asset packing, RTS camera (keyboard/edge/drag 
 - Terrain rendering: the client loads terrain textures from the asset pack and assembles one texture array in `TerrainId` order, preserving the single-draw-call tilemap. Types without a texture use their color. A separate 1×1-per-layer palette keeps the original colors for the future minimap and distant zoom. Below 40 logical screen pixels per tile, terrain switches to flat colors; above 48 it switches back to textures (hysteresis). The minimap remains M9.
 - Notes: terrain colors live in a generated tileset (`map::terrain_colors`). Bevy's tilemap shader treats `TileData::color` tints as linear, which washes colors out, so don't use tints for terrain color.
 
-### 🚧 M2 — Commands, selection, movement (next)
-- `Command` type (move/stop), a per-tick command queue with input delay (local loopback for now).
-- Selection: click/tap, box select (mouse and one-finger drag), two-finger pan. Selection markers.
-- Grid A* pathfinding on walkable tiles, unit movement with speeds in rules, render interpolation between ticks.
+### 🚧 M2 — Commands, selection, movement
+- ✅ Move/stop commands, per-tick queue with local input delay, ownership validation and deterministic hashing.
+- ✅ Deterministic grid A* on walkable terrain and integer movement with required speeds in rules.
+- ✅ Selection: click/tap, box select, two-finger pan, selection markers, touch command bar.
+- ⬜ Render interpolation between ticks and end-to-end verification.
 - Done when: units can be selected and moved around obstacles on mouse and touch.
 
 ### ⬜ M3 — Multiplayer
