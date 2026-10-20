@@ -10,11 +10,15 @@ pub fn find_path(
     rules: &Rules,
     start: IVec2,
     goal: IVec2,
+    can_enter: &impl Fn(IVec2) -> bool,
 ) -> Option<Vec<IVec2>> {
     let walkable = |tile| {
         terrain
             .get(tile)
             .is_some_and(|id| rules.terrain(id).walkable)
+            // Approach a full destination and wait outside it. Movement still checks capacity
+            // before entering it; intermediate occupied tiles must be routed around.
+            && (tile == start || tile == goal || can_enter(tile))
     };
     if !walkable(start) || !walkable(goal) {
         return None;

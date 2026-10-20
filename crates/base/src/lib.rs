@@ -10,6 +10,7 @@ mod coords;
 mod hash;
 mod map;
 mod movement;
+mod occupancy;
 mod path;
 mod rules;
 
@@ -26,6 +27,7 @@ pub use rules::{Rules, TerrainDef, TerrainId, UnitDef, UnitKind};
 
 use crate::hash::StateHasher;
 use crate::movement::MoveOrder;
+use crate::occupancy::Occupancy;
 use serde::{Deserialize, Serialize};
 
 /// Simulation ticks per second.
@@ -90,7 +92,7 @@ impl Sim {
     /// # Errors
     ///
     /// Returns an error if the map does not fit the rules: unknown terrain or unit types, ragged
-    /// rows, a bad player count, or starts and units outside the map or on unwalkable terrain.
+    /// rows, a bad player count, starts/units outside walkable terrain, or over-capacity tiles.
     pub fn new(rules: Rules, map: &MapData) -> Result<Self, LoadError> {
         let terrain = Terrain::parse(&map.tiles, &rules)?;
         if map.players.is_empty() || map.players.len() > MAX_PLAYERS {
@@ -118,6 +120,7 @@ impl Sim {
             commands: BTreeMap::new(),
             move_orders: BTreeMap::new(),
         };
+        let mut occupancy = Occupancy::new(sim.terrain.size());
         for (index, placement) in map.units.iter().enumerate() {
             let kind = sim.rules.unit_kind(&placement.kind).ok_or_else(|| {
                 LoadError::invalid(format!(
@@ -136,6 +139,14 @@ impl Sim {
                     "unit {index} is outside the map or on unwalkable terrain"
                 )));
             }
+            let size = sim.rules.unit(kind).size;
+            if !occupancy.fits(tile_of(placement.pos), size, sim.rules.tile_capacity()) {
+                return Err(LoadError::invalid(format!(
+                    "unit {index} exceeds tile capacity at {:?}",
+                    tile_of(placement.pos)
+                )));
+            }
+            occupancy.add(placement.pos, size);
             sim.spawn_unit(kind, PlayerId(placement.owner), placement.pos);
         }
         Ok(sim)
@@ -155,11 +166,26 @@ impl Sim {
         for (player, command) in queued.into_iter().chain(commands) {
             self.apply_command(player, command);
         }
+        if self.move_orders.is_empty() {
+            return;
+        }
+        let mut occupancy = Occupancy::new(self.terrain.size());
+        for unit in self.units.values() {
+            occupancy.add(unit.pos, self.rules.unit(unit.kind).size);
+        }
+        // Stable IDs resolve contention. Each move updates occupancy before the next unit plans.
         self.move_orders.retain(|id, order| {
             let Some(unit) = self.units.get_mut(id) else {
                 return false;
             };
-            order.advance(&mut unit.pos, self.rules.unit(unit.kind).speed)
+            let definition = self.rules.unit(unit.kind);
+            occupancy.remove(unit.pos, definition.size);
+            let can_enter =
+                |tile| occupancy.fits(tile, definition.size, self.rules.tile_capacity());
+            let active = !order.refresh(unit.pos, &self.terrain, &self.rules, &can_enter)
+                || order.advance(&mut unit.pos, definition.speed, &can_enter);
+            occupancy.add(unit.pos, definition.size);
+            active
         });
     }
 
@@ -253,6 +279,14 @@ impl Sim {
     #[must_use]
     pub fn unit(&self, id: UnitId) -> Option<&Unit> {
         self.units.get(&id)
+    }
+
+    /// Removes a unit and its move order. Its ID is never reused, and its occupied capacity is
+    /// available to pathfinding on the next tick. Simulation actions must call this identically
+    /// on every peer.
+    pub fn remove_unit(&mut self, id: UnitId) -> Option<Unit> {
+        self.move_orders.remove(&id);
+        self.units.remove(&id)
     }
 
     /// Hash of everything that changes during a match. Peers compare it to detect desyncs.

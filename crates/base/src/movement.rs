@@ -19,14 +19,7 @@ impl MoveOrder {
         terrain: &Terrain,
         rules: &Rules,
     ) -> Option<Self> {
-        let mut waypoints = if tile_of(start) == tile_of(target) {
-            VecDeque::new()
-        } else {
-            // Visit the starting center before crossing a tile edge. Connecting an arbitrary
-            // start directly to a neighboring center could cut through an obstructed corner.
-            find_path(terrain, rules, tile_of(start), tile_of(target))?.into()
-        };
-        waypoints.push_back(target);
+        let waypoints = Self::route(start, target, terrain, rules, &|_| true)?;
         Some(Self {
             target,
             waypoints,
@@ -36,17 +29,80 @@ impl MoveOrder {
         })
     }
 
+    fn route(
+        start: IVec2,
+        target: IVec2,
+        terrain: &Terrain,
+        rules: &Rules,
+        can_enter: &impl Fn(IVec2) -> bool,
+    ) -> Option<VecDeque<IVec2>> {
+        let mut waypoints = if tile_of(start) == tile_of(target) {
+            VecDeque::new()
+        } else {
+            // Visit the starting center before crossing a tile edge. Connecting an arbitrary
+            // start directly to a neighboring center could cut through an obstructed corner.
+            find_path(terrain, rules, tile_of(start), tile_of(target), can_enter)?.into()
+        };
+        waypoints.push_back(target);
+        Some(waypoints)
+    }
+
     pub(crate) const fn target(&self) -> IVec2 {
         self.target
     }
 
+    /// Recompute the route against this tick's living units. Finish an unobstructed segment
+    /// already in progress so replanning cannot pull the unit back to its previous center or
+    /// discard fractional movement. Only that segment is retained; all later tiles are fresh.
+    pub(crate) fn refresh(
+        &mut self,
+        pos: IVec2,
+        terrain: &Terrain,
+        rules: &Rules,
+        can_enter: &impl Fn(IVec2) -> bool,
+    ) -> bool {
+        let anchor = self
+            .waypoints
+            .front()
+            .copied()
+            .filter(|waypoint| self.segment_progress > 0 && can_enter(tile_of(*waypoint)));
+        let Some(mut route) = Self::route(
+            anchor.unwrap_or(pos),
+            self.target,
+            terrain,
+            rules,
+            can_enter,
+        ) else {
+            return false;
+        };
+        if let Some(anchor) = anchor {
+            if route.front() != Some(&anchor) {
+                route.push_front(anchor);
+            }
+        } else {
+            self.segment_start = pos;
+            self.segment_progress = 0;
+        }
+        self.waypoints = route;
+        true
+    }
+
     /// Returns whether the order remains active. The remainder is local to this order, so a new
     /// move or stop discards it. Segment progress prevents slow diagonal movement from stalling.
-    pub(crate) fn advance(&mut self, pos: &mut IVec2, speed: i32) -> bool {
+    pub(crate) fn advance(
+        &mut self,
+        pos: &mut IVec2,
+        speed: i32,
+        can_enter: &impl Fn(IVec2) -> bool,
+    ) -> bool {
         let numerator = u32::try_from(speed).unwrap() + self.speed_remainder;
         let mut budget = numerator / TICK_RATE;
         self.speed_remainder = numerator % TICK_RATE;
         while let Some(&waypoint) = self.waypoints.front() {
+            // Check every traversed tile, even when a high speed crosses several in one tick.
+            if !can_enter(tile_of(waypoint)) {
+                break;
+            }
             let dx = i64::from(waypoint.x) - i64::from(self.segment_start.x);
             let dy = i64::from(waypoint.y) - i64::from(self.segment_start.y);
             let squared = dx * dx + dy * dy;

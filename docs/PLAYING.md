@@ -29,6 +29,8 @@ When hosting the built web files elsewhere, the server must support HTTP byte-ra
 
 Select units by click/tap or drag, then right-click ground on desktop or tap ground on touch to move. Two fingers pan and pinch zoom. Stop and Clear are in the bottom bar; Save replay and Leave are in the top bar. Touching Server address or Room code opens a keypad with Done and Cancel. The lobby and keypad can scroll on shorter screens.
 
+Each tile holds four size points: a worker uses one and a soldier uses two. Four workers, two soldiers, or two workers with one soldier can share a tile. Units route around full tiles and wait if a route or destination stays full; they retry automatically as space opens.
+
 **Replay last** plays the latest in-memory recording. **Save replay** exports the turns played so far. Native **Load saved replay** reads the saved file; browser **Load replay** opens a file picker. Playback verifies the final state hash and accepts no unit orders.
 
 Native files are stored at:
