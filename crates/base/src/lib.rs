@@ -5,6 +5,7 @@
 //! hashed collections, no clocks or OS randomness. See `docs/SPEC.md`.
 #![deny(clippy::float_arithmetic, clippy::disallowed_types)]
 
+mod command;
 mod coords;
 mod hash;
 mod map;
@@ -15,6 +16,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
@@ -74,6 +76,8 @@ pub struct Sim {
     tick: u32,
     units: BTreeMap<UnitId, Unit>,
     next_unit_id: u32,
+    commands: BTreeMap<u32, Vec<(PlayerId, Command)>>,
+    move_targets: BTreeMap<UnitId, IVec2>,
 }
 
 impl Sim {
@@ -107,6 +111,8 @@ impl Sim {
             tick: 0,
             units: BTreeMap::new(),
             next_unit_id: 0,
+            commands: BTreeMap::new(),
+            move_targets: BTreeMap::new(),
         };
         for (index, placement) in map.units.iter().enumerate() {
             let kind = sim.rules.unit_kind(&placement.kind).ok_or_else(|| {
@@ -132,8 +138,54 @@ impl Sim {
     }
 
     /// Advances the match by one tick.
-    pub const fn step(&mut self) {
+    pub fn step(&mut self) {
         self.tick += 1;
+        if let Some(commands) = self.commands.remove(&self.tick) {
+            for (player, command) in commands {
+                self.apply_command(player, command);
+            }
+        }
+    }
+
+    /// Schedules a local command at the current tick plus [`INPUT_DELAY_TICKS`].
+    /// Commands on the same tick retain submission order. Invalid players are ignored.
+    pub fn queue_command(&mut self, player: PlayerId, command: Command) {
+        if usize::from(player.0) >= self.players.len() {
+            return;
+        }
+        if let Some(tick) = self.tick.checked_add(INPUT_DELAY_TICKS) {
+            self.commands
+                .entry(tick)
+                .or_default()
+                .push((player, command));
+        }
+    }
+
+    fn apply_command(&mut self, player: PlayerId, command: Command) {
+        let (units, target) = match command {
+            Command::Move { units, target } => {
+                if !self.terrain.is_walkable(target, &self.rules) {
+                    return;
+                }
+                (units, Some(target))
+            }
+            Command::Stop { units } => (units, None),
+        };
+        for id in units {
+            if self.units.get(&id).is_some_and(|unit| unit.owner == player) {
+                if let Some(target) = target {
+                    self.move_targets.insert(id, target);
+                } else {
+                    self.move_targets.remove(&id);
+                }
+            }
+        }
+    }
+
+    /// Destination of the unit's active move order, if any.
+    #[must_use]
+    pub fn move_target(&self, id: UnitId) -> Option<IVec2> {
+        self.move_targets.get(&id).copied()
     }
 
     fn spawn_unit(&mut self, kind: UnitKind, owner: PlayerId, pos: IVec2) -> UnitId {
@@ -191,6 +243,8 @@ impl Sim {
         self.tick.hash(&mut hasher);
         self.next_unit_id.hash(&mut hasher);
         self.units.hash(&mut hasher);
+        self.commands.hash(&mut hasher);
+        self.move_targets.hash(&mut hasher);
         hasher.finish()
     }
 }
