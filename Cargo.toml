@@ -1,10 +1,25 @@
 [workspace]
 resolver = "3"
-members = ["android"]
+members = ["crates/*"]
+default-members = ["crates/client"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[workspace.dependencies]
+bevy = "0.20.0"
+bevy_asset_packer = { version = "0.5.0", default-features = false }
+# Same as in Bevy
+glam = "0.33"
+ron = "0.12"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2"
+wasm-bindgen-futures = "0.4"
+
+rts_assets = { path = "crates/assets" }
+rts_base = { path = "crates/base" }
+rts_client = { path = "crates/client" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -13,26 +28,6 @@ nursery = { level = "warn", priority = -1 }
 needless_pass_by_value = "allow"
 # Too many arguments are OK for Bevy systems.
 too_many_arguments = "allow"
-
-[package]
-name = "rts"
-version.workspace = true
-edition.workspace = true
-
-[lints]
-workspace = true
-
-[dependencies]
-bevy = "0.20.0"
-bevy_asset_packer = "0.5.0"
-log = "0.4.34"
-serde = { version = "1.0.229", features = ["derive"] }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4"
-
-[build-dependencies]
-bevy_asset_packer = { version = "0.5.0", default-features = false }
 
 [profile.dev.package."*"]
 opt-level = 3

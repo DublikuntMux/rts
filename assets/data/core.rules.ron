@@ -1,0 +1,14 @@
+// Core game data. Distances are in tiles.
+(
+    terrain: [
+        (id: "grass", symbol: '.', walkable: true, color: "#4a7a3e"),
+        (id: "dirt", symbol: ',', walkable: true, color: "#8a7350"),
+        (id: "sand", symbol: ':', walkable: true, color: "#c9b27a"),
+        (id: "water", symbol: '~', walkable: false, color: "#2e5d8c"),
+        (id: "rock", symbol: '#', walkable: false, color: "#5a5852"),
+    ],
+    units: [
+        (id: "worker", max_health: 40, radius: 0.3),
+        (id: "soldier", max_health: 80, radius: 0.4),
+    ],
+)

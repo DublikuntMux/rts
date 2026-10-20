@@ -1,0 +1,14 @@
+[package]
+name = "rts_base"
+description = "Deterministic game core: data formats and simulation. No Bevy."
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true, features = ["serde"] }
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true

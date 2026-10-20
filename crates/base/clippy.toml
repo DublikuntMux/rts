@@ -1,0 +1,5 @@
+# Iteration order of hashed collections is unspecified, which breaks lockstep determinism.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "nondeterministic iteration order; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "nondeterministic iteration order; use BTreeSet" },
+]

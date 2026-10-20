@@ -4870,22 +4870,40 @@ dependencies = [
 ]
 
 [[package]]
-name = "rts"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_asset_packer",
- "log",
- "serde",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "rts_android"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "rts",
+ "rts_client",
+]
+
+[[package]]
+name = "rts_assets"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_asset_packer",
+ "rts_base",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "rts_base"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rts_client"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rts_assets",
+ "rts_base",
 ]
 
 [[package]]

@@ -1,0 +1,17 @@
+[package]
+name = "rts_client"
+description = "The game client: rendering, input, and match flow."
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rts"
+path = "src/main.rs"
+
+[dependencies]
+bevy.workspace = true
+rts_assets.workspace = true
+rts_base.workspace = true

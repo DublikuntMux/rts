@@ -6,7 +6,9 @@ use std::{
 use bevy_asset_packer::{AssetBundler, AssetBundlingOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=assets");
+    // The game's assets live at the repository root, shared by every crate.
+    let assets_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("../../assets");
+    println!("cargo:rerun-if-changed={}", assets_dir.display());
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let profile_dir = out_dir
         .ancestors()
@@ -14,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(Path::parent)
         .ok_or("unexpected OUT_DIR layout")?;
     AssetBundler::new(
-        "assets",
+        assets_dir,
         profile_dir.join("assets.pack"),
         AssetBundlingOptions::default(),
     )

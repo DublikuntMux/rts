@@ -7,7 +7,10 @@ use bevy::{
     window::{CursorMoved, PrimaryWindow},
 };
 
-use crate::map::MapBounds;
+use crate::{
+    game::{AppState, Match},
+    map::{MapBounds, to_world},
+};
 
 /// Top-down RTS camera.
 ///
@@ -18,7 +21,8 @@ pub struct RtsCameraPlugin;
 impl Plugin for RtsCameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, control_camera);
+            .add_systems(OnEnter(AppState::InGame), focus_on_start)
+            .add_systems(Update, control_camera.run_if(resource_exists::<MapBounds>));
     }
 }
 
@@ -51,6 +55,14 @@ impl Default for RtsCamera {
 
 fn spawn_camera(mut commands: Commands) {
     commands.spawn(RtsCamera::default());
+}
+
+/// Centers the camera on the local player's start position.
+fn focus_on_start(game: Res<Match>, mut camera: Single<&mut Transform, With<RtsCamera>>) {
+    if let Some(player) = game.sim.players().get(usize::from(game.local_player.0)) {
+        let start = to_world(player.start);
+        camera.translation = start.extend(camera.translation.z);
+    }
 }
 
 fn control_camera(

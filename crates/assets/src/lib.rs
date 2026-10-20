@@ -1,27 +1,33 @@
-mod assets;
-mod camera;
-mod map;
+//! Game assets: opening the asset pack on each platform and loading game data files.
+//!
+//! `build.rs` packs the repository's `assets/` folder into `assets.pack` next to the build
+//! output. Desktop reads it beside the executable, web fetches it, and Android maps it from the
+//! APK.
 
-use bevy::prelude::*;
-use bevy_asset_packer::{AssetBundle, BundledAssetPlugin};
+mod data;
 
-use crate::{assets::GameFont, camera::RtsCameraPlugin, map::MapPlugin};
+pub use bevy_asset_packer::{AssetBundle, BundledAssetPlugin};
+
+pub use crate::data::{DataPlugin, MapAsset, RulesAsset};
 
 const ASSET_PACK: &str = "assets.pack";
 
+/// Opens this platform's asset pack and passes it to `start`. On the web this happens after the
+/// pack is downloaded.
+///
 /// # Panics
 ///
 /// Panics if the asset pack is missing or corrupt.
-pub fn run() {
+pub fn with_bundle(start: impl FnOnce(AssetBundle) + 'static) {
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_futures::spawn_local(async {
         let bundle = AssetBundle::from_url(ASSET_PACK, None)
             .await
             .unwrap_or_else(|error| panic!("open {ASSET_PACK}: {error:#}"));
-        build_app(bundle).run();
+        start(bundle);
     });
     #[cfg(not(target_arch = "wasm32"))]
-    build_app(open_bundle()).run();
+    start(open_bundle());
 }
 
 /// Opens the pack shipped next to the game executable.
@@ -49,21 +55,4 @@ fn open_bundle() -> AssetBundle {
     let bytes = asset.buffer().expect("map assets.pack");
     AssetBundle::from_bytes(bytes, None)
         .unwrap_or_else(|error| panic!("open {ASSET_PACK}: {error:#}"))
-}
-
-fn build_app(bundle: AssetBundle) -> App {
-    let mut app = App::new();
-    app.add_plugins(BundledAssetPlugin::new(bundle))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "RTS".into(),
-                name: Some("cudzinec.rts".into()),
-                fit_canvas_to_parent: true,
-                ..default()
-            }),
-            ..default()
-        }))
-        .add_plugins((MapPlugin, RtsCameraPlugin))
-        .init_resource::<GameFont>();
-    app
 }

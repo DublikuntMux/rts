@@ -1,5 +1,6 @@
 [package]
 name = "rts_android"
+description = "Android entry point. Built by the Gradle project in `android/`."
 version.workspace = true
 edition.workspace = true
 
@@ -10,5 +11,5 @@ workspace = true
 crate-type = ["cdylib"]
 
 [target.'cfg(target_os = "android")'.dependencies]
-rts = { path = ".." }
-bevy = { version = "0.20.0", features = ["android-game-activity"] }
+bevy = { workspace = true, features = ["android-game-activity"] }
+rts_client.workspace = true
