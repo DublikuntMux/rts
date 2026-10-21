@@ -9,6 +9,10 @@ use crate::map::{TILE_PX, to_world, to_world_distance};
 
 const TILE_PADDING: f32 = 4.0;
 const UNIT_GAP: f32 = 4.0;
+// Ease only packing changes; simulation travel is interpolated separately.
+const MOTION_RESPONSE_SECONDS: f32 = 0.1;
+const POSITION_SETTLE_DISTANCE: f32 = 0.01;
+const SCALE_SETTLE_DISTANCE: f32 = 0.0001;
 
 /// Axis-aligned sprite footprint, relative to the visual root in client world space.
 #[derive(Clone, Copy, Debug)]
@@ -56,14 +60,63 @@ impl Placement {
     }
 }
 
+/// Persistent presentation state for one visual, independent of the fixed clock.
+///
+/// Smooth packing offsets and scale, independently of interpolated simulation travel.
+/// Changing group membership continues from the last drawn offset. The exponential
+/// response has no overshoot and uses elapsed seconds rather than a frame count.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PlacementMotion {
+    placement: Placement,
+}
+
+impl PlacementMotion {
+    /// New visuals appear at their packed position rather than arriving from zero.
+    pub const fn new(placement: Placement) -> Self {
+        Self { placement }
+    }
+
+    pub fn advance(&mut self, target: Placement, delta_seconds: f32) -> Placement {
+        if delta_seconds <= 0.0 {
+            return self.placement;
+        }
+        let alpha = -(-delta_seconds / MOTION_RESPONSE_SECONDS).exp_m1();
+        self.placement = self.placement.interpolate(target, alpha);
+        // Finish exactly so an unchanged final layout remains packed and stable.
+        if self.placement.position.distance_squared(target.position)
+            <= POSITION_SETTLE_DISTANCE * POSITION_SETTLE_DISTANCE
+        {
+            self.placement.position = target.position;
+        }
+        if (self.placement.scale - target.scale).abs() <= SCALE_SETTLE_DISTANCE {
+            self.placement.scale = target.scale;
+        }
+        self.placement
+    }
+}
+
 /// Pack sprite bounds in ID order, retaining relative unit sizes.
 /// A common fit scale allows even custom rules with oversized radii to fit.
+pub(super) fn layout_units(
+    units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
+) -> HashMap<UnitId, Placement> {
+    layout(units, true)
+}
+
+/// Travelling groups retain their slots without pinning the group to tile interiors.
+pub(super) fn layout_travelling(
+    units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
+) -> HashMap<UnitId, Placement> {
+    layout(units, false)
+}
+
 #[expect(
     clippy::cast_precision_loss,
     reason = "tile capacity bounds each group to at most u16::MAX units"
 )]
-pub(super) fn layout_units(
+fn layout(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
+    constrain_to_tile: bool,
 ) -> HashMap<UnitId, Placement> {
     let mut tiles = BTreeMap::<(i32, i32), Vec<_>>::new();
     for (id, position, bounds) in units {
@@ -106,7 +159,11 @@ pub(super) fn layout_units(
             .map(|unit| unit.1 + unit.2.offset * scale)
             .sum::<Vec2>()
             / count as f32;
-        let center = desired.clamp(tile_center - slack, tile_center + slack);
+        let center = if constrain_to_tile {
+            desired.clamp(tile_center - slack, tile_center + slack)
+        } else {
+            desired
+        };
         let stride = (cell + Vec2::splat(UNIT_GAP)) * scale;
         for (index, (id, _, unit_bounds)) in group.into_iter().enumerate() {
             let row = index / columns;
@@ -215,6 +272,137 @@ mod tests {
     #[test]
     fn oversized_singleton_fits_custom_rules() {
         assert_packed(&[(UnitId(0), SimPos::ZERO, circle(256.0))]);
+    }
+
+    #[test]
+    fn travelling_group_offsets_stay_constant_across_centers_and_boundaries() {
+        let group = |position| (0..4).map(move |id| (UnitId(id), position, circle(38.375)));
+        let start = SimPos::splat(TILE / 2);
+        let reference = layout_travelling(group(start));
+        for step in 0..=80 {
+            let position = SimPos::new(step * TILE / 20, TILE / 2);
+            let placements = layout_travelling(group(position));
+            for id in reference.keys() {
+                let expected_offset = reference[id].position - to_world(start);
+                let actual_offset = placements[id].position - to_world(position);
+                assert!(actual_offset.abs_diff_eq(expected_offset, 0.0001));
+                assert_eq!(placements[id].scale, reference[id].scale);
+            }
+        }
+    }
+
+    #[test]
+    fn tile_crossing_moves_continuously_without_fixed_clock_rewinds() {
+        let id = UnitId(0);
+        let before =
+            layout_units([(id, SimPos::new(TILE - 1, TILE / 2), circle(38.375))].into_iter())[&id];
+        let after =
+            layout_units([(id, SimPos::new(TILE + 1, TILE / 2), circle(38.375))].into_iter())[&id];
+        // A tiny simulation move produces a much larger clamped-layout change.
+        let crossing_distance = after.position.x - before.position.x;
+        assert!(crossing_distance > 80.0);
+        let mut motion = PlacementMotion::new(before);
+        assert_eq!(motion.advance(after, 0.0).position, before.position);
+        let mut last = before;
+        for _ in 0..24 {
+            let drawn = motion.advance(after, 1.0 / 120.0);
+            assert!(drawn.position.x > last.position.x);
+            assert!(drawn.position.x < after.position.x);
+            assert!(drawn.position.x - last.position.x < crossing_distance / 10.0);
+            assert_eq!(drawn.position.y, before.position.y);
+            last = drawn;
+        }
+        // Holding the latest layout during a stalled turn keeps moving forward;
+        // no overstep reset can send the visual back to the previous snapshot.
+        assert!(last.position.x > crossing_distance.mul_add(0.8, before.position.x));
+    }
+
+    #[test]
+    fn group_changes_retarget_position_and_scale_from_the_drawn_placement() {
+        let id = UnitId(0);
+        let crowded: Vec<_> = (0..4)
+            .map(|id| (UnitId(id), SimPos::splat(TILE / 2), circle(51.125)))
+            .collect();
+        let packed = layout_units(crowded.iter().copied())[&id];
+        let alone =
+            layout_units([(id, SimPos::new(3 * TILE / 2, TILE / 2), circle(51.125))].into_iter())
+                [&id];
+        assert!(packed.scale < alone.scale);
+        let mut motion = PlacementMotion::new(packed);
+        let leaving = motion.advance(alone, 1.0 / 60.0);
+        assert!(leaving.position.x > packed.position.x);
+        assert!(leaving.position.x < alone.position.x);
+        assert!(leaving.scale > packed.scale && leaving.scale < alone.scale);
+
+        // Rejoin before the old transition completes. Neither channel snaps to
+        // the old endpoint or restarts from the previous simulation snapshot.
+        let retargeted = motion.advance(packed, 0.0);
+        assert_eq!(retargeted.position, leaving.position);
+        assert_eq!(retargeted.scale, leaving.scale);
+        let joining = motion.advance(packed, 1.0 / 60.0);
+        assert!(joining.position.x > packed.position.x);
+        assert!(joining.position.x < leaving.position.x);
+        assert!(joining.scale > packed.scale && joining.scale < leaving.scale);
+
+        for _ in 0..240 {
+            motion.advance(packed, 1.0 / 120.0);
+        }
+        let settled = motion.advance(packed, 1.0 / 120.0);
+        assert_eq!(settled.position, packed.position);
+        assert_eq!(settled.scale, packed.scale);
+        assert_packed(&crowded);
+    }
+
+    #[test]
+    fn motion_response_depends_on_elapsed_time_instead_of_frame_count() {
+        let start = Placement {
+            position: Vec2::new(-40.0, 30.0),
+            scale: 0.4,
+        };
+        let target = Placement {
+            position: Vec2::new(150.0, -80.0),
+            scale: 1.0,
+        };
+        let expected = start.interpolate(target, 1.0 - (-5.0_f32).exp());
+        for frames_per_second in [30_u16, 60, 120, 144] {
+            let mut motion = PlacementMotion::new(start);
+            for _ in 0..frames_per_second / 2 {
+                motion.advance(target, 1.0 / f32::from(frames_per_second));
+            }
+            let drawn = motion.advance(target, 0.0);
+            assert!(drawn.position.distance(expected.position) < 0.0001);
+            assert!((drawn.scale - expected.scale).abs() < 0.00001);
+        }
+        // A delayed frame produces the same response as many short frames.
+        let mut motion = PlacementMotion::new(start);
+        let drawn = motion.advance(target, 0.5);
+        assert!(drawn.position.distance(expected.position) < 0.0001);
+    }
+
+    #[test]
+    fn stopped_motion_settles_exactly_and_remains_at_rest() {
+        let target = Placement {
+            position: Vec2::new(128.0, -128.0),
+            scale: 0.75,
+        };
+        let mut motion = PlacementMotion::new(Placement {
+            position: Vec2::ZERO,
+            scale: 1.0,
+        });
+        for _ in 0..120 {
+            let before = motion.advance(target, 0.0);
+            let drawn = motion.advance(target, 1.0 / 60.0);
+            assert!(
+                drawn.position.distance(target.position)
+                    <= before.position.distance(target.position)
+            );
+            assert!(drawn.scale >= target.scale && drawn.scale <= before.scale);
+        }
+        for delta in [0.0, 1.0 / 144.0, 1.0 / 30.0, 1.0] {
+            let drawn = motion.advance(target, delta);
+            assert_eq!(drawn.position, target.position);
+            assert_eq!(drawn.scale, target.scale);
+        }
     }
 
     #[test]

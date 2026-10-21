@@ -11,7 +11,7 @@ fn sim(tiles: &[&str], start: IVec2, speed: &str) -> Sim {
         r##"(tile_capacity: 4, terrain: [
             (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#ffffff"),
             (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#000000"),
-        ], units: [(id: "worker", size: 1, max_health: 40, radius: 0.3, speed: {speed})])"##
+        ], units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: {speed})])"##
     ))
     .unwrap();
     Sim::new(

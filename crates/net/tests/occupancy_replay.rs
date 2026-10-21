@@ -27,8 +27,8 @@ fn replay_verifies_convergence_and_blockers_moved_by_commands() {
             (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#ffffff"),
             (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#000000"),
         ], units: [
-            (id: "worker", size: 1, max_health: 40, radius: 0.75, speed: 20.0),
-            (id: "soldier", size: 2, max_health: 80, radius: 0.75, speed: 20.0),
+            (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.75, speed: 20.0),
+            (id: "soldier", sprite: "textures/units/soldier.png", size: 2, max_health: 80, radius: 0.75, speed: 20.0),
         ])"##
             .into(),
         map: r###"(name: "occupancy replay", players: [(start: (0.5, 0.5))],

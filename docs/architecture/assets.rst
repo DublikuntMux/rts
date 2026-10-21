@@ -22,11 +22,12 @@ Content
            + assets/ | .
            ++ data/ | .
            +++ core.rules.ron | Terrain and unit types
-           +++ client.graphics.ron | Player palette, selection and order markers, terrain detail
+           +++ client.graphics.ron | Player palette, selection and order markers, terrain and unit detail
            ++ maps/ | .
            +++ proving_grounds.map.ron | Two-player map, 48×32 tiles
            +++ crossroads.map.ron | Four-player map, 40×40 tiles
            ++ textures/terrain/ | 128×128 PNG per terrain type
+           ++ textures/units/ | Transparent PNG sprites, required by unit rules
            ++ fonts/ | .
            +++ Exo2.ttf | Interface font
            +++ Exo2-OFL.txt | Font license
@@ -155,6 +156,8 @@ Textures and fonts
 * Terrain textures are loaded when a match starts, with
   ``RenderAssetUsages::MAIN_WORLD`` so their pixels stay on the CPU until they
   are assembled into one texture array. See :doc:`rendering`.
+* Unit sprites load through the unit rules' required ``sprite`` paths when
+  their first unit appears. Images are shared by kind; see :doc:`rendering`.
 * ``GameFont`` loads ``fonts/Exo2.ttf`` at startup. Bevy's built-in font is
   disabled. Menu widgets resolve the same font path through scene templates
   when they spawn.

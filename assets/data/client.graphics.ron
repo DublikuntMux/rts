@@ -22,7 +22,7 @@
         marker_duration: 0.6, // Seconds.
     ),
     terrain_detail: (
-        colors_below: 40.0, // Switch textures to colors below this many screen pixels per tile.
-        textures_at: 48.0, // Switch colors to textures at this threshold; must exceed colors_below.
+        colors_below: 40.0, // Switch terrain to colors and units to bounds below this many pixels per tile.
+        textures_at: 48.0, // Restore terrain textures and unit sprites; must exceed colors_below.
     ),
 )

@@ -82,7 +82,7 @@ M2 — Commands, selection, movement
    validation, and hashing. Deterministic travel-time A* with terrain speed
    modifiers and integer movement. Tile capacity with live replanning.
    Click, tap, and box selection, two-finger pan, selection rings, the touch
-   command bar, and render interpolation between ticks. Units sharing a tile
+   command bar, and smooth rendered movement between ticks. Units sharing a tile
    use configurable rectangular visual bounds (or radius-derived defaults)
    and stable grid slots, scaling crowded
    groups to fit while keeping movement smooth and simulation state unchanged.
@@ -94,6 +94,15 @@ M3 — Multiplayer
    disconnect handling. Replay recording, playback, native persistence, and
    browser import and export. The touch keypad for menu fields. Unit visuals
    as Bevy scenes.
+
+Unit movement and sprites
+   Linear simulation-position interpolation keeps travel speed steady through
+   tile centers and boundaries. Travelling groups keep unclamped slots; packing
+   offsets and scale ease independently when groups change or units stop. Unit rules require sprite
+   paths; bundled worker and soldier sprites use transparent backgrounds and
+   player-color tinting. Distant units switch to their solid bounding
+   rectangles at the same zoom as terrain colors, sharing the map's configurable
+   thresholds and hysteresis.
 
 Client presentation data
    Player palettes, selection outlines, move feedback, and terrain detail

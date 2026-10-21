@@ -34,8 +34,8 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
      - Terrain tilemap, texture array, detail switching, map bounds, and
        coordinate conversion.
    * - ``UnitsPlugin``
-     - ``units.rs``
-     - Unit scenes synchronized from the simulation, with interpolation.
+     - ``units/mod.rs``
+     - Unit scenes synchronized from the simulation, with smooth movement.
    * - ``RtsCameraPlugin``
      - ``camera.rs``
      - Orthographic camera: pan, zoom, pinch, and clamping.
@@ -88,7 +88,7 @@ Application states
 Each screen spawns its entities on ``OnEnter`` and tags them with
 ``DespawnOnExit`` for the state, so leaving a state removes everything it
 created. ``OnExit(InGame)`` also removes the ``Match`` resource, clears the
-selection, terrain resources, unit caches, and interpolation snapshots.
+selection, terrain resources, unit image caches, and movement state.
 
 A failed or stopped online session stays in ``InGame`` with orders disabled
 and a message in the session bar, so the player can still save the replay
@@ -116,7 +116,8 @@ Schedules
 
 ``Time<Fixed>`` runs at ``TICK_RATE`` (20 Hz). Bevy runs ``FixedUpdate`` zero
 or more times per frame to keep up with real time; between ticks, unit
-transforms are interpolated with the fixed clock's overstep fraction.
+transforms interpolate simulation travel between observed ticks, while packing
+offsets and scale ease independently using elapsed frame time.
 
 Selection runs after camera control, so a tap and a pan in the same frame use
 the same camera transform, and after unit synchronization, so hit tests use
@@ -146,8 +147,8 @@ The match resource
 ``MapCatalog`` holds valid bundled maps sorted by name. Each ``CatalogMap``
 has a name, a ``MatchSetup``, and a preview image. Solo play selects a catalog
 entry; online play uses the server's setup.
-``PreviousPositions`` holds unit positions from just before the latest tick,
-for interpolation only.
+``UnitVisuals`` retains each unit's two observed simulation positions and its
+packing offset/scale state for continuous travel and smooth regrouping.
 
 Bevy features
 -------------
@@ -206,7 +207,7 @@ The client uses Bevy 0.20 scene composition (``bsn!`` and functions returning
 ``ScenePlugin``; do not register it twice.
 
 ``units.rs::unit_scene`` spawns one unit visual with
-its stable ``UnitId``, shared mesh and material handles, its interpolated
+its stable ``UnitId``, a shared sprite image, its smoothed
 transform, and ``DespawnOnExit(AppState::InGame)``. See :doc:`rendering`.
 
 ``menu/widgets.rs`` contains reusable widget scenes. ``menu/pages.rs``
@@ -229,9 +230,9 @@ Rules for scenes:
   stay independent of Bevy entities.
 * Keep ownership and cleanup on the scene root so future ``Children`` are
   removed with it. Keep ``UnitVisual`` and ``Transform`` on the root for
-  selection and interpolation.
-* Use ``Commands::spawn_scene`` when the scene's assets are already loaded,
-  as with the cached unit meshes and materials. Use ``queue_spawn_scene`` when
+  selection and smooth movement.
+* Use ``Commands::spawn_scene`` for immediate roots; unit sprite handles
+  resolve through templates and images appear once loaded. Use ``queue_spawn_scene`` when
   a scene must wait for assets, and account for pending scenes in
   synchronization and match cleanup so they cannot outlive their owner.
 * Author scenes in Rust. Bevy 0.20 has no built-in ``.bsn`` asset loader;

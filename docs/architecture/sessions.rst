@@ -138,7 +138,6 @@ buffered turns remain, so a slow frame catches up with bounded work.
      :turn = frames[next] for the local player,\nempty for others;
    case (Online)
      if (turn for next buffered?) then (no)
-       :clear interpolation snapshot;
        if (> 15 s since last step?) then (yes)
          :fail: server stopped responding;
          stop
@@ -161,10 +160,8 @@ buffered turns remain, so a slow frame catches up with bounded work.
        stop
      endif
    case (Idle or Stopped)
-     :clear interpolation snapshot;
      stop
    endswitch
-   :snapshot positions for interpolation;
    :turn.apply(sim);
    :hash = sim.state_hash();
    if (Online and hash != server hash?) then (yes)
@@ -176,8 +173,7 @@ buffered turns remain, so a slow frame catches up with bounded work.
    @enduml
 
 On a fixed-step failure an online session closes its connection. The session
-switches to ``Stopped``, disables orders, clears pending commands and the
-interpolation snapshot, and shows the reason. The match stays on screen until the player leaves.
+switches to ``Stopped``, disables orders, clears pending commands, and shows the reason. The match stays on screen until the player leaves.
 
 Input delay
 -----------

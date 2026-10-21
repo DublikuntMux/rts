@@ -21,8 +21,10 @@ Example
             texture: Some("textures/terrain/water.png")),
        ],
        units: [
-           (id: "worker", size: 1, max_health: 40, radius: 0.3, speed: 2.5),
-           (id: "soldier", size: 2, max_health: 80, radius: 0.4, speed: 3.0),
+           (id: "worker", sprite: "textures/units/worker.png",
+            size: 1, max_health: 40, radius: 0.3, speed: 2.5),
+           (id: "soldier", sprite: "textures/units/soldier.png",
+            size: 2, max_health: 80, radius: 0.4, speed: 3.0),
        ],
    )
 
@@ -104,6 +106,10 @@ Unit types
    * - ``id``
      - string
      - Unique name, used by map ``units`` entries.
+   * - ``sprite``
+     - string
+     - Required image path in the asset pack. Empty and whitespace-only
+       paths are rejected. Client only.
    * - ``size``
      - integer
      - Tile capacity the unit consumes. 1 to ``tile_capacity``.
@@ -128,6 +134,12 @@ Unit types
 file loads: ``speed: 2.5`` becomes 2560 world units per second. Values that
 round to zero or exceed the 32-bit range are rejected.
 
+The client draws ``sprite`` at the size and offset given by ``visual_bounds``.
+When bounds are absent or ``None``, the image fills a centered square with
+width and height ``2 × radius``. Crowded visual groups scale the sprite and
+its bounds together. The simulation never reads ``sprite``; changing only
+its path does not affect movement or state hashes.
+
 Custom sprite bounds
 --------------------
 
@@ -148,8 +160,8 @@ and are converted to integer world units at load time. An offset may be signed;
 each size component must round to a positive world-unit value. Both fields
 are required when bounds are supplied, and unknown nested fields are errors.
 
-Bounds describe the sprite footprint; they do not crop or reshape artwork.
-The current placeholder circle still uses ``radius`` to build its mesh.
+Bounds describe the sprite footprint and displayed dimensions; they do not
+crop artwork. Images are stretched to fill these dimensions.
 The client scales the footprint and its offset with the sprite, placing the
 bounds center in its assigned tile slot. Rectangular groups choose the grid
 orientation that best fits the tile. See :doc:`../architecture/rendering`.
@@ -168,6 +180,7 @@ Validation
 * Duplicate terrain IDs, terrain symbols, or unit IDs.
 * A unit with ``size`` of 0 or larger than ``tile_capacity``.
 * A unit with nonpositive ``max_health``, ``radius``, or ``speed``.
+* A missing ``sprite`` path, or a path that is empty or contains only whitespace.
 * Nonfinite or out-of-range ``visual_bounds`` components, or a size component
   that rounds to zero or is negative.
 * An invalid ``speed_modifier`` as described above.
@@ -231,3 +244,6 @@ Bundled content
 
 With ``tile_capacity: 4``, a tile holds four workers, two soldiers, or two
 workers and one soldier.
+
+The bundled sprites are ``textures/units/worker.png`` and
+``textures/units/soldier.png``, relative to the asset pack root.

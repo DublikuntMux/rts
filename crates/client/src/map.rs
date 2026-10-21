@@ -14,7 +14,7 @@ use rts_assets::{Graphics, TerrainDetail};
 use rts_base::{IVec2 as SimPos, Rules, TILE};
 
 use crate::{
-    camera::RtsCamera,
+    camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
 };
 
@@ -47,7 +47,15 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::InGame), spawn_terrain)
+        app.init_resource::<ZoomDetail>()
+            .add_systems(OnEnter(AppState::InGame), spawn_terrain)
+            .add_systems(
+                Update,
+                update_zoom_detail
+                    .after(CameraControl)
+                    .in_set(UpdateZoomDetail)
+                    .run_if(in_state(AppState::InGame)),
+            )
             .add_systems(
                 Update,
                 finish_terrain_textures.run_if(resource_exists::<PendingTerrainTextures>),
@@ -57,6 +65,29 @@ impl Plugin for MapPlugin {
                 update_terrain_detail.run_if(resource_exists::<TerrainTilesets>),
             )
             .add_systems(OnExit(AppState::InGame), clear_map);
+    }
+}
+
+/// One zoom decision shared by terrain and all unit visuals.
+#[derive(Resource)]
+pub struct ZoomDetail(pub bool);
+
+impl Default for ZoomDetail {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UpdateZoomDetail;
+
+pub fn update_zoom_detail(
+    graphics: Res<Graphics>,
+    camera: Query<&Projection, With<RtsCamera>>,
+    mut detail: ResMut<ZoomDetail>,
+) {
+    if let Ok(Projection::Orthographic(projection)) = camera.single() {
+        detail.0 = show_detail(projection.scale, detail.0, &graphics.terrain_detail);
     }
 }
 
@@ -126,7 +157,8 @@ fn spawn_terrain(
     commands.insert_resource(MapBounds(bounds));
 }
 
-fn clear_map(mut commands: Commands) {
+fn clear_map(mut commands: Commands, mut detail: ResMut<ZoomDetail>) {
+    *detail = ZoomDetail::default();
     commands.remove_resource::<MapBounds>();
     commands.remove_resource::<TerrainTilesets>();
     commands.remove_resource::<PendingTerrainTextures>();
@@ -267,20 +299,15 @@ fn show_detail(scale: f32, was_detailed: bool, detail: &TerrainDetail) -> bool {
 
 fn update_terrain_detail(
     tilesets: Res<TerrainTilesets>,
-    graphics: Res<Graphics>,
-    camera: Single<&Projection, With<RtsCamera>>,
+    detail: Res<ZoomDetail>,
     chunks: Query<&MeshMaterial2d<TilemapChunkMaterial>, With<TerrainChunk>>,
     mut materials: ResMut<Assets<TilemapChunkMaterial>>,
 ) {
-    let Projection::Orthographic(projection) = camera.into_inner() else {
-        return;
-    };
     for handle in &chunks {
         let Some(material) = materials.get(handle) else {
             continue;
         };
-        let was_detailed = tilesets.detailed.as_ref() == Some(&material.tileset);
-        let desired = if show_detail(projection.scale, was_detailed, &graphics.terrain_detail) {
+        let desired = if detail.0 {
             tilesets.detailed.as_ref().unwrap_or(&tilesets.colors)
         } else {
             &tilesets.colors

@@ -4,7 +4,7 @@ Rendering
 The client draws two layers: a terrain tilemap and unit visuals, plus gizmos
 for selection. Everything is derived from the simulation each frame; nothing
 drawn feeds back into it. Code lives in ``crates/client/src/map.rs`` and
-``units.rs`` (including ``units/layout.rs``).
+``units/mod.rs``, ``units/layout.rs``, and ``units/motion.rs``.
 
 Local presentation settings live in ``assets/data/client.graphics.ron`` and
 are installed as the ``Graphics`` resource before the main menu opens. Player
@@ -60,8 +60,10 @@ file is padded.
 Detail by zoom
 --------------
 
-``update_terrain_detail`` measures screen pixels per tile (``128 / scale``)
-and switches the chunk's material between tilesets with hysteresis. The
+``update_zoom_detail`` measures screen pixels per tile (``128 / scale``)
+and updates one shared ``ZoomDetail`` state after camera control. Terrain and
+units consume that state, so their zoom transitions occur together.
+``update_terrain_detail`` switches the chunk's material between tilesets. The
 following thresholds are the bundled defaults, configurable through
 ``terrain_detail`` in the graphics file:
 
@@ -82,117 +84,92 @@ between materials.
 Units
 -----
 
-``sync_units`` runs every frame in ``InGame`` and reconciles one visual entity
-per living unit:
+``sync_units`` runs every frame in ``InGame``, after camera control. It
+interpolates simulation travel, eases packing offsets and scale, updates sprite
+detail, spawns missing visuals, and despawns removed units.
 
-.. kroki::
-   :type: plantuml
-   :caption: Unit visual synchronization.
-   :align: center
+Every unit type requires a ``sprite`` image path in its rules. The client loads
+it through ``AssetServer`` and shares its handle per ``UnitKind``. Missing
+images produce Bevy asset loading errors. Sprites are tinted with their owner's
+player color and drawn at z = 1, above terrain. Player slots wrap through the
+configured palette.
 
-   @startuml
-   skinparam backgroundColor transparent
-   start
-   :pack previous and current tile groups;
-   while (for each living unit in ID order)
-     :interpolate packed position and scale\nusing fixed overstep fraction;
-     if (visual exists for UnitId?) then (yes)
-       :update its Transform;
-     else (no)
-       :get or create the circle mesh\nfor its kind (radius);
-       :get or create the material\nfor its owner (player color);
-       :spawn_scene(unit_scene(...));
-     endif
-   endwhile
-   :despawn visuals whose unit is gone;
-   stop
-   @enduml
+``unit_scene`` spawns ``UnitVisual``, ``Sprite``, ``Anchor``, detail state,
+``Transform``, and ``DespawnOnExit`` on one root. The sprite template resolves
+the image handle. Health bars (M4) will be children of this root. See
+:ref:`client-scenes` for scene rules.
 
-* Units are circles based on their rules ``radius``, drawn at z = 1 above
-  the terrain. Crowded tile groups scale their visuals to fit.
-* Meshes are cached per ``UnitKind`` and materials per ``PlayerId``, so all
-  units of a kind share one mesh and all units of a player share one material.
-  Player colors by slot: blue, red, yellow, green, purple, orange, cyan, and
-  white in the bundled graphics file. Slots wrap through the configured palette.
-* ``UnitVisuals`` maps ``UnitId`` to entity. It is a Bevy ``HashMap`` because
-  it is presentation state; determinism rules apply only to ``rts_base``.
-* ``OnExit(InGame)`` resets the caches. The visual roots themselves despawn
-  through ``DespawnOnExit``.
+``UnitVisuals`` stores entities, shared images, and persistent movement state.
+These presentation caches never affect the deterministic core. On match exit,
+the caches reset and roots despawn through ``DespawnOnExit``.
 
-The unit scene
---------------
+Unit detail by zoom
+-------------------
 
-.. code-block:: rust
+Units use the same ``ZoomDetail`` state and ``terrain_detail`` thresholds as
+the map: rectangles below 40 screen pixels per tile, sprites again at 48. Unit
+size and crowded-group scaling do not affect the decision. All units, including
+new visuals, switch together; the shared hysteresis prevents flicker. Terrain
+textures still need to finish loading before they appear.
 
-   fn unit_scene(id: UnitId, mesh: Handle<Mesh>,
-                 material: Handle<ColorMaterial>, placement: Placement) -> impl Scene {
-       let visual = UnitVisual(id);
-       let transform = placement_transform(placement);
-       bsn! {
-           DespawnOnExit<AppState>(AppState::InGame)
-           visual
-           Mesh2d(mesh)
-           MeshMaterial2d<ColorMaterial>(material)
-           transform
-       }
-   }
-
-Health bars (M4) will be children of this root. See :ref:`client-scenes` for
-the scene rules.
+Both unit modes share the same size, anchor, transform, and selection target.
+Rectangles use Bevy's white default sprite image; the required image handle
+remains cached for zooming back in. There are no separate unit detail settings.
 
 Tile groups
 -----------
 
-``units/layout.rs`` uses a unit type's optional ``visual_bounds`` from the
-rules: a bounding-box center offset and full width and height. When omitted,
-it derives a centered square from the unit's diameter. See
-:doc:`../reference/rules-format` for the RON syntax. For each tick
-snapshot, units sharing a tile, including different owners, occupy a compact
-grid in ``UnitId`` order. Cells use the group's maximum width and height;
-the grid orientation minimizes its longest side so wide sprites can stack
-vertically without unnecessary shrinking. Cells have a nominal four-world-pixel
+``units/layout.rs`` uses the optional ``visual_bounds`` from the rules: a center
+offset and full width and height. When omitted, it derives a centered square
+from the unit's diameter. The sprite is sized to this footprint. See
+:doc:`../reference/rules-format` for the RON syntax.
+
+Stopped units sharing a tile, including different owners, occupy a compact grid in
+``UnitId`` order. Cells use the group's maximum width and height; the grid
+orientation minimizes its longest side. Cells have a nominal four-world-pixel
 gap (scaled with the group) and four world pixels of tile padding. The last
 row is centered.
 
-The group is anchored at its members' mean bounds center, clamped so its whole
+The group is anchored at its members' mean bounds center, clamped so the whole
 bounding box fits inside the tile. If the grid is too large, a common visual
 scale fits it to the available space, preserving relative unit sizes. An
-isolated unit keeps its original size unless even that visual exceeds the
-tile bounds. Meshes remain shared; offsets and scale live in the visual
-``Transform``. The root is placed at the slot center minus the scaled bounds
-offset; selection adds that offset back exactly once. Tile capacity, paths,
-simulation positions, and state hashes are unaffected.
+isolated unit keeps its original size unless its footprint exceeds tile bounds.
+Offsets and scale live in the root ``Transform``. The root is placed at the
+slot center minus the scaled bounds offset; the sprite anchor and selection
+add that offset back exactly once. Tile capacity, paths, simulation positions,
+and state hashes are unaffected.
 
-Interpolation
--------------
+Movement smoothing
+------------------
 
-The simulation moves in 50 ms steps, but frames arrive more often. Before each
-tick, the session copies every unit's position into ``PreviousPositions``.
-Each frame, ``sync_units`` packs both snapshots and interpolates their visual
-positions and scales:
+Travel and packing are separate. ``UnitMotion`` in ``units/motion.rs`` keeps
+the two latest observed simulation positions and linearly interpolates between
+them over one 50 ms simulation tick. On uniform terrain, equal frame durations
+produce equal travel distances, including at tile centers and boundaries.
+Interpolation samples update only when the simulation tick changes. During a
+network stall, visuals finish the last segment and hold there; continuing fixed
+clock ticks cannot rewind the segment.
 
-.. math::
+Units with active move orders form their own tile groups. Their grid uses the
+same slots and fit scale as stopped groups, but its anchor follows the members'
+mean position without clamping to tile interiors. Moving sprites can straddle
+tile edges. Clamping a moving group would hold it near a tile center and cause
+repeated acceleration and deceleration when the tile changes.
 
-   \text{drawn} = \text{previous} + (\text{current} - \text{previous}) \times \alpha
+Only the packing offset relative to the simulation position and the fit scale
+use exponential easing, with ``alpha = 1 - exp(-delta_seconds / 0.1)``. Stable
+travelling groups keep constant offsets across tiles. Joining, leaving, arriving,
+and Stop ease toward the new layout; stopped groups settle exactly within the
+tile. These layout transitions can briefly overlap sprites. New units appear at
+their initial placement. Despawn and match exit remove the movement state.
+Simulation positions, occupancy, and hashes are unaffected.
 
-where α is ``Time<Fixed>::overstep_fraction()``, clamped to 0..1. Units
-without a previous position (new units) use their current packed placement.
-When a session stalls—no server turn, playback finished, or stopped—the
-snapshot is cleared so units do not slide backwards toward an old position
-on repeated frames.
-
-Packed snapshots keep unit bodies separated and inside their tile. Smooth
-movement takes priority during transitions: crossing tile edges or changing
-group membership can briefly overlap visuals or straddle an edge while they
-interpolate into the next layout. Unchanged groups retain separation while
-interpolating.
-
-Selection hit tests, box selection, and selection rings all use the drawn
-positions and scaled bounds. Custom bounds use rectangular click targets
-and selection outlines; a drag selects any custom bounds intersecting the
-box. Units without custom bounds retain circle hit tests, rings, and selection
-by center. Minimum mouse and touch hit areas remain in effect. Interpolation
-never changes the simulation or its hash.
+Selection hit tests, box selection, and selection outlines use the drawn
+positions and scaled bounds in both detail modes. Custom bounds use rectangular
+click targets and selection outlines; a drag selects any custom bounds
+intersecting the box. Units without custom bounds retain circle hit tests,
+rings, and selection by center. Minimum mouse and touch hit areas remain in
+effect. Smoothing never changes the simulation or its hash.
 
 Gizmos
 ------

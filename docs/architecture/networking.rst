@@ -128,7 +128,7 @@ The server is the only clock. Clients run ``FixedUpdate`` at 20 Hz too, but a
 client's fixed step only *consumes* turns:
 
 * If the next turn has not arrived, the client waits without advancing,
-  freezing interpolation, and shows *Waiting for the server…* after 0.25 s.
+  letting visuals settle toward their latest layout, and shows *Waiting for the server…* after 0.25 s.
 * If several turns are buffered after a slow frame, it applies up to eight
   per fixed step to catch up.
 * After 15 seconds without progress it stops.

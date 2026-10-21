@@ -241,7 +241,7 @@ How a match runs
    the turn with the resulting state hash.
 4. Each client applies the same turn to its replica, checks the hash, and
    records the turn.
-5. Rendering reads the replica's unit positions and interpolates between
+5. Rendering reads the replica's unit positions and smooths movement between
    ticks.
 
 Read on

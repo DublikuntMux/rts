@@ -17,7 +17,6 @@ fn local_input_delay_and_replay_share_the_same_turns() {
     let mut game = session
         .begin(setup(), Mode::Offline, PlayerId(0), 0.0)
         .unwrap();
-    let mut previous = PreviousPositions::default();
     let mut status = SessionStatus::default();
     let mut network = Network::default();
     let target = IVec2::new(5 * TILE, TILE * 10);
@@ -25,48 +24,16 @@ fn local_input_delay_and_replay_share_the_same_turns() {
         units: vec![UnitId(0)],
         target,
     });
-    advance(
-        &mut game,
-        &mut previous,
-        &mut session,
-        &mut status,
-        &mut network,
-        0.05,
-    )
-    .unwrap();
+    advance(&mut game, &mut session, &mut status, &mut network, 0.05).unwrap();
     assert!(game.sim.move_target(UnitId(0)).is_none());
-    advance(
-        &mut game,
-        &mut previous,
-        &mut session,
-        &mut status,
-        &mut network,
-        0.10,
-    )
-    .unwrap();
+    advance(&mut game, &mut session, &mut status, &mut network, 0.10).unwrap();
     assert_eq!(game.sim.move_target(UnitId(0)), Some(target));
     game.queue_command(Command::Stop {
         units: vec![UnitId(0)],
     });
-    advance(
-        &mut game,
-        &mut previous,
-        &mut session,
-        &mut status,
-        &mut network,
-        0.15,
-    )
-    .unwrap();
+    advance(&mut game, &mut session, &mut status, &mut network, 0.15).unwrap();
     assert!(game.sim.move_target(UnitId(0)).is_some());
-    advance(
-        &mut game,
-        &mut previous,
-        &mut session,
-        &mut status,
-        &mut network,
-        0.20,
-    )
-    .unwrap();
+    advance(&mut game, &mut session, &mut status, &mut network, 0.20).unwrap();
     assert!(game.sim.move_target(UnitId(0)).is_none());
     let replay = session.replay().unwrap();
     assert_eq!(replay.turns.len(), 4);
@@ -77,7 +44,7 @@ fn local_input_delay_and_replay_share_the_same_turns() {
 }
 
 #[test]
-fn absent_network_turn_stalls_without_consuming_input_or_repeating_interpolation() {
+fn absent_network_turn_stalls_without_consuming_input_or_changing_state() {
     let mut session = Session::default();
     let mut game = session
         .begin(setup(), Mode::Online, PlayerId(0), 0.0)
@@ -85,33 +52,20 @@ fn absent_network_turn_stalls_without_consuming_input_or_repeating_interpolation
     game.queue_command(Command::Stop {
         units: vec![UnitId(0)],
     });
-    let mut previous = PreviousPositions(BTreeMap::from([(UnitId(0), IVec2::ZERO)]));
     let mut status = SessionStatus::default();
     let mut network = Network::default();
     let hash = game.sim.state_hash();
-    advance(
-        &mut game,
-        &mut previous,
-        &mut session,
-        &mut status,
-        &mut network,
-        0.1,
-    )
-    .unwrap();
+    let pending = game.pending.clone();
+    for now in [0.1, 0.3, 0.4] {
+        advance(&mut game, &mut session, &mut status, &mut network, now).unwrap();
+        assert_eq!(game.sim.state_hash(), hash);
+        assert_eq!(game.pending, pending);
+        assert_eq!(session.replay().unwrap().turns.len(), 0);
+    }
+    assert_eq!(status.message, "Waiting for the server…");
+    assert!(advance(&mut game, &mut session, &mut status, &mut network, 16.0).is_err());
     assert_eq!(game.sim.state_hash(), hash);
-    assert_eq!(game.pending.len(), 1);
-    assert!(previous.0.is_empty());
-    assert!(
-        advance(
-            &mut game,
-            &mut previous,
-            &mut session,
-            &mut status,
-            &mut network,
-            16.0
-        )
-        .is_err()
-    );
+    assert_eq!(game.pending, pending);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -129,7 +83,6 @@ fn headless() -> App {
         }]))
         .insert_resource(Library::new(temporary_store("session")))
         .init_resource::<Selection>()
-        .init_resource::<PreviousPositions>()
         .add_plugins(SessionPlugin);
     app
 }
@@ -620,7 +573,6 @@ fn divergent_server_turn_is_rejected_before_recording() {
     session.submitted_tick = 3;
     let error = advance(
         &mut game,
-        &mut PreviousPositions::default(),
         &mut session,
         &mut SessionStatus::default(),
         &mut Network::default(),
@@ -670,29 +622,12 @@ fn online_backlog_catches_up_with_bounded_work_and_verified_replay() {
     }
     session.received_tick = 20;
     session.submitted_tick = 22;
-    let mut previous = PreviousPositions::default();
     let mut status = SessionStatus::default();
     let mut network = Network::default();
-    advance_buffered(
-        &mut game,
-        &mut previous,
-        &mut session,
-        &mut status,
-        &mut network,
-        1.0,
-    )
-    .unwrap();
+    advance_buffered(&mut game, &mut session, &mut status, &mut network, 1.0).unwrap();
     assert_eq!(game.sim.tick(), 8, "one update has a fixed catch-up budget");
     for _ in 0..2 {
-        advance_buffered(
-            &mut game,
-            &mut previous,
-            &mut session,
-            &mut status,
-            &mut network,
-            1.0,
-        )
-        .unwrap();
+        advance_buffered(&mut game, &mut session, &mut status, &mut network, 1.0).unwrap();
     }
     assert!(session.turns.is_empty());
     assert_eq!(game.sim.state_hash(), authority.state_hash());

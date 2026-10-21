@@ -109,6 +109,49 @@ fn identical_setups_hash_identically() {
 }
 
 #[test]
+fn sprite_paths_do_not_change_hashes_or_movement() {
+    let map = MapData::from_ron(&map(
+        PLAYER,
+        TILES,
+        r#"(kind: "worker", owner: 0, pos: (0.5, 0.5))"#,
+    ))
+    .unwrap();
+    let changed = RULES.replace("textures/units/worker.png", "textures/units/custom.png");
+    let mut original = Sim::new(rules(), &map).unwrap();
+    let mut reskinned = Sim::new(Rules::from_ron(&changed).unwrap(), &map).unwrap();
+    assert_ne!(
+        original.rules().unit(UnitKind(0)).sprite,
+        reskinned.rules().unit(UnitKind(0)).sprite
+    );
+    let unit = UnitId(0);
+    let target = IVec2::new(TILE * 5 / 2, TILE * 3 / 2);
+    for sim in [&mut original, &mut reskinned] {
+        sim.queue_command(
+            PlayerId(0),
+            Command::Move {
+                units: vec![unit],
+                target,
+            },
+        );
+    }
+    for tick in 0..=80 {
+        assert_eq!(original.state_hash(), reskinned.state_hash(), "tick {tick}");
+        assert_eq!(
+            original.unit(unit).unwrap().pos,
+            reskinned.unit(unit).unwrap().pos,
+            "tick {tick}"
+        );
+        assert_eq!(original.move_target(unit), reskinned.move_target(unit));
+        if tick < 80 {
+            original.step();
+            reskinned.step();
+        }
+    }
+    assert_eq!(original.unit(unit).unwrap().pos, target);
+    assert_eq!(original.move_target(unit), None);
+}
+
+#[test]
 fn visual_bounds_do_not_change_hashes_or_movement() {
     let map = MapData::from_ron(&map(
         PLAYER,
@@ -131,7 +174,7 @@ fn visual_bounds_do_not_change_hashes_or_movement() {
                     (id: "grass", symbol: '.', speed_modifier: 1, color: "#00ff00"),
                     (id: "water", symbol: '~', speed_modifier: 0, color: "#0000ff"),
                 ],
-                units: [(id: "worker", size: 1, max_health: 40, radius: 0.25,
+                units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.25,
                          speed: 1.25, {bounds})],
             )"##
         ))

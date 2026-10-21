@@ -13,7 +13,7 @@ fn mixed_terrain_replay_roundtrips_commands_and_fractional_movement() {
             (id: "slow", symbol: 's', speed_modifier: 0.5, color: "#777777"),
             (id: "fast", symbol: 'f', speed_modifier: 2.0, color: "#00ff00"),
             (id: "blocked", symbol: '#', speed_modifier: 0.0, color: "#000000"),
-        ], units: [(id: "worker", size: 1, max_health: 40, radius: 0.25, speed: 1.125)])"##
+        ], units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.25, speed: 1.125)])"##
             .into(),
         map: r#"(name: "terrain replay", players: [(start: (0.5, 1.5))],
             tiles: ["fffff", "s.#.s", "..s.."], units: [

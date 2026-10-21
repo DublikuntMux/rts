@@ -9,6 +9,43 @@ device.
 Client scenes
 -------------
 
+**Shared map and unit zoom detail.** Unit sprites and terrain now consume one
+zoom state using the map's existing 40/48 screen-pixels-per-tile thresholds.
+The separate unit-size thresholds and configuration were removed. The scene
+regression checks differently sized, crowded units at both boundaries and in
+the hysteresis band, including unchanged bounds, anchors, and simulation hash.
+All 211 workspace tests, strict Clippy with all targets, formatting, WebAssembly
+and Android arm64 checks, and the strict Sphinx build passed. Browser and
+Android device sessions were not rerun for this threshold change.
+
+
+**Continuous travel through tile centers.** Render travel now interpolates
+simulation positions separately from packing offsets and scale. Travelling groups
+keep their slots without clamping to tile interiors. A regression drives the
+actual simulation and unit synchronization at 30, 60, 120, and 144 FPS, checking
+every frame's travel distance through multiple tile centers and boundaries.
+Additional regressions cover constant group offsets across four tiles and
+stalled/resumed simulation segments without rewinding. All 211 workspace tests, strict Clippy with all targets, formatting,
+full-workspace WebAssembly and Android arm64 checks, and the strict Sphinx build
+passed. Rendered browser and
+Android device sessions were not rerun for this correction.
+
+
+**Smooth unit movement and sprite detail.** 208 workspace tests, strict
+workspace Clippy with all targets, formatting, full-workspace ``wasm32`` and
+Android arm64 checks (through ``cargo ndk``), a Trunk debug build, and the
+strict Sphinx build passed. Tests cover tile-boundary continuity, regrouping
+position and scale, 30–144 FPS response, exact settling, required sprite paths,
+transparent PNG decoding, shared image handles and player tinting, configurable
+zoom hysteresis, matching sprite and rectangle bounds/anchors, and unchanged
+simulation hashes. The obsolete previous-tick presentation snapshots were
+removed; repeated stalled turns preserve input, simulation state, and replay
+turns. A headless Chromium session with SwiftShader rendered team-tinted
+sprites and distant bounding rectangles and exercised box and single-unit
+selection, then issued a move order and checked travel and arrival. No Android
+device session was run.
+
+
 **Crisp map previews.** Generated catalog, save, and replay previews now use
 nearest-neighbor sampling. Workspace tests, strict Clippy, formatting, the
 full-workspace ``wasm32`` check, and the strict Sphinx build passed. Rendered

@@ -46,14 +46,19 @@ screen pixel sizes for move feedback; ``marker_duration`` is a positive
 number of seconds. All sizes and durations must be finite. Marker colors
 distinguish accepted move targets from blocked terrain.
 
-``terrain_detail`` sets the texture/color switch in screen pixels per tile.
+``terrain_detail`` sets the shared terrain texture/color and unit sprite/rectangle
+switch in screen pixels per tile.
 Both thresholds must be finite and positive, and ``textures_at`` must exceed
 ``colors_below``. Textures remain visible at exactly ``colors_below``;
 colors switch to textures at exactly ``textures_at``. See
 :doc:`../architecture/rendering` for the hysteresis behavior.
 
+Units and terrain use one shared zoom state. Unit size and crowded-group
+scaling do not affect when units become rectangles. The bundled thresholds are
+40 and 48 pixels per tile. Unit bounds, anchors, and hit tests stay the same.
+
 Invalid or missing graphics data logs an asset loading error and keeps the
 client in its loading state. There is no hardcoded graphics fallback.
-Terrain colors, textures, unit radius, and unit visual bounds continue to
+Terrain colors, textures, unit sprites, unit radius, and unit visual bounds continue to
 come from :doc:`rules-format`. Interface styling and camera controls are
 defined in client code.

@@ -1,12 +1,10 @@
 //! Match lifecycle: load data, start the simulation, and run it at the fixed tick rate.
 
-use std::collections::BTreeMap;
-
 use bevy::{
     asset::{LoadState, LoadedFolder},
     prelude::*,
 };
-use rts_base::{Command, IVec2 as SimPos, PlayerId, Sim, TICK_RATE, UnitId};
+use rts_base::{Command, PlayerId, Sim, TICK_RATE};
 use rts_net::{MAX_COMMANDS_PER_TURN, MatchSetup};
 
 use rts_assets::{Graphics, MapAsset, RulesAsset};
@@ -67,16 +65,11 @@ pub struct CatalogMap {
 #[derive(Resource)]
 pub struct MapCatalog(pub Vec<CatalogMap>);
 
-/// Presentation-only positions immediately before the latest simulated tick.
-#[derive(Resource, Default)]
-pub struct PreviousPositions(pub BTreeMap<UnitId, SimPos>);
-
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
-            .init_resource::<PreviousPositions>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(TICK_RATE)))
             .add_systems(Startup, load_match_data)
             .add_systems(Update, start_match.run_if(resource_exists::<PendingMatch>));

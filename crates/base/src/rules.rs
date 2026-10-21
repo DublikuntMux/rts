@@ -53,6 +53,8 @@ impl TerrainDef {
 #[serde(deny_unknown_fields)]
 pub struct UnitDef {
     pub id: String,
+    /// Required sprite path in the asset pack. Only the client reads it.
+    pub sprite: String,
     /// Tile capacity consumed by this unit.
     pub size: u16,
     pub max_health: i32,
@@ -132,6 +134,12 @@ impl Rules {
         }
         let mut ids = BTreeSet::new();
         for unit in &self.units {
+            if unit.sprite.trim().is_empty() {
+                return Err(LoadError::invalid(format!(
+                    "unit `{}` sprite path must not be empty or whitespace-only",
+                    unit.id
+                )));
+            }
             if unit.size == 0 || unit.size > self.tile_capacity {
                 return Err(LoadError::invalid(format!(
                     "unit `{}` size must be positive and at most tile_capacity ({})",
@@ -204,9 +212,33 @@ mod tests {
 
     const TERRAIN: &str = r##"(id: "grass", symbol: 'g', speed_modifier: 1.0, color: "#00ff00")"##;
 
+    #[test]
+    fn sprite_is_required() {
+        let error = Rules::from_ron(&format!(
+            r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", size: 1, max_health: 40, radius: 0.25, speed: 1.25)])"#
+        ))
+        .unwrap_err();
+        assert!(matches!(error, LoadError::Parse(_)), "{error}");
+        assert!(error.to_string().contains("sprite"), "{error}");
+    }
+
+    #[test]
+    fn rejects_empty_and_whitespace_only_sprite_paths() {
+        for sprite in ["", " ", "\\t\\r\\n", "\u{2003}"] {
+            let error = Rules::from_ron(&format!(
+                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "{sprite}", size: 1, max_health: 40, radius: 0.25, speed: 1.25)])"#
+            ))
+            .unwrap_err();
+            assert!(matches!(error, LoadError::Invalid(_)), "{error}");
+            let message = error.to_string();
+            assert!(message.contains("worker"), "{message}");
+            assert!(message.contains("sprite path"), "{message}");
+        }
+    }
+
     fn rules_with_visual_bounds(field: &str) -> Result<Rules, LoadError> {
         Rules::from_ron(&format!(
-            r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", size: 1, max_health: 40, radius: 0.25, speed: 1.25, {field})])"#
+            r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.25, speed: 1.25, {field})])"#
         ))
     }
 
@@ -419,10 +451,11 @@ mod tests {
     #[test]
     fn parses_tile_distances() {
         let rules = Rules::from_ron(&format!(
-            r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", size: 1, max_health: 40, radius: 0.25, speed: 1.25)])"#
+            r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.25, speed: 1.25)])"#
         ))
         .unwrap();
         let kind = rules.unit_kind("worker").unwrap();
+        assert_eq!(rules.unit(kind).sprite, "textures/units/worker.png");
         assert_eq!(rules.unit(kind).radius, crate::TILE / 4);
         assert_eq!(rules.unit(kind).speed, crate::TILE * 5 / 4);
         assert_eq!(rules.terrain_by_symbol('g'), Some(TerrainId(0)));
@@ -458,7 +491,7 @@ mod tests {
             ", speed: NaN",
         ] {
             assert!(Rules::from_ron(&format!(
-                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", size: 1, max_health: 40, radius: 0.25{speed})])"#
+                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.25{speed})])"#
             )).is_err(), "accepted speed field `{speed}`");
         }
     }
@@ -477,7 +510,7 @@ mod tests {
     fn rejects_zero_and_oversized_units() {
         for size in [0, 5] {
             let error = Rules::from_ron(&format!(
-                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", size: {size}, max_health: 40, radius: 0.25, speed: 1.25)])"#
+                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: {size}, max_health: 40, radius: 0.25, speed: 1.25)])"#
             ))
             .unwrap_err();
             assert!(matches!(error, LoadError::Invalid(_)), "{error}");
@@ -492,7 +525,7 @@ mod tests {
             ("tile_capacity: 4,", "", "size"),
         ] {
             let error = Rules::from_ron(&format!(
-                r#"({capacity} terrain: [{TERRAIN}], units: [(id: "worker", {size} max_health: 40, radius: 0.25, speed: 1.25)])"#
+                r#"({capacity} terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", {size} max_health: 40, radius: 0.25, speed: 1.25)])"#
             ))
             .unwrap_err();
             assert!(matches!(error, LoadError::Parse(_)), "{error}");
@@ -504,7 +537,7 @@ mod tests {
     fn rejects_tile_capacity_and_unit_size_outside_u16_range() {
         for (capacity, size) in [("-1", "1"), ("65536", "1"), ("4", "-1"), ("4", "65536")] {
             let error = Rules::from_ron(&format!(
-                r#"(tile_capacity: {capacity}, terrain: [{TERRAIN}], units: [(id: "worker", size: {size}, max_health: 40, radius: 0.25, speed: 1.25)])"#
+                r#"(tile_capacity: {capacity}, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: {size}, max_health: 40, radius: 0.25, speed: 1.25)])"#
             ))
             .unwrap_err();
             assert!(matches!(error, LoadError::Parse(_)), "{error}");
@@ -515,7 +548,7 @@ mod tests {
     fn accepts_unit_sizes_up_to_tile_capacity() {
         for (capacity, size) in [(1, 1), (4, 1), (4, 2), (4, 4), (u16::MAX, u16::MAX)] {
             let result = Rules::from_ron(&format!(
-                r#"(tile_capacity: {capacity}, terrain: [{TERRAIN}], units: [(id: "worker", size: {size}, max_health: 40, radius: 0.25, speed: 1.25)])"#
+                r#"(tile_capacity: {capacity}, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: {size}, max_health: 40, radius: 0.25, speed: 1.25)])"#
             ));
             assert!(result.is_ok(), "{result:?}");
         }

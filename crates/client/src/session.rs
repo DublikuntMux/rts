@@ -23,7 +23,7 @@ use rts_net::{
 };
 
 use crate::{
-    game::{AppState, MapCatalog, Match, PreviousPositions},
+    game::{AppState, MapCatalog, Match},
     input::Selection,
     library::{Library, Shelf},
     replay_io::ReplayIo,
@@ -853,7 +853,6 @@ fn capitalize(message: &str) -> String {
 
 fn advance_session(
     mut game: ResMut<Match>,
-    mut previous: ResMut<PreviousPositions>,
     mut session: ResMut<Session>,
     mut status: ResMut<SessionStatus>,
     mut network: NonSendMut<Network>,
@@ -861,7 +860,6 @@ fn advance_session(
 ) {
     if let Err(reason) = advance_buffered(
         &mut game,
-        &mut previous,
         &mut session,
         &mut status,
         &mut network,
@@ -872,7 +870,6 @@ fn advance_session(
             status.disconnect(Server::Offline);
         }
         stop_match(&mut session, &mut status, Some(&mut game));
-        previous.0.clear();
         status.fail(reason);
     }
 }
@@ -880,14 +877,13 @@ fn advance_session(
 /// A slow render frame may skip fixed ticks; consume the server backlog with bounded work.
 fn advance_buffered(
     game: &mut Match,
-    previous: &mut PreviousPositions,
     session: &mut Session,
     status: &mut SessionStatus,
     network: &mut Network,
     now: f64,
 ) -> Result<(), String> {
     for _ in 0..8 {
-        advance(game, previous, session, status, network, now)?;
+        advance(game, session, status, network, now)?;
         if session.mode != Mode::Online || session.turns.is_empty() {
             break;
         }
@@ -925,7 +921,6 @@ fn local_turn(
 
 fn advance(
     game: &mut Match,
-    previous: &mut PreviousPositions,
     session: &mut Session,
     status: &mut SessionStatus,
     network: &mut Network,
@@ -942,8 +937,6 @@ fn advance(
             Mode::Offline => local_turn(game, &mut session.local_frames, next_tick)?,
             Mode::Online => {
                 let Some((turn, hash)) = session.turns.remove(&next_tick) else {
-                    // A stalled fixed clock must not repeatedly interpolate the previous tick backwards.
-                    previous.0.clear();
                     if now - session.last_step > 15.0 {
                         return Err("The server stopped responding. Play has stopped.".into());
                     }
@@ -976,21 +969,13 @@ fn advance(
                     }
                     session.mode = Mode::Stopped;
                     status.stopped = true;
-                    previous.0.clear();
                     status.info("Replay finished and verified.");
                     return Ok(());
                 };
                 turn.clone()
             }
-            Mode::Idle | Mode::Stopped => {
-                previous.0.clear();
-                return Ok(());
-            }
+            Mode::Idle | Mode::Stopped => return Ok(()),
         };
-    previous.0.clear();
-    previous
-        .0
-        .extend(game.sim.units().map(|(id, unit)| (id, unit.pos)));
     turn.apply(&mut game.sim)
         .map_err(|error| format!("Cannot advance match: {error}"))?;
     let hash = game.sim.state_hash();
@@ -1033,12 +1018,7 @@ fn finish_replay_import(
     }
 }
 
-fn cleanup_match(
-    mut commands: Commands,
-    mut selection: ResMut<Selection>,
-    mut previous: ResMut<PreviousPositions>,
-) {
+fn cleanup_match(mut commands: Commands, mut selection: ResMut<Selection>) {
     selection.units.clear();
-    previous.0.clear();
     commands.remove_resource::<Match>();
 }

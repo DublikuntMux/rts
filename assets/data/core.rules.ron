@@ -10,7 +10,7 @@
         (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#5a5852", texture: Some("textures/terrain/rock.png")),
     ],
     units: [
-        (id: "worker", size: 1, max_health: 40, radius: 0.3, speed: 2.5),
-        (id: "soldier", size: 2, max_health: 80, radius: 0.4, speed: 3.0),
+        (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: 2.5),
+        (id: "soldier", sprite: "textures/units/soldier.png", size: 2, max_health: 80, radius: 0.4, speed: 3.0),
     ],
 )
