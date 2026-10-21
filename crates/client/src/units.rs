@@ -22,7 +22,7 @@ const PLAYER_COLORS: [Color; 8] = [
 
 const UNIT_Z: f32 = 1.0;
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct UnitVisual(pub UnitId);
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +49,24 @@ struct UnitVisuals {
     entities: HashMap<UnitId, Entity>,
     meshes: HashMap<UnitKind, Handle<Mesh>>,
     materials: HashMap<PlayerId, Handle<ColorMaterial>>,
+}
+
+/// Presentation for one simulation unit; extend this scene with visual children as needed.
+fn unit_scene(
+    id: UnitId,
+    mesh: Handle<Mesh>,
+    material: Handle<ColorMaterial>,
+    translation: Vec3,
+) -> impl Scene {
+    let visual = UnitVisual(id);
+    let transform = Transform::from_translation(translation);
+    bsn! {
+        DespawnOnExit<AppState>(AppState::InGame)
+        visual
+        Mesh2d(mesh)
+        MeshMaterial2d<ColorMaterial>(material)
+        transform
+    }
 }
 
 /// Spawns, moves, and despawns unit entities to match the simulation.
@@ -88,13 +106,7 @@ fn sync_units(
             materials.add(PLAYER_COLORS[usize::from(unit.owner.0) % PLAYER_COLORS.len()])
         });
         let entity = commands
-            .spawn((
-                DespawnOnExit(AppState::InGame),
-                UnitVisual(id),
-                Mesh2d(mesh.clone()),
-                MeshMaterial2d(material.clone()),
-                Transform::from_translation(translation),
-            ))
+            .spawn_scene(unit_scene(id, mesh.clone(), material.clone(), translation))
             .id();
         entities.insert(id, entity);
     }
@@ -117,9 +129,75 @@ fn interpolated_position(previous: Option<SimPos>, current: SimPos, alpha: f32) 
 
 #[cfg(test)]
 mod tests {
+    use bevy::{scene::ScenePlugin, state::app::StatesPlugin};
     use rts_base::{Command, MapData, Rules, Sim, TILE};
 
     use super::*;
+
+    #[test]
+    fn scene_visuals_follow_unit_and_match_lifetimes() {
+        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "scenes", players: [(start: (0.5,0.5))],
+            tiles: [".."], units: [
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:0,pos:(1.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let hash = sim.state_hash();
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            StatesPlugin,
+            ScenePlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<ColorMaterial>()
+        .insert_state(AppState::InGame)
+        .insert_resource(Match::new(sim, PlayerId(0), true))
+        .init_resource::<PreviousPositions>()
+        .add_plugins(UnitsPlugin);
+        app.update();
+
+        let entities = app.world().resource::<UnitVisuals>().entities.clone();
+        assert_eq!(entities.len(), 2);
+        for (&id, &entity) in &entities {
+            let world = app.world();
+            assert_eq!(world.get::<UnitVisual>(entity).unwrap().0, id);
+            assert!(world.get::<Mesh2d>(entity).is_some());
+            assert!(world.get::<MeshMaterial2d<ColorMaterial>>(entity).is_some());
+            assert_eq!(
+                world.get::<Transform>(entity).unwrap().translation,
+                to_world(world.resource::<Match>().sim.unit(id).unwrap().pos).extend(UNIT_Z)
+            );
+        }
+        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        app.update();
+        let visuals = app.world().resource::<UnitVisuals>();
+        assert_eq!(visuals.entities, entities);
+        assert_eq!(visuals.meshes.len(), 1);
+        assert_eq!(visuals.materials.len(), 1);
+
+        app.world_mut()
+            .resource_mut::<Match>()
+            .sim
+            .remove_unit(UnitId(0));
+        app.update();
+        assert!(app.world().get_entity(entities[&UnitId(0)]).is_err());
+        assert_eq!(app.world().resource::<UnitVisuals>().entities.len(), 1);
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::Menu);
+        app.update();
+        assert!(app.world().get_entity(entities[&UnitId(1)]).is_err());
+        let visuals = app.world().resource::<UnitVisuals>();
+        assert!(visuals.entities.is_empty());
+        assert!(visuals.meshes.is_empty());
+        assert!(visuals.materials.is_empty());
+    }
 
     #[test]
     fn interpolates_tick_snapshots_without_changing_simulation() {

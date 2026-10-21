@@ -8,7 +8,29 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-bevy = "0.20.0"
+# Keep individual features explicit: Bevy's 2d/ui presets also enable unused modules.
+bevy = { version = "0.20.0", default-features = false, features = [
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_asset",
+    "bevy_scene",
+    "bevy_log",
+    "bevy_state",
+    "bevy_winit",
+    "bevy_sprite_render",
+    "bevy_ui_render",
+    "bevy_ui_widgets",
+    "bevy_gizmos_render",
+    "ui_picking",
+    "keyboard",
+    "mouse",
+    "touch",
+    "png",
+    "x11",
+    "wayland",
+    "webgl2",
+] }
 bevy_asset_packer = { version = "0.5.0", default-features = false }
 # Same as in Bevy
 glam = "0.33"

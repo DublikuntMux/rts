@@ -23,6 +23,7 @@ A top-down 2D real-time strategy game in the classic style (gather, build, fight
 ## Tech stack
 
 - Engine/client: Bevy 0.20 (nightly toolchain, edition 2024).
+- Bevy defaults are disabled workspace-wide. Use individual features for the 2D sprite/tilemap renderer, UI renderer/widgets and UI picking, selection gizmos, PNG assets, scene composition (`bevy_scene`), state/logging, async/multithreaded execution, keyboard/mouse/touch, Winit, X11/Wayland and browser WebGL2. Android adds only `android-game-activity` in its entry crate. Avoid Bevy's `2d`/`ui` convenience presets: they also enable unused modules. No PBR/glTF, skeletal/morph animation, world serialization, post-processing/extra anti-aliasing, HDR/compressed-texture codecs and lookup tables, built-in font, audio, gamepad, custom cursors, system diagnostics or reflection auto-registration. UI text uses the packed Exo 2 font. Shared renderer dependencies (including `bevy_light` via `bevy_core_pipeline`) still compile; they cannot be removed with Bevy features. Add optional capabilities only when used by game code.
 - Simulation: `rts_base` crate, plain Rust, no Bevy dependency.
 - Data: RON files via `serde` + `ron`.
 - Networking: Authoritative WebSocket server with `ewebsock` clients and Tokio/`tokio-tungstenite` server; shared protocol in `rts_net`.
@@ -56,6 +57,17 @@ Planned crates, created when their milestone starts (no empty placeholders):
 Dependency direction: base ← assets/net ← client ← android; net ← server. Server and AI never depend on the client. Base never depends on Bevy.
 
 The client never changes simulation state directly. It reads `Sim` to draw, and from M2 on it sends **commands** that the sim applies at a tick boundary.
+
+### Client scenes
+
+- Enable `bevy_scene` through the explicit workspace Bevy feature list. `DefaultPlugins` installs `ScenePlugin`; do not register it twice.
+- Use Bevy 0.20's `bsn!` and functions returning `impl Scene` to compose reusable presentation objects. `crates/client/src/units.rs::unit_scene` is the initial integration: it spawns a unit visual with its stable `UnitId`, mesh/material handles, interpolated transform, and match-exit cleanup. Meshes and materials remain shared through the existing caches.
+- Extend unit scenes with visual children when combat adds health bars (M4). Reuse scene composition for building visuals/construction indicators and command-card widgets (M5), and decorative groups in the editor (M7). Prefer scenes for reusable presentation hierarchies; simple entities and procedural terrain can keep ordinary spawning.
+- Simulation state stays in `rts_base`; scenes only present it. Synchronize scene roots from stable simulation IDs, and update visual children from simulation data. Scene observers for UI actions must submit ordinary commands rather than mutate simulation state. Movement, combat, ownership, state hashes, networking and replays stay independent of Bevy entities and scene spawning.
+- Keep ownership and cleanup on the scene root so future `Children` are removed with it. Match-scoped unit roots use `DespawnOnExit(AppState::InGame)`; removing a simulation unit despawns its visual root. Keep the root's `UnitVisual` and `Transform` available for existing selection and interpolation systems.
+- Use `Commands::spawn_scene` for scenes whose asset dependencies are already loaded, as with the current unit mesh/material handles. Use `queue_spawn_scene` when future scenes need to wait for assets; account for pending scenes during synchronization and match cleanup so they cannot outlive their owner.
+- Author scenes in Rust for now. Bevy 0.20 does not ship a built-in standalone `.bsn` asset loader. Keep rules, maps and replays in the existing RON formats; the map editor continues writing `*.map.ron`. Scene composition does not require enabling world serialization or reflection auto-registration.
+- Integration verified with 153 workspace tests, strict workspace Clippy, formatting, and full-workspace wasm32 and Android arm64 checks. The headless scene lifecycle test covers spawning, stable IDs/transforms, shared mesh/material caches, unit removal, match-exit cleanup and preservation of the simulation hash. Rendered sessions were not rerun for this change.
 
 ### Deterministic simulation
 
