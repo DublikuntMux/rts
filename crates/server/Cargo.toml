@@ -18,8 +18,10 @@ workspace = true
 rts_net.workspace = true
 rts_base.workspace = true
 thiserror.workspace = true
+rand.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures-util.workspace = true
+rand = { workspace = true, features = ["sys_rng"] }
 tokio.workspace = true
 tokio-tungstenite.workspace = true

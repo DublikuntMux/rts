@@ -5,8 +5,9 @@ Authoritative server
 simulation of every match. It has two layers:
 
 * ``Coordinator`` (``coordinator.rs``): pure room and match logic. It has no
-  sockets and no clock; callers pass the elapsed time. Tests drive it
-  directly with exact timestamps.
+  sockets, no clock, and no OS randomness; callers pass the elapsed time and
+  a seeded random generator for room codes. Tests drive it directly with
+  exact timestamps and fixed seeds.
 * The runtime (``runtime.rs``, native only): a Tokio task that accepts
   WebSocket connections and feeds the coordinator.
 
@@ -107,9 +108,14 @@ Rooms
    @enduml
 
 * The room size is the server map's player count.
-* Room codes are six characters from ``A``–``Z`` and ``0``–``9``, allocated
-  from a counter in base 36 and skipping codes in use. Codes are unique, not
-  secret; anyone who knows a waiting room's code can join it.
+* Room codes are six characters from ``A``–``Z`` and ``0``–``9``, about
+  2.2 billion possibilities. Each character is drawn uniformly from a
+  ChaCha-based ``StdRng`` that the runtime seeds from OS entropy at startup,
+  so codes cannot be predicted from codes seen earlier. A code that a live
+  room already uses is drawn again, so no two rooms share a code. A closed
+  room's code may be reused later.
+* A code is the only thing needed to join a waiting room. Share it only with
+  the players you want.
 * Every member of a room receives ``Ended`` with the reason when the room
   closes, and their connection becomes free to create or join another room.
 * Requests that fail (wrong version, unknown room, not the host, room not

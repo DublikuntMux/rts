@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, time::Duration};
 
+use rand::{RngExt, rngs::StdRng};
 use rts_base::{Command, PlayerId, Sim, TICK_RATE};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, MatchSetup, PROTOCOL_VERSION, PlayerInput, ServerMessage,
@@ -76,25 +77,33 @@ struct Game {
     next_turn: Duration,
 }
 
-/// Pure room coordinator. Callers supply monotonically increasing elapsed time.
+/// Characters of a room code: uppercase letters and digits.
+const CODE_ALPHABET: &[u8; 36] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const CODE_LEN: usize = 6;
+
+/// Pure room coordinator. Callers supply monotonically increasing elapsed time and the
+/// random source for room codes, so the coordinator itself never reads clocks or the OS.
 pub struct Coordinator {
     config: Config,
     initial_sim: Option<Sim>,
     peers: BTreeMap<ClientId, Peer>,
     rooms: BTreeMap<String, Room>,
-    next_code: u64,
+    /// Chooses room codes. Codes admit players to rooms, so seed it from OS entropy.
+    codes: StdRng,
 }
 
 impl Coordinator {
+    /// `codes` chooses room codes. Anyone who knows a waiting room's code can join it, so
+    /// production servers seed it from OS entropy; tests may use a fixed seed.
     #[must_use]
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, codes: StdRng) -> Self {
         let initial_sim = config.setup.simulation().ok();
         Self {
             config,
             initial_sim,
             peers: BTreeMap::new(),
             rooms: BTreeMap::new(),
-            next_code: 0,
+            codes,
         }
     }
 
@@ -257,11 +266,7 @@ impl Coordinator {
         code: &str,
     ) -> Result<Vec<Delivery>, &'static str> {
         self.available(client, version)?;
-        if code.len() != 6
-            || !code
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-        {
+        if code.len() != CODE_LEN || !code.bytes().all(|b| CODE_ALPHABET.contains(&b)) {
             return Err("invalid room code");
         }
         let room = self.rooms.get_mut(code).ok_or("room does not exist")?;
@@ -296,17 +301,12 @@ impl Coordinator {
         Ok(())
     }
 
+    /// Draws uniformly random codes until one is not used by a live room.
     fn allocate_code(&mut self) -> String {
-        const ALPHABET: &[u8; 36] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         loop {
-            let mut value = self.next_code;
-            self.next_code = (self.next_code + 1) % 36_u64.pow(6);
-            let mut bytes = [b'A'; 6];
-            for byte in bytes.iter_mut().rev() {
-                *byte = ALPHABET[usize::try_from(value % 36).expect("base 36 digit")];
-                value /= 36;
-            }
-            let code = String::from_utf8(bytes.to_vec()).expect("ASCII room code");
+            let code: String = (0..CODE_LEN)
+                .map(|_| char::from(CODE_ALPHABET[self.codes.random_range(0..CODE_ALPHABET.len())]))
+                .collect();
             if !self.rooms.contains_key(&code) {
                 return code;
             }
@@ -569,4 +569,46 @@ fn broadcast(room: &Room, message: ServerMessage) -> Vec<Delivery> {
             message: message.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::SeedableRng;
+
+    use super::*;
+
+    fn coordinator(seed: u64) -> Coordinator {
+        Coordinator::new(Config::default(), StdRng::seed_from_u64(seed))
+    }
+
+    #[test]
+    fn codes_use_the_alphabet_and_vary_with_the_seed() {
+        let codes: Vec<_> = (0..4)
+            .map(|seed| coordinator(seed).allocate_code())
+            .collect();
+        for code in &codes {
+            assert_eq!(code.len(), CODE_LEN);
+            assert!(code.bytes().all(|b| CODE_ALPHABET.contains(&b)), "{code}");
+        }
+        assert!(codes.windows(2).any(|pair| pair[0] != pair[1]), "{codes:?}");
+    }
+
+    #[test]
+    fn allocation_skips_codes_of_live_rooms() {
+        let mut server = coordinator(7);
+        let taken = server.allocate_code();
+        server.rooms.insert(
+            taken.clone(),
+            Room {
+                slots: vec![None],
+                ready: vec![false],
+                game: None,
+            },
+        );
+        // Replaying the same random sequence would produce the taken code first.
+        server.codes = StdRng::seed_from_u64(7);
+        let next = server.allocate_code();
+        assert_ne!(next, taken);
+        assert!(!server.rooms.contains_key(&next));
+    }
 }

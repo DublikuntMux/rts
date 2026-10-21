@@ -123,7 +123,7 @@ are listed in :doc:`server-cli`.
        resets.
    * - Room code
      - 6 characters
-     - ``A``–``Z`` and ``0``–``9``.
+     - ``A``–``Z`` and ``0``–``9``, chosen at random; unique among live rooms.
    * - Inbound WebSocket frame
      - 64 KiB
      - Larger client messages close the socket.

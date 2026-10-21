@@ -61,7 +61,7 @@ pub async fn serve_with_config(listener: TcpListener, config: Config) -> io::Res
         .setup
         .simulation()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    let mut coordinator = Coordinator::new(config.clone());
+    let mut coordinator = Coordinator::new(config.clone(), rand::make_rng());
     let config = Arc::new(config);
     let (events_tx, mut events_rx) = mpsc::channel(config.event_queue_capacity);
     let mut outbound = BTreeMap::new();

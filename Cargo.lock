@@ -4863,6 +4863,7 @@ name = "rts_server"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "rand 0.10.3",
  "rts_base",
  "rts_net",
  "thiserror 2.0.21",

@@ -97,7 +97,9 @@ Play through a room
 2. The host chooses **Create room**. The room panel shows the room code,
    *You are the host, player 1*, and *1 of 2 players joined*.
 3. The host shares the six-character code. Other players type it and choose
-   **Join room**, or press Enter in the code field.
+   **Join room**, or press Enter in the code field. Codes are random, but
+   anyone with the code can join while the room waits, so share it only with
+   your players.
 4. Each client loads the server's map and rules, validates them, and confirms
    with a checksum. Room size comes from the number of player starts in the
    server's map (two on *Proving Grounds*).

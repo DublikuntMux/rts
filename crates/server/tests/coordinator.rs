@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use rand::{SeedableRng, rngs::StdRng};
 use rts_base::{Command, IVec2, PlayerId, TILE, UnitId};
 use rts_net::{
     ClientMessage, MAX_COMMANDS_PER_TURN, MAX_UNITS_PER_COMMAND, MatchSetup, PROTOCOL_VERSION,
@@ -8,6 +9,11 @@ use rts_net::{
 use rts_server::{Config, Coordinator, Delivery, MAX_CATCH_UP_TURNS, MAX_FUTURE_TICKS};
 
 const NOW: Duration = Duration::ZERO;
+
+/// A coordinator with reproducible room codes.
+fn coordinator(config: Config) -> Coordinator {
+    Coordinator::new(config, StdRng::seed_from_u64(0))
+}
 
 fn setup() -> MatchSetup {
     MatchSetup {
@@ -67,7 +73,7 @@ fn join(server: &mut Coordinator, client: u64, code: &str) -> Vec<Delivery> {
 
 fn lobby() -> (Coordinator, String) {
     let content = setup();
-    let mut server = Coordinator::new(Config {
+    let mut server = coordinator(Config {
         setup: content.clone(),
         ..Config::default()
     });
@@ -463,7 +469,7 @@ fn full_room_fan_in_strips_nonexistent_and_forged_unit_selections() {
         &("(start: (1.5, 0.5)),".repeat(7) + "]"),
     );
     content.players = 8;
-    let mut server = Coordinator::new(Config {
+    let mut server = coordinator(Config {
         setup: content.clone(),
         ..Config::default()
     });
@@ -548,7 +554,7 @@ fn invalid_server_setup_refuses_connections_without_panicking() {
             ..setup()
         },
     ] {
-        let mut server = Coordinator::new(Config {
+        let mut server = coordinator(Config {
             setup: content,
             ..Config::default()
         });
@@ -585,16 +591,17 @@ fn leave_disconnect_and_socket_expiry_end_games_but_no_input_progress_timeout_ex
 
 #[test]
 fn room_connection_limits_and_unique_codes_remain_enforced() {
-    let mut server = Coordinator::new(Config {
-        max_connections: 2,
-        max_rooms: 1,
+    let mut server = coordinator(Config {
+        max_connections: 3,
+        max_rooms: 2,
         setup: setup(),
         ..Config::default()
     });
     assert!(server.connect(1, NOW));
     assert!(!server.connect(1, NOW));
     assert!(server.connect(2, NOW));
-    assert!(!server.connect(3, NOW));
+    assert!(server.connect(3, NOW));
+    assert!(!server.connect(4, NOW));
     assert_error(
         &receive(
             &mut server,
@@ -605,17 +612,28 @@ fn room_connection_limits_and_unique_codes_remain_enforced() {
         ),
         1,
     );
-    let code = create(&mut server, 1, &setup());
+    let first = create(&mut server, 1, &setup());
+    let second = create(&mut server, 2, &setup());
+    assert_ne!(first, second);
+    for code in [&first, &second] {
+        assert_eq!(code.len(), 6);
+        assert!(
+            code.bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()),
+            "{code}"
+        );
+    }
     assert_error(
         &receive(
             &mut server,
-            2,
+            3,
             ClientMessage::Create {
                 version: PROTOCOL_VERSION,
             },
         ),
-        2,
+        3,
     );
     server.disconnect(1);
-    assert_ne!(create(&mut server, 2, &setup()), code);
+    let third = create(&mut server, 3, &setup());
+    assert_ne!(third, second);
 }
