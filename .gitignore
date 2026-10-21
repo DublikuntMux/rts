@@ -1,2 +1,4 @@
 /target
 /dist
+/docs/.venv/
+/docs/_build/

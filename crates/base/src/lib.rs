@@ -2,7 +2,7 @@
 //!
 //! Every peer in a match runs this simulation from the same setup and the same commands, so the
 //! code here must produce bit-identical results on every platform. No float arithmetic, no
-//! hashed collections, no clocks or OS randomness. See `docs/SPEC.md`.
+//! hashed collections, no clocks or OS randomness. See `docs/architecture/determinism.rst`.
 #![deny(clippy::float_arithmetic, clippy::disallowed_types)]
 
 mod command;
