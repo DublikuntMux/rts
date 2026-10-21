@@ -162,7 +162,8 @@ mod tests {
         .insert_state(AppState::InGame)
         .insert_resource(Match::new(sim, PlayerId(0), true))
         .insert_resource(
-            Graphics::from_ron(include_str!("../../../assets/data/client.graphics.ron")).unwrap(),
+            Graphics::from_ron(include_str!("../../../../assets/data/client.graphics.ron"))
+                .unwrap(),
         )
         .init_resource::<PreviousPositions>()
         .add_plugins(UnitsPlugin);
@@ -171,7 +172,8 @@ mod tests {
 
     #[test]
     fn scene_visuals_follow_unit_and_match_lifetimes() {
-        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
         let map = MapData::from_ron(
             r#"(name: "scenes", players: [(start: (0.5,0.5))],
             tiles: [".."], units: [
@@ -224,7 +226,8 @@ mod tests {
 
     #[test]
     fn configured_palette_drives_shared_materials_without_changing_simulation() {
-        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
         let map = MapData::from_ron(
             r#"(name: "palette", players: [(start: (0.5,0.5)), (start: (1.5,0.5))],
             tiles: [".."], units: [
@@ -237,7 +240,8 @@ mod tests {
         let hash = sim.state_hash();
         let mut app = scene_app(sim);
         let mut graphics =
-            Graphics::from_ron(include_str!("../../../assets/data/client.graphics.ron")).unwrap();
+            Graphics::from_ron(include_str!("../../../../assets/data/client.graphics.ron"))
+                .unwrap();
         let custom_color = Color::srgb(0.1, 0.2, 0.3);
         graphics.player_colors = vec![custom_color];
         app.insert_resource(graphics);
@@ -259,7 +263,8 @@ mod tests {
 
     #[test]
     fn grouped_visuals_use_offsets_and_scale_without_changing_occupancy() {
-        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
         let map = MapData::from_ron(
             r#"(name: "group", players: [(start: (0.5,0.5)), (start: (1.5,0.5))],
             tiles: [".."], units: [
@@ -302,7 +307,7 @@ mod tests {
 
     #[test]
     fn configured_bounds_drive_scene_placement_and_scale() {
-        let rules = Rules::from_ron(&include_str!("../../../assets/data/core.rules.ron").replace(
+        let rules = Rules::from_ron(&include_str!("../../../../assets/data/core.rules.ron").replace(
             "radius: 0.3,",
             "radius: 0.125, visual_bounds: Some((offset: (0.125, -0.25), size: (0.875, 0.25))),",
         )).unwrap();
@@ -345,7 +350,8 @@ mod tests {
 
     #[test]
     fn interpolates_tick_snapshots_without_changing_simulation() {
-        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
         let map = MapData::from_ron(
             r#"(name: "interpolation", players: [(start: (0.5,0.5))],
             tiles: ["...."], units: [(kind:"worker",owner:0,pos:(0.5,0.5))])"#,
