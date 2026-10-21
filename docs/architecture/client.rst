@@ -44,7 +44,7 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
      - Selection, move and stop orders, and selection gizmos.
    * - ``HudPlugin``
      - ``hud.rs``
-     - Bottom command bar.
+     - Minimap, selected-unit details and portraits, command card.
    * - ``SessionPlugin``
      - ``session.rs``
      - Solo, online, and playback sessions; networking; replay recording.
@@ -55,9 +55,9 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
    * - ``MenuPlugin``
      - ``menu/``
      - Main menu pages, dialogs, bindings, navigation, and touch keypad.
-   * - ``SessionBarPlugin``
-     - ``session_bar.rs``
-     - In-game title, messages, save actions, and Leave.
+   * - ``PauseMenuPlugin``
+     - ``pause_menu.rs``
+     - Pause button and modal, save actions, and Leave.
 
 ``library.rs`` manages saved games and replays; ``storage.rs`` handles native
 files and browser storage. ``replay_io.rs`` imports and exports browser
@@ -81,7 +81,7 @@ Application states
    Loading --> Menu : graphics and at least one valid map
    Menu : sidebar, pages, dialogs
    Menu --> InGame : Start game, Load save,\nStarted from server, Watch replay
-   InGame : terrain, units, HUD, session bar
+   InGame : terrain, units, HUD, pause menu
    InGame --> Menu : Leave
    @enduml
 
@@ -91,7 +91,7 @@ created. ``OnExit(InGame)`` also removes the ``Match`` resource, clears the
 selection, terrain resources, unit image caches, and movement state.
 
 A failed or stopped online session stays in ``InGame`` with orders disabled
-and a message in the session bar, so the player can still save the replay
+and a message in the pause menu, so the player can still save the replay
 before choosing **Leave**.
 
 Schedules
@@ -106,7 +106,7 @@ Schedules
    skinparam backgroundColor transparent
    start
    :PreUpdate\npoll_network: drain socket events,\nhandle server messages;
-   :Update\nmenu actions before SessionActions\nhandle_actions, finish_replay_import\ncontrol_camera (CameraControl)\nsync_units (SyncUnits)\ncontrol_units after both\nmenu, session bar, and HUD updates;
+   :Update\nmenu actions before SessionActions\nhandle_actions, finish_replay_import\ncontrol_camera (CameraControl)\nsync_units (SyncUnits)\ncontrol_units after both\nmenu, pause menu, and HUD updates;
    while (fixed clock owes a 50 ms step?) is (yes)
      :FixedUpdate\nadvance_session: apply up to 8 turns;
    endwhile (no)
@@ -217,7 +217,7 @@ place. Pages and dialogs spawn immediately with ``Commands::spawn_scene``
 under their host entity. Font handles resolve with ``template(...)`` at
 spawn time. The menu skips rendering while ``NextState<AppState>`` has a
 pending transition, so new scenes cannot outlive their screen.
-``session_bar.rs`` composes the in-game bar from the same widgets.
+``pause_menu.rs`` composes the in-game bar from the same widgets.
 See :doc:`interface` for the layout and navigation.
 
 Rules for scenes:

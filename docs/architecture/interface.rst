@@ -1,11 +1,11 @@
-Interface: menu, bars, and keypad
-==================================
+Interface: menus, HUD, and keypad
+=================================
 
 The interface uses Bevy UI widgets and observers. It reads ``SessionStatus``
 and sends ``SessionAction`` messages. Gameplay controls read ``Selection``
 and queue commands. Interface code never advances the simulation. The main
-menu lives in ``crates/client/src/menu/``, the session bar in
-``session_bar.rs``, and the command bar in ``hud.rs``.
+menu lives in ``crates/client/src/menu/``, the pause menu in
+``pause_menu.rs``, and the bottom console in ``hud.rs``.
 
 Design rules
 -------------
@@ -106,7 +106,7 @@ Menu roots use ``DespawnOnExit(AppState::Menu)``.
   and ``dialog``.
 
 Fonts resolve through ``template(...)`` and the asset server when a scene
-spawns. ``plain_button`` stays outside the tab order for the in-game bar.
+spawns. ``plain_button`` stays outside the tab order for gameplay controls.
 Map images carry ``FitPreview(aspect)``. ``fit_previews`` sizes them from
 their container's width in the previous layout, at most 300 pixels tall, so the
 actions below a preview stay in view without stretching the image. Generated
@@ -171,7 +171,7 @@ Player names use ``rts_net::validate_name``. Invalid typed names remain
 visible with a hint, while rooms use the last valid name. Settings persist
 in ``settings.ron``. ``SettingsPlugin`` applies ``UiScale`` and desktop
 borderless fullscreen. Disabling edge scrolling sets the camera's
-``edge_margin`` to zero. World-input exclusion for both bars scales with
+``edge_margin`` to zero. World-input exclusion for the HUD and pause button scales with
 ``UiScale`` too.
 
 Dialogs and navigation
@@ -228,35 +228,57 @@ prevents the same touch from pressing a key. Opening clears text-field focus.
 Keys use six columns. A preview shows the draft or a placeholder and a
 character count. **Done** commits; **Cancel** discards.
 
-Command bar
-------------
+RTS console
+-----------
 
-The HUD (``hud.rs``) spawns on ``OnEnter(AppState::InGame)``: an 88-pixel bar
-at the bottom with the selection count, a hint, and two buttons.
+The HUD (``hud.rs``) spawns on ``OnEnter(AppState::InGame)``. Its three
+sections follow the conventional RTS layout: minimap left, selected units
+center, command card right. The graphite and slate console has a thin top
+border; ocher marks selected minimap units and an armed Move command.
 
-* The hint depends on ``touch_mode`` and the selection: *Click or drag to
-  select units.*, *Right-click ground to move.*, *Tap or drag to select
-  units.*, or *Tap ground to move. Two fingers pan.* It wraps to two lines at
-  320 pixels.
-* **Stop** (primary, with a square glyph drawn as a node so it does not depend
-  on font coverage) calls ``Selection::stop``.
-* **Clear** (secondary) empties the selection.
-* Both are disabled when nothing is selected or the match does not accept
-  orders.
+* The terrain minimap (``hud/minimap.rs``) builds one nearest-sampled image
+  from the current match, including server-provided maps. Live player-colored
+  unit dots and a camera outline update as UI nodes. Click, tap, or drag it
+  to center the camera without issuing orders.
+* The center shows unit names, health totals, order status, and the current
+  mouse or touch hint. A single unit has a sprite portrait; a group shows
+  up to twelve 48-pixel portraits. Activating a portrait narrows the selection
+  to that unit.
+* The command card uses fixed 48-pixel slots. **Move** (M) arms destination
+  targeting, **Stop** (X) queues a Stop, and **Clear** empties the selection.
+  Icons load as PNG images from ``assets/textures/ui/commands/`` (``move.png``,
+  ``stop.png``, ``clear.png``), bundled in the normal asset pack. Their white
+  glyphs and transparent backgrounds allow tinting for hover, pressed, and
+  disabled states. Replace these files to change the command artwork.
+  Empty slots are noninteractive. Controls retain the shared button states
+  and are disabled without a selection, while orders are disabled, or while
+  the pause menu is open.
 
-Session bar
-------------
+The console is 184 logical pixels high. Below 620 logical pixels of width,
+its height becomes 152 and the command card changes from three rows to two.
+Below 560 the center panel hides, with a selection count below the command
+card instead. The minimap shrinks with available width and hides below 240 logical pixels
+to preserve touch targets. Layout and input
+exclusion use window width divided by ``UiScale``.
 
-``SessionBarPlugin`` spawns a scene from ``session_bar.rs`` on
-``OnEnter(AppState::InGame)``. The bar is 56 logical pixels high before
-interface scaling. It shows **Solo**, **Online**, or **Replay**, plus the
-latest session message. Short titles leave room for save controls on narrow
-screens.
+Pause menu
+----------
 
-**Save** appears for solo play and is enabled while the match runs; it saves
-the game. **Save replay** stores the current recording in the replay library.
-The short **Save** label keeps the controls reachable on narrow screens.
-**Leave** asks for confirmation during live solo and online matches. Stopped matches and
-replays leave at once. Bar buttons stay outside the tab order, so gameplay
-keys never activate them. Its dialog host shares the menu's dialog scenes.
-Both bars are excluded from world input; see :doc:`input`.
+``PauseMenuPlugin`` spawns the top-left 48-pixel pause button at (12, 12)
+and a modal from ``pause_menu.rs``. The rest of the top edge remains playable.
+The button or Escape toggles the menu without clearing selected units.
+Escape first cancels Move targeting, then closes a confirmation dialog,
+then toggles the menu.
+
+**Resume**, **Save game** (solo only), **Save replay**, and **Leave** are
+stacked in the menu. The latest session message appears there as well.
+Solo simulation and replay playback pause while the menu or its confirmation
+is open. Online matches keep receiving and applying authoritative turns;
+the menu explicitly says the match continues. All world controls are blocked
+by menus and dialogs, including gestures that cross an overlay boundary.
+
+**Leave** asks for confirmation during live solo and online matches. Stopped
+matches and replays leave at once. The confirmation host shares the main
+menu's dialog scenes and renders above the pause menu. Dialog content
+scrolls when a short window cannot fit all actions. Pause and command
+buttons stay outside the tab order; menu actions use a modal tab group.

@@ -13,9 +13,10 @@ use rts_base::{Command, IVec2 as SimPos, UnitId};
 use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
-    hud::HUD_HEIGHT,
+    hud::{MoveTargeting, hud_height},
     map::TILE_PX,
-    session_bar::SESSION_BAR_HEIGHT,
+    menu::Menu,
+    pause_menu::{PAUSE_BUTTON_BOUNDS, PauseMenu, world_input_blocked},
     units::{SyncUnits, UnitBounds, UnitVisual},
 };
 
@@ -94,9 +95,54 @@ struct PointerState {
     finger: Option<(u64, Press)>,
     touch_blocked: bool,
     suppress_mouse: bool,
+    was_blocked: bool,
 }
 
 impl PointerState {
+    /// Cancel pending gestures on capture, and consume the closing frame too.
+    fn capture(&mut self, blocked: bool, touches: &Touches) -> bool {
+        let captured = blocked || self.was_blocked;
+        self.was_blocked = blocked;
+        if captured {
+            self.mouse = None;
+            self.finger = None;
+            self.touch_blocked = touches.iter().next().is_some();
+            self.suppress_mouse = true;
+        }
+        captured
+    }
+
+    fn mouse_press(
+        &mut self,
+        window: &Window,
+        mouse: &ButtonInput<MouseButton>,
+        view: &ScreenView,
+        additive: bool,
+    ) -> Option<Press> {
+        if mouse.just_pressed(MouseButton::Left) {
+            self.mouse = window
+                .cursor_position()
+                .filter(|&position| view.playable(position))
+                .map(|position| Press::new(position, view.world(position), additive));
+        }
+        let press = self.mouse.as_mut()?;
+        if let Some(position) = window.cursor_position() {
+            press.update(position, 8.0);
+        }
+        if mouse.just_released(MouseButton::Left) {
+            let completed = window
+                .cursor_position()
+                .is_some_and(|position| view.playable(position))
+                .then_some(*press);
+            self.mouse = None;
+            return completed;
+        }
+        if !mouse.pressed(MouseButton::Left) {
+            self.mouse = None;
+        }
+        None
+    }
+
     fn touch_press(&mut self, touches: &Touches, view: &ScreenView) -> Option<Press> {
         self.suppress_mouse = true;
         self.mouse = None;
@@ -154,7 +200,7 @@ struct ScreenView {
     center: Vec2,
     scale: f32,
     size: Vec2,
-    /// Interface scale; the bars grow with it.
+    /// Interface scale; the HUD and pause button grow with it.
     ui_scale: f32,
 }
 
@@ -165,12 +211,16 @@ impl ScreenView {
     }
 
     fn playable(&self, screen: Vec2) -> bool {
-        screen
-            .cmpge(Vec2::new(0.0, SESSION_BAR_HEIGHT * self.ui_scale))
-            .all()
-            && screen.x < self.size.x
-            && screen.y < HUD_HEIGHT.mul_add(-self.ui_scale, self.size.y)
+        world_pointer_allowed(screen, self.size, self.ui_scale)
     }
+}
+
+/// Pointer positions are in window pixels; UI bounds are in logical pixels before scaling.
+pub fn world_pointer_allowed(screen: Vec2, size: Vec2, ui_scale: f32) -> bool {
+    screen.cmpge(Vec2::ZERO).all()
+        && screen.x < size.x
+        && screen.y < hud_height(size.x / ui_scale).mul_add(-ui_scale, size.y)
+        && !PAUSE_BUTTON_BOUNDS.contains(screen / ui_scale)
 }
 
 fn control_units(
@@ -186,6 +236,9 @@ fn control_units(
     ui_scale: Res<UiScale>,
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     visuals: Query<(&UnitVisual, &Transform)>,
+    pause: Option<Res<PauseMenu>>,
+    menu: Option<Res<Menu>>,
+    mut targeting: Option<ResMut<MoveTargeting>>,
 ) {
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
         return;
@@ -201,15 +254,17 @@ fn control_units(
             .unit(*id)
             .is_some_and(|unit| unit.owner == game.local_player)
     });
-    if !window.focused || keys.just_pressed(KeyCode::Escape) {
-        pointer.mouse = None;
-        pointer.finger = None;
-        pointer.touch_blocked = touches.iter().next().is_some();
-        if keys.just_pressed(KeyCode::Escape) {
-            selection.units.clear();
+    let blocked = world_input_blocked(pause.as_deref(), menu.as_deref());
+    if pointer.capture(
+        blocked || !window.focused || keys.just_pressed(KeyCode::Escape),
+        &touches,
+    ) {
+        if blocked && let Some(targeting) = targeting.as_deref_mut() {
+            targeting.0 = false;
         }
         return;
     }
+    update_move_targeting(targeting.as_deref_mut(), &game, &selection, &keys);
     if keys.just_pressed(KeyCode::KeyX) {
         selection.stop(&mut game);
     }
@@ -230,6 +285,7 @@ fn control_units(
                 &mut game,
                 &mut feedback,
                 time.elapsed_secs_f64(),
+                targeting.as_deref_mut(),
             );
         }
         return;
@@ -244,50 +300,52 @@ fn control_units(
     let additive = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     if mouse.just_pressed(MouseButton::Left) {
         selection.touch_mode = false;
-        pointer.mouse = window
-            .cursor_position()
-            .filter(|&position| view.playable(position))
-            .map(|position| Press::new(position, view.world(position), additive));
     }
-    if let Some(press) = &mut pointer.mouse {
-        if let Some(position) = window.cursor_position() {
-            press.update(position, 8.0);
-        }
-        if mouse.just_released(MouseButton::Left) {
-            let press = *press;
-            pointer.mouse = None;
-            if window
-                .cursor_position()
-                .is_some_and(|position| view.playable(position))
-            {
-                finish_press(
-                    press,
-                    false,
-                    &view,
-                    &visuals,
-                    &mut selection,
-                    &mut game,
-                    &mut feedback,
-                    time.elapsed_secs_f64(),
-                );
-            }
-        } else if !mouse.pressed(MouseButton::Left) {
-            pointer.mouse = None;
-        }
-    }
-    if mouse.just_pressed(MouseButton::Right)
-        && let Some(position) = window
-            .cursor_position()
-            .filter(|&position| view.playable(position))
-    {
-        selection.touch_mode = false;
-        issue_move(
-            view.world(position),
-            &selection,
+    if let Some(press) = pointer.mouse_press(&window, &mouse, &view, additive) {
+        finish_press(
+            press,
+            false,
+            &view,
+            &visuals,
+            &mut selection,
             &mut game,
             &mut feedback,
             time.elapsed_secs_f64(),
+            targeting.as_deref_mut(),
         );
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        if let Some(targeting) = targeting.as_deref_mut() {
+            targeting.0 = false;
+        }
+        if let Some(position) = window
+            .cursor_position()
+            .filter(|&position| view.playable(position))
+        {
+            selection.touch_mode = false;
+            issue_move(
+                view.world(position),
+                &selection,
+                &mut game,
+                &mut feedback,
+                time.elapsed_secs_f64(),
+            );
+        }
+    }
+}
+
+fn update_move_targeting(
+    targeting: Option<&mut MoveTargeting>,
+    game: &Match,
+    selection: &Selection,
+    keys: &ButtonInput<KeyCode>,
+) {
+    if let Some(targeting) = targeting {
+        if !game.accepts_orders || selection.units.is_empty() {
+            targeting.0 = false;
+        } else if keys.just_pressed(KeyCode::KeyM) {
+            targeting.0 = true;
+        }
     }
 }
 
@@ -300,8 +358,14 @@ fn finish_press(
     game: &mut Match,
     feedback: &mut OrderFeedback,
     now: f64,
+    targeting: Option<&mut MoveTargeting>,
 ) {
     let position = view.world(press.current);
+    if let Some(targeting) = targeting.filter(|targeting| targeting.0) {
+        targeting.0 = false;
+        issue_move(position, selection, game, feedback, now);
+        return;
+    }
     if press.dragged {
         let rect = Rect::from_corners(press.world_start, position);
         if !press.additive {
@@ -798,5 +862,154 @@ mod tests {
             &[(1, TouchPhase::Canceled, Vec2::new(400.0, 300.0))],
         );
         assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    }
+    #[test]
+    fn ui_exclusion_tracks_compact_height_scale_and_only_the_pause_button() {
+        let size = Vec2::new(800.0, 600.0);
+        assert!(!world_pointer_allowed(Vec2::new(20.0, 20.0), size, 1.0));
+        assert!(world_pointer_allowed(Vec2::new(100.0, 20.0), size, 1.0));
+        assert!(world_pointer_allowed(Vec2::new(5.0, 5.0), size, 1.0));
+        assert!(world_pointer_allowed(Vec2::new(400.0, 415.0), size, 1.0));
+        assert!(!world_pointer_allowed(Vec2::new(400.0, 416.0), size, 1.0));
+        assert!(world_pointer_allowed(
+            Vec2::new(250.0, 447.0),
+            Vec2::new(500.0, 600.0),
+            1.0
+        ));
+        assert!(!world_pointer_allowed(
+            Vec2::new(250.0, 448.0),
+            Vec2::new(500.0, 600.0),
+            1.0
+        ));
+        assert!(!world_pointer_allowed(Vec2::new(100.0, 100.0), size, 2.0));
+        assert!(world_pointer_allowed(Vec2::new(400.0, 295.0), size, 2.0));
+        assert!(!world_pointer_allowed(Vec2::new(400.0, 296.0), size, 2.0));
+    }
+
+    #[test]
+    fn escape_keeps_selection_and_cancels_an_active_box() {
+        let mut app = test_app();
+        click(&mut app, Vec2::new(336.0, 236.0));
+        mouse_event(&mut app, Vec2::new(500.0, 300.0), MouseButton::Left, true);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        mouse_event(&mut app, Vec2::new(550.0, 350.0), MouseButton::Left, false);
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            BTreeSet::from([UnitId(0)])
+        );
+        assert!(app.world().resource::<PointerState>().mouse.is_none());
+    }
+
+    #[test]
+    fn pause_and_dialogs_block_orders_and_cancel_mouse_and_touch_through_resume() {
+        for dialog in [false, true] {
+            let mut app = test_app();
+            click(&mut app, Vec2::new(336.0, 236.0));
+            mouse_event(&mut app, Vec2::new(500.0, 300.0), MouseButton::Left, true);
+            app.insert_resource(PauseMenu { open: !dialog });
+            let mut menu = Menu::default();
+            if dialog {
+                menu.dialog = Some(crate::menu::Dialog::Confirm(
+                    crate::menu::Confirm::LeaveMatch,
+                ));
+            }
+            app.insert_resource(menu);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyX);
+            mouse_event(&mut app, Vec2::new(400.0, 300.0), MouseButton::Right, true);
+            touch(
+                &mut app,
+                &[(1, TouchPhase::Started, Vec2::new(400.0, 300.0))],
+            );
+            assert_eq!(app.world().resource::<Match>().pending, []);
+            app.world_mut().resource_mut::<PauseMenu>().open = false;
+            app.world_mut().resource_mut::<Menu>().dialog = None;
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            app.update();
+            touch(&mut app, &[(1, TouchPhase::Ended, Vec2::new(450.0, 350.0))]);
+            mouse_event(&mut app, Vec2::new(500.0, 350.0), MouseButton::Left, false);
+            assert_eq!(app.world().resource::<Match>().pending, []);
+            assert_eq!(
+                app.world().resource::<Selection>().units,
+                BTreeSet::from([UnitId(0)])
+            );
+        }
+    }
+
+    #[test]
+    fn move_targeting_uses_primary_mouse_and_touch_without_changing_selection() {
+        for touch_input in [false, true] {
+            let mut app = test_app();
+            app.insert_resource(MoveTargeting(false));
+            click(&mut app, Vec2::new(336.0, 236.0));
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyM);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            assert!(app.world().resource::<MoveTargeting>().0);
+            if touch_input {
+                tap(&mut app, Vec2::new(400.0, 300.0));
+            } else {
+                // An ordinary empty-world click would clear selection.
+                click(&mut app, Vec2::new(400.0, 300.0));
+            }
+            assert!(!app.world().resource::<MoveTargeting>().0);
+            assert_eq!(
+                app.world().resource::<Selection>().units,
+                BTreeSet::from([UnitId(0)])
+            );
+            assert_eq!(
+                app.world().resource::<Match>().pending,
+                vec![Command::Move {
+                    units: vec![UnitId(0)],
+                    target: SimPos::splat(2 * rts_base::TILE),
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn move_targeting_requires_orders_and_selection_and_is_canceled_by_pause_or_right_click() {
+        let mut app = test_app();
+        app.insert_resource(MoveTargeting(false));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyM);
+        app.update();
+        assert!(!app.world().resource::<MoveTargeting>().0);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        click(&mut app, Vec2::new(336.0, 236.0));
+        app.world_mut().resource_mut::<Match>().accepts_orders = false;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyM);
+        app.update();
+        assert!(!app.world().resource::<MoveTargeting>().0);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut().resource_mut::<Match>().accepts_orders = true;
+        app.world_mut().resource_mut::<MoveTargeting>().0 = true;
+        mouse_event(&mut app, Vec2::new(400.0, 300.0), MouseButton::Right, true);
+        assert!(!app.world().resource::<MoveTargeting>().0);
+        assert_eq!(app.world().resource::<Match>().pending.len(), 1);
+        app.world_mut().resource_mut::<MoveTargeting>().0 = true;
+        app.insert_resource(PauseMenu { open: true });
+        app.update();
+        assert!(!app.world().resource::<MoveTargeting>().0);
     }
 }

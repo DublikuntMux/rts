@@ -14,7 +14,7 @@ use bevy::{
     prelude::*,
     text::{EditableText, FontSize, FontWeight, LineHeight, TextCursorStyle},
     ui::{InteractionDisabled, Pressed},
-    ui_widgets::{Button, TextInput},
+    ui_widgets::{Button, ScrollArea, TextInput},
 };
 
 use super::Action;
@@ -468,11 +468,16 @@ pub fn dialog(title: impl Into<String>, contents: impl SceneList) -> impl Scene 
                 flex_direction: FlexDirection::Column,
                 width: percent(100),
                 max_width: px(460),
+                max_height: percent(100),
+                overflow: Overflow::scroll_y(),
                 padding: UiRect::all(px(20)),
                 row_gap: px(14),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(8)),
             }
+            ScrollArea
+            on(super::scroll_on_touch_drag)
+            on(super::scroll_focus_into_view)
             BackgroundColor(PANEL)
             BorderColor::all(FIELD_EDGE)
             Children [

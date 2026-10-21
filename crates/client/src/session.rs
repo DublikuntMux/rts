@@ -26,6 +26,8 @@ use crate::{
     game::{AppState, MapCatalog, Match},
     input::Selection,
     library::{Library, Shelf},
+    menu::Menu,
+    pause_menu::{PauseMenu, world_input_blocked},
     replay_io::ReplayIo,
 };
 
@@ -394,6 +396,7 @@ impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
             .init_resource::<SessionStatus>()
+            .init_resource::<PauseMenu>()
             .init_resource::<ReplayIo>()
             .insert_non_send(Network::default())
             .add_message::<SessionAction>()
@@ -857,7 +860,12 @@ fn advance_session(
     mut status: ResMut<SessionStatus>,
     mut network: NonSendMut<Network>,
     time: Res<Time>,
+    pause: Option<Res<PauseMenu>>,
+    menu: Option<Res<Menu>>,
 ) {
+    if session.mode != Mode::Online && world_input_blocked(pause.as_deref(), menu.as_deref()) {
+        return;
+    }
     if let Err(reason) = advance_buffered(
         &mut game,
         &mut session,

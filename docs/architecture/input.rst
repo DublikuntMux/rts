@@ -42,14 +42,16 @@ limits) and applies, in order:
 
 1. **Keyboard and edge pan.** WASD and arrows, plus the window edges when the
    window is focused and no finger is down. The direction is normalized, so
-   diagonals are not faster.
+   diagonals are not faster. The downward edge is the top of the HUD;
+   pointers on the HUD itself do not pan.
 2. **Middle-drag.** The world follows the pointer.
 3. **Wheel zoom.** Zoom toward the cursor: the world point under the cursor
    stays fixed on screen.
 4. **Touch gesture.** With two or more fingers, pinch zooms around the
    previous centroid and the centroid's movement pans.
-5. **Clamp.** The view stays inside the map; on an axis where the map is
-   smaller than the view, the view centers on it.
+5. **Clamp.** The visible area above the bottom HUD stays inside the map.
+   Camera limits account for the HUD so units at the bottom edge remain
+   reachable. Smaller maps center in the usable area.
 
 The camera tracks finger positions itself instead of using
 ``Touch::previous_position``, which only refreshes on frames that carry
@@ -61,10 +63,13 @@ before and after.
 Pointer areas
 -------------
 
-The session bar uses the top 56 logical pixels and the command bar uses the
-bottom 88, before interface scaling. ``ScreenView::playable`` multiplies
-both heights by ``UiScale`` and rejects presses that start or end there,
-so tapping a button never also selects or orders.
+The bottom HUD excludes 184 logical pixels, or 152 below 620 logical pixels
+of width. Only the top-left pause button's rectangle, (12, 12) to (60, 60),
+is excluded at the top. ``world_pointer_allowed`` scales these bounds with
+``UiScale``. Presses must start and end in the playable area. Menus and
+dialogs block world input entirely, clear pending presses, and suppress
+continuing gestures until their fingers or buttons lift. Camera input also
+ignores HUD pointers and clears captured pan/zoom gestures at modal changes.
 
 Screen positions convert to the world with the camera's ``Transform`` and
 ``Projection`` from this frame rather than ``GlobalTransform``, which is only
@@ -74,7 +79,8 @@ Selection state
 ---------------
 
 ``Selection`` holds a ``BTreeSet<UnitId>`` and a ``touch_mode`` flag that
-picks which hint the HUD shows. Every frame the selection drops units that no
+picks which hint the HUD shows. ``MoveTargeting`` is a separate HUD resource
+that tracks whether the next completed press chooses a destination. Every frame the selection drops units that no
 longer exist or are not the local player's.
 
 ``PointerState`` tracks one pending press:
@@ -121,8 +127,11 @@ Mouse input
 * Left release in the playable area finishes the press. Releasing outside
   cancels it.
 * Right press in the playable area issues a move immediately.
-* X queues a Stop for the selection. Escape clears the selection and any
-  pending press. Losing window focus cancels presses.
+* X queues a Stop. M or the command-card **Move** arms destination targeting;
+  the next completed world click or tap queues Move without changing selection.
+  Right-click also moves and disarms targeting. Escape cancels targeting
+  first, then closes a dialog or toggles the pause menu. It retains selection.
+  Losing window focus cancels presses.
 
 Finishing a press
 -----------------
@@ -135,6 +144,11 @@ Finishing a press
    @startuml
    skinparam backgroundColor transparent
    start
+   if (Move targeting armed?) then (yes)
+     :queue Move to the press position;
+     :disarm targeting;
+     stop
+   endif
    if (dragged?) then (yes)
      if (Shift held?) then (no)
        :clear selection;

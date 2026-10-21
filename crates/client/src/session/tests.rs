@@ -663,3 +663,57 @@ fn websocket_message_decoder_accepts_binary_setup_and_text_turns() {
     assert!(decode_message(WsMessage::Text("Setup(())".into())).is_err());
     assert_eq!(decode_message(WsMessage::Ping(vec![])).unwrap(), None);
 }
+
+#[test]
+fn pause_freezes_solo_and_replay_ticks_but_online_still_applies_authoritative_turns() {
+    for mode in [Mode::Offline, Mode::Playback, Mode::Online] {
+        let mut session = Session::default();
+        let mut game = session
+            .begin(setup(), Mode::Offline, PlayerId(0), 0.0)
+            .unwrap();
+        let mut reference = setup().simulation().unwrap();
+        let turn = Turn {
+            tick: 1,
+            inputs: (0..2)
+                .map(|player| PlayerInput {
+                    player: PlayerId(player),
+                    commands: vec![],
+                })
+                .collect(),
+        };
+        turn.apply(&mut reference).unwrap();
+        let hash = reference.state_hash();
+        if mode == Mode::Playback {
+            let mut replay = Replay::new(setup()).unwrap();
+            replay.push(turn.clone(), hash).unwrap();
+            game = session.begin_replay(replay, 0.0).unwrap();
+        } else if mode == Mode::Online {
+            session.mode = Mode::Online;
+            // No socket is needed for an already-buffered turn with no new input submission.
+            session.turns.insert(1, (turn, hash));
+            session.submitted_tick = INPUT_DELAY_TICKS;
+        }
+        game.pending.push(Command::Stop {
+            units: vec![UnitId(0)],
+        });
+        let mut app = App::new();
+        app.insert_resource(game)
+            .insert_resource(session)
+            .init_resource::<SessionStatus>()
+            .insert_resource(PauseMenu { open: true })
+            .insert_non_send(Network::default())
+            .insert_resource(Time::<()>::default())
+            .add_systems(FixedUpdate, advance_session);
+        app.world_mut().run_schedule(FixedUpdate);
+        if mode == Mode::Online {
+            assert_eq!(app.world().resource::<Match>().sim.tick(), 1);
+            assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        } else {
+            assert_eq!(app.world().resource::<Match>().sim.tick(), 0);
+            assert_eq!(app.world().resource::<Match>().pending.len(), 1);
+            app.world_mut().resource_mut::<PauseMenu>().open = false;
+            app.world_mut().run_schedule(FixedUpdate);
+            assert_eq!(app.world().resource::<Match>().sim.tick(), 1);
+        }
+    }
+}

@@ -9,7 +9,11 @@ use bevy::{
 
 use crate::{
     game::{AppState, Match},
+    hud::hud_height,
+    input::world_pointer_allowed,
     map::{MapBounds, to_world},
+    menu::{Menu, MenuActions},
+    pause_menu::{PauseMenu, world_input_blocked},
 };
 
 /// Top-down RTS camera.
@@ -29,6 +33,7 @@ impl Plugin for RtsCameraPlugin {
                 Update,
                 control_camera
                     .in_set(CameraControl)
+                    .after(MenuActions)
                     .run_if(resource_exists::<MapBounds>),
             );
     }
@@ -73,6 +78,45 @@ fn focus_on_start(game: Res<Match>, mut camera: Single<&mut Transform, With<RtsC
     }
 }
 
+#[derive(Default)]
+struct CameraGestures {
+    previous_touches: Vec<(u64, Vec2)>,
+    touch_blocked: bool,
+    middle_drag: bool,
+    was_blocked: bool,
+}
+
+impl CameraGestures {
+    // Track positions per frame: Touch::previous_position only refreshes on touch events.
+    fn touch_gesture(
+        &mut self,
+        touches: &Touches,
+        pointer_allowed: impl Fn(Vec2) -> bool,
+    ) -> Option<TouchGesture> {
+        let mut current: Vec<_> = touches
+            .iter()
+            .map(|touch| (touch.id(), touch.position()))
+            .collect();
+        current.sort_unstable_by_key(|&(id, _)| id);
+        if touches
+            .iter()
+            .any(|touch| !pointer_allowed(touch.start_position()))
+        {
+            self.touch_blocked = true;
+        }
+        let gesture = if self.touch_blocked {
+            None
+        } else {
+            TouchGesture::between(&self.previous_touches, &current)
+        };
+        if current.is_empty() {
+            self.touch_blocked = false;
+        }
+        self.previous_touches = current;
+        gesture
+    }
+}
+
 fn control_camera(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -81,11 +125,24 @@ fn control_camera(
     scroll: Res<AccumulatedMouseScroll>,
     pixels_per_line: Res<MouseScrollPixelsPerLine>,
     touches: Res<Touches>,
-    mut previous_touches: Local<Vec<(u64, Vec2)>>,
+    mut gestures: Local<CameraGestures>,
     window: Single<&Window, With<PrimaryWindow>>,
     bounds: Res<MapBounds>,
     camera: Single<(&RtsCamera, &mut Transform, &mut Projection)>,
+    pause: Option<Res<PauseMenu>>,
+    menu: Option<Res<Menu>>,
+    ui_scale: Option<Res<UiScale>>,
 ) {
+    let blocked = world_input_blocked(pause.as_deref(), menu.as_deref());
+    let was_blocked = gestures.was_blocked;
+    gestures.was_blocked = blocked;
+    if blocked || was_blocked || !window.focused || keys.just_pressed(KeyCode::Escape) {
+        gestures.previous_touches.clear();
+        gestures.touch_blocked = touches.iter().next().is_some();
+        gestures.middle_drag = false;
+        cursor_moves.clear();
+        return;
+    }
     let (settings, mut transform, mut projection) = camera.into_inner();
     let Projection::Orthographic(ortho) = projection.as_mut() else {
         return;
@@ -94,14 +151,19 @@ fn control_camera(
     if window_size.min_element() <= 0.0 {
         return;
     }
+    let ui_scale = ui_scale.as_ref().map_or(1.0, |scale| scale.0);
+    let bottom_inset = hud_height(window_size.x / ui_scale) * ui_scale;
+    let playable_size = Vec2::new(window_size.x, (window_size.y - bottom_inset).max(1.0));
+    let pointer_allowed = |position| world_pointer_allowed(position, window_size, ui_scale);
     let mut view = View {
         center: transform.translation.truncate(),
         scale: ortho.scale,
         window_size,
+        bottom_inset,
         min_scale: settings.min_scale,
         max_scale: settings
             .max_scale
-            .min((bounds.0.size() / window_size).min_element())
+            .min((bounds.0.size() / playable_size).min_element())
             .max(settings.min_scale),
     };
 
@@ -123,9 +185,11 @@ fn control_camera(
         && !touches.any_just_pressed()
         && !touches.any_just_released()
         && !touches.any_just_canceled()
-        && let Some(cursor) = window.cursor_position()
+        && let Some(cursor) = window
+            .cursor_position()
+            .filter(|&position| pointer_allowed(position))
     {
-        let far = window_size - settings.edge_margin;
+        let far = playable_size - settings.edge_margin;
         direction.x += f32::from(cursor.x >= far.x) - f32::from(cursor.x <= settings.edge_margin);
         direction.y += f32::from(cursor.y <= settings.edge_margin) - f32::from(cursor.y >= far.y);
     }
@@ -133,29 +197,30 @@ fn control_camera(
 
     // Middle-mouse drag.
     let cursor_delta: Vec2 = cursor_moves.read().filter_map(|moved| moved.delta).sum();
-    if mouse_buttons.pressed(MouseButton::Middle) {
+    if mouse_buttons.just_pressed(MouseButton::Middle) {
+        gestures.middle_drag = window.cursor_position().is_some_and(pointer_allowed);
+    }
+    if !mouse_buttons.pressed(MouseButton::Middle) {
+        gestures.middle_drag = false;
+    }
+    if gestures.middle_drag {
         view.drag(cursor_delta);
     }
 
     // Mouse-wheel zoom toward the cursor.
     let wheel_lines = scroll.to_lines(&pixels_per_line).delta.y;
-    if wheel_lines != 0.0 {
-        let anchor = window.cursor_position().unwrap_or(window_size / 2.0);
+    if wheel_lines != 0.0
+        && let Some(anchor) = window
+            .cursor_position()
+            .filter(|&position| pointer_allowed(position))
+    {
         view.zoom_at(anchor, settings.wheel_zoom_step.powf(-wheel_lines));
     }
 
-    // Touch drag and pinch. Positions are tracked here because `Touch::previous_position`
-    // is only refreshed on frames that carry touch events.
-    let mut current_touches: Vec<_> = touches
-        .iter()
-        .map(|touch| (touch.id(), touch.position()))
-        .collect();
-    current_touches.sort_unstable_by_key(|&(id, _)| id);
-    if let Some(gesture) = TouchGesture::between(&previous_touches, &current_touches) {
+    if let Some(gesture) = gestures.touch_gesture(&touches, pointer_allowed) {
         view.zoom_at(gesture.from, gesture.zoom);
         view.drag(gesture.to - gesture.from);
     }
-    *previous_touches = current_touches;
 
     view.clamp_to(bounds.0);
     transform.translation = view.center.extend(transform.translation.z);
@@ -171,6 +236,8 @@ struct View {
     center: Vec2,
     scale: f32,
     window_size: Vec2,
+    /// Screen area covered by the bottom HUD, in window pixels.
+    bottom_inset: f32,
     min_scale: f32,
     max_scale: f32,
 }
@@ -197,10 +264,16 @@ impl View {
     /// Keeps the visible area inside `bounds`, centering it on axes where it is larger.
     fn clamp_to(&mut self, bounds: Rect) {
         self.scale = self.scale.clamp(self.min_scale, self.max_scale);
-        let half_view = (self.window_size / 2.0 * self.scale).min(bounds.half_size());
-        self.center = self
-            .center
-            .clamp(bounds.min + half_view, bounds.max - half_view);
+        // Clamp the visible world above the HUD, retaining the full-window projection used
+        // by pointer conversion. Its center is higher than the camera's render center.
+        let visible_size = Vec2::new(
+            self.window_size.x,
+            (self.window_size.y - self.bottom_inset).max(1.0),
+        );
+        let offset = Vec2::Y * (self.bottom_inset * self.scale / 2.0);
+        let half_view = (visible_size / 2.0 * self.scale).min(bounds.half_size());
+        self.center =
+            (self.center + offset).clamp(bounds.min + half_view, bounds.max - half_view) - offset;
     }
 }
 
@@ -260,6 +333,7 @@ mod tests {
             center: Vec2::ZERO,
             scale: 1.0,
             window_size: Vec2::new(800.0, 600.0),
+            bottom_inset: 0.0,
             min_scale: 0.25,
             max_scale: 4.0,
         }
@@ -327,5 +401,216 @@ mod tests {
         assert_eq!(TouchGesture::between(&two, &one), None);
         assert_eq!(TouchGesture::between(&[], &[]), None);
         assert_eq!(TouchGesture::between(&one, &one), None);
+    }
+    #[test]
+    fn clamp_keeps_bottom_map_edge_above_the_hud_without_changing_projection_coordinates() {
+        let bounds = Rect::from_corners(Vec2::ZERO, Vec2::splat(2000.0));
+        let mut view = view();
+        view.bottom_inset = 184.0;
+        view.center = Vec2::new(1000.0, -1000.0);
+        view.clamp_to(bounds);
+        assert_eq!(world_at(&view, Vec2::new(400.0, 416.0)).y, bounds.min.y);
+        assert_eq!(world_at(&view, Vec2::new(400.0, 0.0)).y, 416.0);
+        assert_eq!(view.center.y, 116.0);
+        view.center.y = 3000.0;
+        view.clamp_to(bounds);
+        assert_eq!(world_at(&view, Vec2::new(400.0, 0.0)).y, bounds.max.y);
+        // A short map is centered in the usable area, with its bottom edge still accessible.
+        view.clamp_to(Rect::from_center_size(Vec2::ZERO, Vec2::splat(100.0)));
+        assert_eq!(world_at(&view, Vec2::new(400.0, 208.0)).y, 0.0);
+    }
+    fn control_app() -> App {
+        use bevy::input::touch::{TouchInput, touch_screen_input_system};
+        let mut app = App::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs_f32(0.1));
+        app.insert_resource(time)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseScroll>()
+            .init_resource::<MouseScrollPixelsPerLine>()
+            .init_resource::<Touches>()
+            .init_resource::<PauseMenu>()
+            .init_resource::<Menu>()
+            .insert_resource(MapBounds(Rect::from_center_size(
+                Vec2::ZERO,
+                Vec2::splat(10000.0),
+            )))
+            .add_message::<CursorMoved>()
+            .add_message::<TouchInput>()
+            .add_systems(PreUpdate, touch_screen_input_system)
+            .add_systems(Update, control_camera);
+        let mut window = Window::default();
+        window.resolution.set(800.0, 600.0);
+        window.focused = true;
+        window.set_cursor_position(Some(Vec2::new(400.0, 300.0)));
+        app.world_mut().spawn((window, PrimaryWindow));
+        app.world_mut().spawn((
+            RtsCamera::default(),
+            Transform::default(),
+            Projection::Orthographic(OrthographicProjection::default_2d()),
+        ));
+        app
+    }
+
+    fn camera_state(app: &mut App) -> (Vec3, f32) {
+        let (transform, projection) = app
+            .world_mut()
+            .query_filtered::<(&Transform, &Projection), With<RtsCamera>>()
+            .single(app.world())
+            .unwrap();
+        let Projection::Orthographic(projection) = projection else {
+            panic!("orthographic camera")
+        };
+        (transform.translation, projection.scale)
+    }
+
+    #[test]
+    fn modal_blocks_keyboard_wheel_and_drag_and_held_drag_cannot_resume_through_it() {
+        let mut app = control_app();
+        let window = app
+            .world_mut()
+            .query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(app.world())
+            .unwrap();
+        let moved = CursorMoved {
+            window,
+            position: Vec2::new(410.0, 310.0),
+            delta: Some(Vec2::splat(10.0)),
+        };
+        let before = camera_state(&mut app);
+        app.world_mut().resource_mut::<PauseMenu>().open = true;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Middle);
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseScroll>()
+            .delta
+            .y = 1.0;
+        app.world_mut().write_message(moved.clone());
+        app.update();
+        assert_eq!(camera_state(&mut app), before);
+        app.world_mut().resource_mut::<PauseMenu>().open = false;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseScroll>()
+            .delta = Vec2::ZERO;
+        app.update();
+        app.world_mut().write_message(moved.clone());
+        app.update();
+        assert_eq!(camera_state(&mut app), before);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .reset_all();
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Middle);
+        app.world_mut().write_message(moved);
+        app.update();
+        assert_eq!(camera_state(&mut app).0, Vec3::new(-10.0, 10.0, 0.0));
+        let before_dialog = camera_state(&mut app);
+        app.world_mut().resource_mut::<Menu>().dialog = Some(crate::menu::Dialog::Confirm(
+            crate::menu::Confirm::LeaveMatch,
+        ));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseScroll>()
+            .delta
+            .y = 1.0;
+        app.update();
+        assert_eq!(camera_state(&mut app), before_dialog);
+    }
+
+    #[test]
+    fn fingers_held_across_pause_cannot_pan_or_pinch_until_they_lift() {
+        use bevy::input::touch::{TouchInput, TouchPhase};
+        let mut app = control_app();
+        let window = app
+            .world_mut()
+            .query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(app.world())
+            .unwrap();
+        let fingers = |app: &mut App, phase, positions: [Vec2; 2]| {
+            for (id, position) in [1, 2].into_iter().zip(positions) {
+                app.world_mut().write_message(TouchInput {
+                    id,
+                    phase,
+                    position,
+                    window,
+                    force: None,
+                });
+            }
+            app.update();
+        };
+        let before = camera_state(&mut app);
+        app.world_mut().resource_mut::<PauseMenu>().open = true;
+        fingers(
+            &mut app,
+            TouchPhase::Started,
+            [Vec2::new(300.0, 200.0), Vec2::new(500.0, 200.0)],
+        );
+        app.world_mut().resource_mut::<PauseMenu>().open = false;
+        app.update();
+        fingers(
+            &mut app,
+            TouchPhase::Moved,
+            [Vec2::new(250.0, 220.0), Vec2::new(550.0, 220.0)],
+        );
+        fingers(
+            &mut app,
+            TouchPhase::Moved,
+            [Vec2::new(200.0, 240.0), Vec2::new(600.0, 240.0)],
+        );
+        assert_eq!(camera_state(&mut app), before);
+        fingers(
+            &mut app,
+            TouchPhase::Ended,
+            [Vec2::new(200.0, 240.0), Vec2::new(600.0, 240.0)],
+        );
+        fingers(
+            &mut app,
+            TouchPhase::Started,
+            [Vec2::new(300.0, 200.0), Vec2::new(500.0, 200.0)],
+        );
+        fingers(
+            &mut app,
+            TouchPhase::Moved,
+            [Vec2::new(250.0, 220.0), Vec2::new(550.0, 220.0)],
+        );
+        assert!(camera_state(&mut app).1 < before.1);
+    }
+    #[test]
+    fn bottom_edge_pan_uses_the_world_boundary_above_the_hud() {
+        for ui_scale in [1.0, 1.5] {
+            let mut app = control_app();
+            app.insert_resource(UiScale(ui_scale));
+            let bottom = hud_height(800.0 / ui_scale).mul_add(-ui_scale, 600.0);
+            app.world_mut()
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(app.world_mut())
+                .unwrap()
+                .set_cursor_position(Some(Vec2::new(400.0, bottom - 2.0)));
+            app.update();
+            let after_pan = camera_state(&mut app).0;
+            assert!(after_pan.y < 0.0, "pointer above the HUD must pan down");
+            app.world_mut()
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(app.world_mut())
+                .unwrap()
+                .set_cursor_position(Some(Vec2::new(400.0, bottom + 2.0)));
+            app.update();
+            assert_eq!(camera_state(&mut app).0, after_pan);
+        }
     }
 }

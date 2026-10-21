@@ -355,6 +355,7 @@ fn successful_connections_become_the_recent_server() {
 #[test]
 fn leaving_a_live_match_asks_first() {
     let mut app = app(1280);
+    app.world_mut().resource_mut::<PauseMenu>().open = true;
     let _ = sent(&mut app);
     {
         let mut status = status(&mut app);
@@ -448,4 +449,132 @@ fn form_validates_addresses_and_codes() {
         form.code = code.into();
         assert_eq!(form.code_valid(), valid, "{code}");
     }
+}
+
+#[test]
+fn pause_menu_escape_resume_and_leave_confirmation_preserve_selection() {
+    use crate::{
+        input::Selection,
+        pause_menu::{PauseMenu, PauseMenuPlugin},
+    };
+    use rts_base::UnitId;
+    use std::collections::BTreeSet;
+
+    let mut app = app(1280);
+    app.add_plugins(PauseMenuPlugin)
+        .insert_resource(Selection {
+            units: BTreeSet::from([UnitId(0)]),
+            touch_mode: false,
+        })
+        .insert_resource(MoveTargeting(false));
+    {
+        let mut status = status(&mut app);
+        status.running = true;
+        status.kind = MatchKind::Solo;
+        status.has_replay = true;
+    }
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::InGame);
+    settle(&mut app);
+    let escape = |app: &mut App| {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+    };
+    app.world_mut().resource_mut::<MoveTargeting>().0 = true;
+    escape(&mut app);
+    assert!(!app.world().resource::<MoveTargeting>().0);
+    assert!(!app.world().resource::<PauseMenu>().open);
+    escape(&mut app);
+    assert!(app.world().resource::<PauseMenu>().open);
+    assert_eq!(
+        app.world().resource::<Selection>().units,
+        BTreeSet::from([UnitId(0)])
+    );
+    let visible = texts(&mut app);
+    for label in [
+        "Resume",
+        "Save game",
+        "Save replay",
+        "Leave",
+        "Game paused.",
+    ] {
+        assert!(visible.iter().any(|text| text == label), "missing {label}");
+    }
+    act(&mut app, Action::Game(SessionAction::SaveGame));
+    act(&mut app, Action::Game(SessionAction::SaveReplay));
+    assert_eq!(
+        sent(&mut app),
+        [SessionAction::SaveGame, SessionAction::SaveReplay]
+    );
+    act(&mut app, Action::Game(SessionAction::Leave));
+    assert!(app.world().resource::<Menu>().dialog.is_some());
+    escape(&mut app);
+    assert!(app.world().resource::<Menu>().dialog.is_none());
+    assert!(app.world().resource::<PauseMenu>().open);
+    escape(&mut app);
+    assert!(!app.world().resource::<PauseMenu>().open);
+    act(&mut app, Action::TogglePause);
+    assert!(app.world().resource::<PauseMenu>().open);
+    act(&mut app, Action::Resume);
+    assert!(!app.world().resource::<PauseMenu>().open);
+    status(&mut app).kind = MatchKind::Online;
+    act(&mut app, Action::TogglePause);
+    assert!(
+        texts(&mut app)
+            .iter()
+            .any(|text| text == "Online match continues while this menu is open.")
+    );
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::Menu);
+    settle(&mut app);
+    assert!(!app.world().resource::<PauseMenu>().open);
+}
+
+#[test]
+fn closed_pause_menu_clears_focus_and_ignores_hidden_actions() {
+    use crate::pause_menu::PauseMenuPlugin;
+    use bevy::ui_widgets::Activate;
+    let mut app = app(1280);
+    app.add_plugins(PauseMenuPlugin);
+    status(&mut app).running = true;
+    status(&mut app).kind = MatchKind::Solo;
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::InGame);
+    settle(&mut app);
+    act(&mut app, Action::TogglePause);
+    let save = app
+        .world_mut()
+        .query::<(Entity, &Action)>()
+        .iter(app.world())
+        .find(|(_, action)| **action == Action::Game(SessionAction::SaveGame))
+        .unwrap()
+        .0;
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(save, bevy::input_focus::FocusCause::Navigated);
+    app.world_mut().trigger(Activate { entity: save });
+    settle(&mut app);
+    assert_eq!(sent(&mut app), [SessionAction::SaveGame]);
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Escape);
+    app.update();
+    assert!(app.world().resource::<InputFocus>().get().is_none());
+    assert!(!app.world().resource::<PauseMenu>().open);
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .reset_all();
+    // Simulate activation that was dispatched before focus was cleared.
+    app.world_mut().trigger(Activate { entity: save });
+    act(&mut app, Action::Game(SessionAction::Leave));
+    assert_eq!(sent(&mut app), []);
+    assert!(app.world().resource::<Menu>().dialog.is_none());
 }

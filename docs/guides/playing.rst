@@ -37,34 +37,39 @@ The match screen
 
 .. kroki::
    :type: plantuml
-   :caption: The in-game screen. Pointer input in the top and bottom bars never reaches the map.
+   :caption: The match screen: minimap, selected units, and command card below the battlefield.
    :align: center
 
    @startsalt
    skinparam backgroundColor transparent
    scale 1.2
    {+
-     { <b>Solo | . | . | . | [Save] | [Save replay] | [Leave] }
-     { Latest session message }
-     ==
+     { [Pause] | . | . | . }
      {
        Map: terrain and units
        Drag to select; right-click or tap ground to move
      }
      ==
-     { <b>3 selected | . | . | [■ Stop] | [Clear] }
-     { Right-click ground to move. }
+     { Minimap | 3 selected / portraits / health | [Move] | [Stop] }
+     { Camera outline | Right-click ground to move | . | [Clear] }
    }
    @endsalt
 
-* The **session bar** at the top shows what is running (*Solo match*,
-  *Online match*, or *Watching replay*) and the latest message, such
-  as *Waiting for the server…*. **Save** saves a running solo match;
-  **Save replay** adds a recording to the replay library. **Leave** returns
-  to the menu.
-* The **command bar** at the bottom shows how many units are selected, a hint
-  for the next action, and the **Stop** and **Clear** buttons. They are
-  disabled without a selection, and during replay playback.
+* The top-left **pause button**, or Escape, opens the menu with **Resume**,
+  **Save game** (solo only), **Save replay**, and **Leave**. The current
+  session message also appears there. Solo games and replays pause while
+  the menu is open. Online matches continue; world controls are blocked.
+* The bottom-left **minimap** shows terrain, player-colored units, and the
+  camera outline. Click, tap, or drag it to move the camera.
+* The center shows the selection's name or count, health, order status, and
+  portraits. Click a group portrait to select that unit alone.
+* The right **command card** has **Move**, **Stop**, and **Clear**. Commands
+  are disabled without a selection or during replay playback.
+
+The HUD becomes shorter below 620 logical pixels of width. On narrower
+screens the center details hide and a selection count appears below the
+commands. At very large interface scales, the minimap hides when fewer than
+240 logical pixels are available; commands keep their touch targets.
 
 Buttons are at least 48 logical pixels tall before interface scaling.
 
@@ -79,7 +84,8 @@ player 1 is blue and player 2 is red.
 * Drag a box to select every unit of yours whose center is inside it.
 * Hold Shift while clicking to add a unit to the selection or remove it;
   Shift with a box adds to the selection.
-* Click empty ground, press Escape, or choose **Clear** to deselect.
+* Click empty ground or choose **Clear** to deselect. Escape retains the
+  selection and opens the pause menu.
 
 Selected units show a yellow ring.
 
@@ -89,6 +95,8 @@ Give orders
 * **Move:** right-click ground with the mouse, or tap ground with a selection
   on a touch screen. A green marker confirms the order. A red marker means the
   target is water, rock, or outside the map, and no order is sent.
+  Alternatively choose **Move** or press M, then click or tap a destination.
+  Escape cancels destination targeting before opening the menu.
 * **Stop:** press X or choose **Stop**. Units drop their current order.
 
 Orders are never applied instantly. Your client sends them for a tick two
@@ -147,8 +155,8 @@ milestone (see :doc:`../project/roadmap`).
 Leave a match
 -------------
 
-Choose **Leave** to return to the menu. Live solo and online matches ask for
-confirmation. Leaving solo play loses progress since the last **Save**;
+Open the pause menu and choose **Leave** to return to the main menu. Live solo and online matches ask for
+confirmation. Leaving solo play loses progress since the last **Save game**;
 leaving an online match ends it for everyone and keeps the server connection
 open. Replays and stopped matches leave at once.
 

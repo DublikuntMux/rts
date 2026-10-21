@@ -8,7 +8,7 @@ recordings include only turns whose hash matches the server's.
 Save and load a game
 ---------------------
 
-Choose **Save** in the top bar of a running solo match. Each save adds
+Open the pause menu and choose **Save game** in a running solo match. Each save adds
 a record such as **Save 01**. From the menu, choose **Singleplayer → Load
 game**, select a record, and choose **Load save**. Loading verifies the
 recorded turns and continues from their final state. The recording keeps
@@ -17,7 +17,7 @@ growing. Online games cannot be saved for continuation.
 Save a replay
 --------------
 
-Choose **Save replay** in the session bar to add the current recording to
+Choose **Save replay** in the pause menu to add the current recording to
 the replay library. After leaving, open **Replays**, select **Last match**,
 and choose **Save to library**. Automatic names such as **Replay 01** use
 one more than the highest number in use.
@@ -37,8 +37,9 @@ when a recording exists and no map filter is active. Select a row and choose
 
 Loading a record checks its version, setup, turn sequence, limits, and final
 hash before starting playback. Playback runs at 20 ticks per second. The
-session bar shows *Watching replay*, and order buttons stay disabled. At the
-end it shows *Replay finished and verified.* **Leave** returns at once.
+pause menu shows the playback status and pauses the replay while open. Order
+buttons stay disabled. At the end, the status reads *Replay finished and
+verified.* Choose **Leave** in the pause menu to return at once.
 
 Storage
 --------

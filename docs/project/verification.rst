@@ -9,6 +9,28 @@ device.
 Client scenes
 -------------
 
+**Command image assets.** Bottom-HUD Move, Stop, and Clear icons load from
+transparent PNG files through the existing asset server and pack. A regression
+checks the actual HUD image paths and decodes each asset, including transparent
+backgrounds and white glyph pixels. Labels retain their transparent backgrounds.
+Workspace tests, strict all-target Clippy, formatting, the client WebAssembly
+check, and the strict Sphinx build passed. A rendered session and Android
+build were not rerun for this asset-only follow-up.
+
+
+**RTS console and pause menu.** All 227 workspace tests, strict all-target
+Clippy, formatting, the client WebAssembly check, and the strict Sphinx build
+passed. Regressions cover retained selection across Escape, pause/resume of
+solo and replay turns while online keeps advancing, modal capture for mouse
+and touch, Move targeting, command availability, portrait selection, narrow
+HUD targets, transparent button labels, portrait narrowing, focus cleanup
+when closing the menu, and camera limits and downward edge pan above the HUD.
+Headless Chromium with software WebGL rendered the console at desktop and
+320-pixel widths, box-selected five units, and opened the pause menu using
+Escape and its button. Android builds and physical device sessions were not
+rerun.
+
+
 **Shared map and unit zoom detail.** Unit sprites and terrain now consume one
 zoom state using the map's existing 40/48 screen-pixels-per-tile thresholds.
 The separate unit-size thresholds and configuration were removed. The scene

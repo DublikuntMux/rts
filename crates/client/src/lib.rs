@@ -6,10 +6,10 @@ mod input;
 mod library;
 mod map;
 mod menu;
+mod pause_menu;
 mod preview;
 mod replay_io;
 mod session;
-mod session_bar;
 mod settings;
 mod storage;
 mod units;
@@ -20,7 +20,7 @@ use rts_assets::{AssetBundle, BundledAssetPlugin, DataPlugin};
 use crate::{
     camera::RtsCameraPlugin, font::GameFont, game::GamePlugin, hud::HudPlugin,
     input::SelectionPlugin, library::Library, map::MapPlugin, menu::MenuPlugin,
-    session::SessionPlugin, session_bar::SessionBarPlugin, settings::SettingsPlugin,
+    pause_menu::PauseMenuPlugin, session::SessionPlugin, settings::SettingsPlugin,
     units::UnitsPlugin,
 };
 
@@ -58,7 +58,7 @@ fn build_app(bundle: AssetBundle) -> App {
             SessionPlugin,
             SettingsPlugin,
             MenuPlugin,
-            SessionBarPlugin,
+            PauseMenuPlugin,
         ))
         .init_resource::<Library>()
         .init_resource::<GameFont>();

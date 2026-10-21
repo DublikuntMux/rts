@@ -54,8 +54,8 @@ Status
      - Server-side AI player.
    * - M9
      - Fog of war, minimap, UX polish
-     - Not started
-     - Visibility, minimap, control groups.
+     - Partial
+     - Minimap done; visibility, control groups, and further UX pending.
    * - M10
      - Scale
      - Not started
@@ -116,6 +116,16 @@ Interface redesign
    status lamps. Compact navigation moves above the page. The menu and
    in-game command bar share their control palette and interaction states.
 
+In-game console and pause menu
+   A top-left pause button and Escape open a modal with Resume, Save game,
+   Save replay, and Leave. Solo and replay sessions pause; online matches
+   continue syncing with world controls blocked. The bottom console has an
+   interactive terrain minimap with unit markers and camera outline,
+   selected-unit portraits and details, and a spatial Move/Stop/Clear command
+   card. Command icons load from PNG assets in ``textures/ui/commands`` and
+   follow the button-state tint. Narrow layouts retain 48-pixel commands. Camera limits keep the
+   bottom map edge accessible above the HUD.
+
 Main menu
    Scene-based menu with a sidebar, pages, dialogs, and a compact layout.
    Map selection includes crisp, nearest-neighbor previews and a second map,
@@ -155,9 +165,9 @@ M8 — Skirmish AI
    :doc:`skirmish-ai`.
 
 M9 — Fog of war, minimap, UX polish
-   A per-player visibility grid, the minimap (using the existing terrain color
-   palette) with tap and drag to jump the camera, control groups, and a mobile
-   UX pass. Fog of war also needs a visibility-aware protocol so clients do not
+   The terrain minimap with tap and drag camera navigation is implemented in
+   the in-game console. Remaining work: a per-player visibility grid,
+   visibility-aware minimap markers, control groups, and a mobile UX pass. Fog of war also needs a visibility-aware protocol so clients do not
    receive hidden information.
 
 M10 — Scale

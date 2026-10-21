@@ -30,7 +30,9 @@ use rts_net::{MAX_NAME_CHARS, RoomInfo};
 use self::widgets::Field;
 use crate::{
     game::{AppState, MapCatalog},
+    hud::MoveTargeting,
     library::{Library, Record, Shelf},
+    pause_menu::PauseMenu,
     session::{Lobby, MatchKind, Server, SessionAction, SessionActions, SessionStatus},
     settings::Settings,
 };
@@ -42,6 +44,10 @@ pub const MAX_URL_LEN: usize = 256;
 /// Below this logical width navigation moves into a row above the page.
 const COMPACT_WIDTH: f32 = 760.0;
 
+/// Menu actions finish before camera and world input consume this frame's controls.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MenuActions;
+
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
@@ -51,6 +57,7 @@ impl Plugin for MenuPlugin {
         }
         app.init_resource::<Menu>()
             .init_resource::<MenuForm>()
+            .init_resource::<PauseMenu>()
             .init_resource::<Rendered>()
             .init_resource::<Clipboard>()
             .init_resource::<keypad::TouchKeypad>()
@@ -67,6 +74,7 @@ impl Plugin for MenuPlugin {
                         .run_if(in_state(AppState::Menu))
                         .before(perform),
                     perform
+                        .in_set(MenuActions)
                         .run_if(not(in_state(AppState::Loading)))
                         .before(SessionActions),
                     (follow_session, render, restore_focus, keypad::sync)
@@ -422,7 +430,9 @@ pub enum Action {
     Quit,
     CloseDialog,
     Confirm,
-    /// In-game session bar actions.
+    TogglePause,
+    Resume,
+    /// In-game pause menu actions.
     Game(SessionAction),
 }
 
@@ -499,6 +509,8 @@ pub fn activate(
 fn perform(
     mut actions: MessageReader<Action>,
     mut menu: ResMut<Menu>,
+    mut pause: ResMut<PauseMenu>,
+    mut targeting: Option<ResMut<MoveTargeting>>,
     mut form: ResMut<MenuForm>,
     mut settings: ResMut<Settings>,
     status: Res<SessionStatus>,
@@ -509,6 +521,9 @@ fn perform(
     mut exit: MessageWriter<AppExit>,
 ) {
     for action in actions.read() {
+        if matches!(action, Action::Game(_) | Action::Resume) && !pause.open {
+            continue;
+        }
         let view = View {
             status: &status,
             menu: &menu,
@@ -666,6 +681,18 @@ fn perform(
                 } else {
                     exit.write(AppExit::Success);
                 }
+            }
+            Action::TogglePause => {
+                pause.open = !pause.open;
+                if pause.open
+                    && let Some(targeting) = targeting.as_deref_mut()
+                {
+                    targeting.0 = false;
+                }
+            }
+            Action::Resume => {
+                pause.open = false;
+                menu.dialog = None;
             }
             Action::CloseDialog => menu.dialog = None,
             Action::Confirm => {
@@ -1013,7 +1040,7 @@ fn render(
     }
 }
 
-/// Fills the dialog layer of the menu or the session bar.
+/// Fills the dialog layer of the main menu or the pause menu.
 fn render_dialog(
     mut commands: Commands,
     view: ViewParam,

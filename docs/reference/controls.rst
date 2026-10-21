@@ -2,9 +2,10 @@ Controls
 ========
 
 Every action is reachable by touch. No feature depends on hover or on a
-hotkey alone. Pointer input over the session bar (top, 56 logical pixels) or
-the command bar (bottom, 88 logical pixels) never reaches the map. These
-exclusion areas grow with the interface scale.
+hotkey alone. Pointer input over the top-left pause button or bottom RTS
+console never reaches the map. The console is 184 logical pixels high, or
+152 below 620 logical pixels of width. Bounds grow with interface scale.
+Menus and dialogs capture all world input.
 
 Desktop
 -------
@@ -27,19 +28,24 @@ Desktop
      - Clear the selection.
    * - Right-click ground
      - Move the selection there.
+   * - M
+     - Arm Move targeting; click a destination to move the selection.
    * - X
      - Stop the selection.
    * - Escape
-     - Clear the selection and cancel a pending press.
+     - Cancel Move targeting first, then close a dialog or toggle the pause
+       menu. Keep the selection.
    * - W A S D or arrow keys
      - Pan the camera.
-   * - Pointer at a window edge (8 pixels)
-     - Pan the camera when **Edge scrolling** is on.
+   * - Pointer at a world-view edge (8 pixels)
+     - Pan when **Edge scrolling** is on. The downward edge is just above
+       the HUD.
    * - Middle-drag
      - Pan the camera with the pointer.
    * - Mouse wheel
      - Zoom toward the pointer, 1.15× per line.
 
+Clicking or dragging the minimap centers the camera without issuing orders.
 Losing window focus cancels a pending press. Clicking a unit of another player
 does not select it.
 
@@ -80,20 +86,26 @@ Buttons
    * - Button
      - Where
      - Action
+   * - Pause / Resume
+     - Top-left button / pause menu
+     - Open or close the menu; pause solo play and replays. Online continues.
+   * - Move
+     - Command card
+     - Arm targeting; the next world click or tap chooses a destination.
    * - Stop
-     - Command bar
+     - Command card
      - Stop the selection. Disabled without a selection or during playback.
    * - Clear
-     - Command bar
+     - Command card
      - Clear the selection.
-   * - Save
-     - Session bar, solo only
+   * - Save game
+     - Pause menu, solo only
      - Add a save for later continuation through **Singleplayer → Load game**.
    * - Save replay
-     - Session bar
+     - Pause menu
      - Add the current recording to the replay library.
    * - Leave
-     - Session bar
+     - Pause menu
      - Return to the menu. Live solo and online matches ask for confirmation;
        leaving online ends the match for everyone and keeps the connection.
    * - New game, Start game
@@ -142,7 +154,7 @@ Singleplayer, disconnect from Connecting or Rooms, or ask to leave a lobby.
 
 Touch taps on **Server address**, **Invite code**, and **Player name** open
 the in-game keypad. **Done** commits and **Cancel** discards edits. Mouse
-wheels and touch drags scroll pages. In-game bar buttons stay outside the
+wheels and touch drags scroll pages. In-game pause and command buttons stay outside the
 tab order.
 
 **Settings** offers interface scales of 75, 100, 125, and 150 percent,
@@ -155,8 +167,8 @@ Camera limits
 The camera is orthographic. At scale 1, one tile is 128 logical pixels. Zoom
 ranges from scale 0.25 (512 pixels per tile) to scale 4 (32 pixels per tile),
 and the farthest zoom is also limited so the view never shows more than the
-whole map. The view is clamped to the map and centered on axes where the map
-is smaller than the window. Keyboard and edge panning move 1200 screen pixels
+whole map. The usable view above the HUD is clamped to the map and centered on axes
+where the map is smaller. The bottom edge stays reachable above the HUD. Keyboard and edge panning move 1200 screen pixels
 per second.
 
 Planned controls
@@ -175,9 +187,6 @@ Planned controls
    * - Long-press
      - M4
      - Context menu with attack-move, patrol, and other orders.
-   * - Minimap tap or drag
-     - M9
-     - Jump the camera.
    * - Control groups
      - M9
      - Save and recall selections.
