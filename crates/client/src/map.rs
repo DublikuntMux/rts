@@ -10,6 +10,7 @@ use bevy::{
         TilemapChunkTileData,
     },
 };
+use rts_assets::{Graphics, TerrainDetail};
 use rts_base::{IVec2 as SimPos, Rules, TILE};
 
 use crate::{
@@ -254,13 +255,19 @@ fn textured_tileset(rules: &Rules, sources: &[Option<&Image>]) -> Result<Image, 
     clippy::cast_precision_loss,
     reason = "tile size is a small power of two"
 )]
-fn show_detail(scale: f32, was_detailed: bool) -> bool {
+fn show_detail(scale: f32, was_detailed: bool, detail: &TerrainDetail) -> bool {
     let pixels_per_tile = TILE_PX as f32 / scale;
-    pixels_per_tile >= if was_detailed { 40.0 } else { 48.0 }
+    pixels_per_tile
+        >= if was_detailed {
+            detail.colors_below
+        } else {
+            detail.textures_at
+        }
 }
 
 fn update_terrain_detail(
     tilesets: Res<TerrainTilesets>,
+    graphics: Res<Graphics>,
     camera: Single<&Projection, With<RtsCamera>>,
     chunks: Query<&MeshMaterial2d<TilemapChunkMaterial>, With<TerrainChunk>>,
     mut materials: ResMut<Assets<TilemapChunkMaterial>>,
@@ -273,7 +280,7 @@ fn update_terrain_detail(
             continue;
         };
         let was_detailed = tilesets.detailed.as_ref() == Some(&material.tileset);
-        let desired = if show_detail(projection.scale, was_detailed) {
+        let desired = if show_detail(projection.scale, was_detailed, &graphics.terrain_detail) {
             tilesets.detailed.as_ref().unwrap_or(&tilesets.colors)
         } else {
             &tilesets.colors
@@ -380,10 +387,23 @@ mod tests {
 
     #[test]
     fn far_zoom_uses_colors_and_threshold_has_hysteresis() {
-        assert!(show_detail(1.0, false));
-        assert!(!show_detail(4.0, true));
-        assert!(show_detail(3.0, true));
-        assert!(!show_detail(3.0, false));
-        assert!(show_detail(2.5, false));
+        let graphics =
+            Graphics::from_ron(include_str!("../../../assets/data/client.graphics.ron")).unwrap();
+        let detail = &graphics.terrain_detail;
+        assert!(show_detail(1.0, false, detail));
+        assert!(!show_detail(4.0, true, detail));
+        assert!(show_detail(3.0, true, detail));
+        assert!(!show_detail(3.0, false, detail));
+        assert!(show_detail(2.5, false, detail));
+
+        let detail = TerrainDetail {
+            colors_below: 64.0,
+            textures_at: 128.0,
+        };
+        assert!(show_detail(2.0, true, &detail));
+        assert!(!show_detail(2.01, true, &detail));
+        assert!(!show_detail(2.0, false, &detail));
+        assert!(show_detail(1.0, false, &detail));
+        assert!(!show_detail(1.01, false, &detail));
     }
 }

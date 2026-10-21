@@ -22,6 +22,7 @@ Content
            + assets/ | .
            ++ data/ | .
            +++ core.rules.ron | Terrain and unit types
+           +++ client.graphics.ron | Player palette, selection and order markers, terrain detail
            ++ maps/ | .
            +++ proving_grounds.map.ron | Two-player sample map, 48×32 tiles
            ++ textures/terrain/ | 128×128 PNG per terrain type
@@ -33,7 +34,7 @@ Content
    @endsalt
 
 The rules and map are simulation data and also travel over the network.
-Textures and the font are presentation assets: they stay local to each
+Graphics settings, textures, and the font are presentation assets: they stay local to each
 client and never affect simulation state.
 
 The asset pack
@@ -83,16 +84,16 @@ A missing or corrupt pack panics at startup with the path and the error.
    bundle -> app : build_app(bundle).run()
    app -> app : BundledAssetPlugin\nserves AssetServer reads
    app -> game : Startup: load_match_data
-   game -> app : load data/core.rules.ron\nload maps/proving_grounds.map.ron
-   app --> game : RulesAsset, MapAsset loaded
+   game -> app : load data/core.rules.ron\nload maps/proving_grounds.map.ron\nload data/client.graphics.ron
+   app --> game : RulesAsset, MapAsset, Graphics loaded
    game -> game : build MatchSetup,\nvalidate with simulation()
-   game -> app : AppState::Loading → Menu
+   game -> app : install Graphics resource\nAppState::Loading → Menu
    @enduml
 
 Data loaders
 ------------
 
-``DataPlugin`` registers two asset types and one generic loader:
+``DataPlugin`` registers three asset types through one generic loader:
 
 .. list-table::
    :header-rows: 1
@@ -107,18 +108,28 @@ Data loaders
    * - ``MapAsset(MapData, String)``
      - ``map.ron``
      - Parsed map structure, plus the original text.
+   * - ``Graphics``
+     - ``graphics.ron``
+     - Validated local presentation settings; also used as a resource.
 
-Both keep the original text because the match setup carries text, not parsed
+Rules and map assets keep the original text because the match setup carries text, not parsed
 values. The client builds its solo ``MatchSetup`` from these strings, exactly
 as the server does from files, so solo play, online play, and replays all load
 the simulation through ``MatchSetup::simulation``. See
 :ref:`fixed-point-data` for why the text is preserved.
 
 The loader reads the file, checks UTF-8, and calls ``Rules::from_ron`` or
-``MapData::from_ron``. A failure becomes a Bevy load error. If the bundled
+``MapData::from_ron``, or ``Graphics::from_ron``. A failure becomes a Bevy load
+error. Startup waits for all three assets; a failed load logs the file path
+and error once and stops startup in the loading state. If the bundled
 setup does not build a valid simulation, the client logs
 ``cannot start `maps/proving_grounds.map.ron`: <error>`` and stays in the
 loading state.
+
+``Graphics`` is cloned into a resource before entering the menu and retained
+across matches. It supplies player colors, selection and order feedback, and
+terrain detail thresholds. See :doc:`../reference/graphics-format`. The
+client reads these settings at startup; live reloading is not supported.
 
 Textures and fonts
 ------------------

@@ -9,6 +9,17 @@ device.
 Client scenes
 -------------
 
+**Graphics settings in RON.** 178 workspace tests, strict workspace Clippy,
+formatting, full-workspace ``wasm32`` and Android arm64 checks, and the strict
+Sphinx build. Tests cover the bundled palette, slot wrapping, invalid colors,
+empty palettes, unknown and missing fields, nonfinite or invalid dimensions
+and durations, and ordered terrain detail thresholds. Headless asset loading
+checks graphics installation before the menu and startup rejection of missing
+or malformed graphics. Scene tests verify custom colors in actual shared
+unit materials and unchanged simulation hashes; zoom tests cover configurable
+hysteresis boundaries. Rendered browser and physical device sessions were
+not rerun for this follow-up.
+
 **Configurable unit visual bounds.** 173 workspace tests, strict workspace
 Clippy, formatting, full-workspace ``wasm32`` and Android arm64 checks, and
 the strict Sphinx build. Rules tests cover

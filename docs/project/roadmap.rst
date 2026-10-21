@@ -95,6 +95,12 @@ M3 — Multiplayer
    browser import and export. The touch keypad for lobby fields. Unit visuals
    as Bevy scenes.
 
+Client presentation data
+   Player palettes, selection outlines, move feedback, and terrain detail
+   thresholds are configured in a validated local ``client.graphics.ron``
+   asset. Startup loads it before opening the lobby. Graphics stay outside
+   simulation state, network setup, and replays.
+
 Upcoming
 --------
 

@@ -7,6 +7,7 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
+use rts_assets::Graphics;
 use rts_base::{Command, IVec2 as SimPos, UnitId};
 
 use crate::{
@@ -17,8 +18,6 @@ use crate::{
     map::TILE_PX,
     units::{SyncUnits, UnitBounds, UnitVisual},
 };
-
-const SELECTION_COLOR: Color = Color::srgb(0.95, 0.83, 0.45);
 
 #[derive(Resource, Default)]
 pub struct Selection {
@@ -394,6 +393,7 @@ fn issue_move(
 
 fn draw_selection(
     mut gizmos: Gizmos,
+    graphics: Res<Graphics>,
     selection: Res<Selection>,
     pointer: Res<PointerState>,
     feedback: Res<OrderFeedback>,
@@ -406,6 +406,7 @@ fn draw_selection(
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
         return;
     };
+    let style = &graphics.selection;
     for (visual, transform) in &visuals {
         if selection.units.contains(&visual.0)
             && let Some(unit) = game.sim.unit(visual.0)
@@ -415,14 +416,16 @@ fn draw_selection(
             if definition.visual_bounds.is_some() {
                 gizmos.rect_2d(
                     Isometry2d::from_translation(bounds.center()),
-                    bounds.size() + Vec2::splat(8.0 * projection.scale),
-                    SELECTION_COLOR,
+                    bounds.size() + Vec2::splat(2.0 * style.padding * projection.scale),
+                    style.color,
                 );
             } else {
                 gizmos.circle_2d(
                     bounds.center(),
-                    4.0_f32.mul_add(projection.scale, bounds.width() / 2.0),
-                    SELECTION_COLOR,
+                    style
+                        .padding
+                        .mul_add(projection.scale, bounds.width() / 2.0),
+                    style.color,
                 );
             }
         }
@@ -441,19 +444,19 @@ fn draw_selection(
         gizmos.rect_2d(
             Isometry2d::from_translation(rect.center()),
             rect.size(),
-            SELECTION_COLOR,
+            style.color,
         );
     }
     if let Some((position, accepted, started)) = feedback.0 {
         let age = time.elapsed_secs_f64() - started;
-        if age < 0.6 {
+        if age < style.marker_duration {
             let color = if accepted {
-                Color::srgb(0.60, 0.90, 0.65)
+                style.accepted_order_color
             } else {
-                Color::srgb(1.0, 0.35, 0.25)
+                style.blocked_order_color
             };
-            gizmos.circle_2d(position, 12.0 * projection.scale, color);
-            gizmos.cross_2d(position, 5.0 * projection.scale, color);
+            gizmos.circle_2d(position, style.marker_radius * projection.scale, color);
+            gizmos.cross_2d(position, style.marker_cross_size * projection.scale, color);
         }
     }
 }

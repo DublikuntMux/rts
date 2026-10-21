@@ -1,4 +1,4 @@
-//! Asset loaders for simulation data files.
+//! Asset loaders for simulation and presentation data files.
 
 use std::marker::PhantomData;
 
@@ -6,7 +6,9 @@ use bevy::{
     asset::{AssetLoader, LoadContext, io::Reader},
     prelude::*,
 };
-use rts_base::{LoadError, MapData, Rules};
+use rts_base::{MapData, Rules};
+
+use crate::Graphics;
 
 /// A `*.rules.ron` file.
 #[derive(Asset, TypePath)]
@@ -22,8 +24,10 @@ impl Plugin for DataPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<RulesAsset>()
             .init_asset::<MapAsset>()
+            .init_asset::<Graphics>()
             .register_asset_loader(RonLoader::<RulesAsset>(PhantomData))
-            .register_asset_loader(RonLoader::<MapAsset>(PhantomData));
+            .register_asset_loader(RonLoader::<MapAsset>(PhantomData))
+            .register_asset_loader(RonLoader::<Graphics>(PhantomData));
     }
 }
 
@@ -31,22 +35,30 @@ impl Plugin for DataPlugin {
 trait RonAsset: Asset + Sized {
     const EXTENSION: &'static str;
 
-    fn parse(text: &str) -> Result<Self, LoadError>;
+    fn parse(text: &str) -> Result<Self, BevyError>;
 }
 
 impl RonAsset for RulesAsset {
     const EXTENSION: &'static str = "rules.ron";
 
-    fn parse(text: &str) -> Result<Self, LoadError> {
-        Rules::from_ron(text).map(|rules| Self(rules, text.to_owned()))
+    fn parse(text: &str) -> Result<Self, BevyError> {
+        Ok(Self(Rules::from_ron(text)?, text.to_owned()))
     }
 }
 
 impl RonAsset for MapAsset {
     const EXTENSION: &'static str = "map.ron";
 
-    fn parse(text: &str) -> Result<Self, LoadError> {
-        MapData::from_ron(text).map(|map| Self(map, text.to_owned()))
+    fn parse(text: &str) -> Result<Self, BevyError> {
+        Ok(Self(MapData::from_ron(text)?, text.to_owned()))
+    }
+}
+
+impl RonAsset for Graphics {
+    const EXTENSION: &'static str = "graphics.ron";
+
+    fn parse(text: &str) -> Result<Self, BevyError> {
+        Self::from_ron(text)
     }
 }
 
@@ -66,7 +78,7 @@ impl<A: RonAsset> AssetLoader for RonLoader<A> {
     ) -> Result<A, BevyError> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        Ok(A::parse(str::from_utf8(&bytes)?)?)
+        A::parse(str::from_utf8(&bytes)?)
     }
 
     fn extensions(&self) -> &[&str] {

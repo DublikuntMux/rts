@@ -120,7 +120,8 @@ Crates
      - base, net
    * - ``rts_assets``
      - Builds ``assets.pack`` in ``build.rs``, opens it per platform, and
-       registers Bevy loaders for ``*.rules.ron`` and ``*.map.ron``.
+       registers Bevy loaders for ``*.rules.ron``, ``*.map.ron``, and
+       ``*.graphics.ron``.
      - base
    * - ``rts_client``
      - The game: rendering, input, camera, lobby, match sessions, and

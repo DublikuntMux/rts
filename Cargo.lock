@@ -4816,7 +4816,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_asset_packer",
+ "ron",
  "rts_base",
+ "serde",
  "wasm-bindgen-futures",
 ]
 

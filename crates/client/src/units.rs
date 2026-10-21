@@ -3,6 +3,7 @@
 mod layout;
 
 use bevy::{platform::collections::HashMap, prelude::*};
+use rts_assets::Graphics;
 use rts_base::{PlayerId, UnitId, UnitKind};
 
 pub use self::layout::UnitBounds;
@@ -12,18 +13,6 @@ use crate::{
     game::{AppState, Match, PreviousPositions},
     map::to_world_distance,
 };
-
-/// Player colors by slot.
-const PLAYER_COLORS: [Color; 8] = [
-    Color::srgb(0.20, 0.45, 0.90),
-    Color::srgb(0.85, 0.20, 0.20),
-    Color::srgb(0.95, 0.80, 0.20),
-    Color::srgb(0.30, 0.75, 0.35),
-    Color::srgb(0.65, 0.35, 0.85),
-    Color::srgb(0.95, 0.55, 0.15),
-    Color::srgb(0.25, 0.80, 0.85),
-    Color::srgb(0.90, 0.90, 0.90),
-];
 
 const UNIT_Z: f32 = 1.0;
 
@@ -78,6 +67,7 @@ fn unit_scene(
 fn sync_units(
     mut commands: Commands,
     game: Res<Match>,
+    graphics: Res<Graphics>,
     previous: Res<PreviousPositions>,
     fixed: Res<Time<Fixed>>,
     mut visuals: ResMut<UnitVisuals>,
@@ -121,9 +111,9 @@ fn sync_units(
             let radius = game.sim.rules().unit(unit.kind).radius;
             meshes.add(Circle::new(to_world_distance(radius)))
         });
-        let material = material_cache.entry(unit.owner).or_insert_with(|| {
-            materials.add(PLAYER_COLORS[usize::from(unit.owner.0) % PLAYER_COLORS.len()])
-        });
+        let material = material_cache
+            .entry(unit.owner)
+            .or_insert_with(|| materials.add(graphics.player_color(unit.owner.0)));
         let entity = commands
             .spawn_scene(unit_scene(id, mesh.clone(), material.clone(), placement))
             .id();
@@ -171,6 +161,9 @@ mod tests {
         .init_asset::<ColorMaterial>()
         .insert_state(AppState::InGame)
         .insert_resource(Match::new(sim, PlayerId(0), true))
+        .insert_resource(
+            Graphics::from_ron(include_str!("../../../assets/data/client.graphics.ron")).unwrap(),
+        )
         .init_resource::<PreviousPositions>()
         .add_plugins(UnitsPlugin);
         app
@@ -227,6 +220,41 @@ mod tests {
         assert!(visuals.entities.is_empty());
         assert!(visuals.meshes.is_empty());
         assert!(visuals.materials.is_empty());
+    }
+
+    #[test]
+    fn configured_palette_drives_shared_materials_without_changing_simulation() {
+        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "palette", players: [(start: (0.5,0.5)), (start: (1.5,0.5))],
+            tiles: [".."], units: [
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:1,pos:(1.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let hash = sim.state_hash();
+        let mut app = scene_app(sim);
+        let mut graphics =
+            Graphics::from_ron(include_str!("../../../assets/data/client.graphics.ron")).unwrap();
+        let custom_color = Color::srgb(0.1, 0.2, 0.3);
+        graphics.player_colors = vec![custom_color];
+        app.insert_resource(graphics);
+        app.update();
+
+        let world = app.world();
+        let visuals = world.resource::<UnitVisuals>();
+        let materials = world.resource::<Assets<ColorMaterial>>();
+        assert_eq!(visuals.materials.len(), 2);
+        for (id, unit) in world.resource::<Match>().sim.units() {
+            let material = world
+                .get::<MeshMaterial2d<ColorMaterial>>(visuals.entities[&id])
+                .unwrap();
+            assert_eq!(material.0, visuals.materials[&unit.owner]);
+            assert_eq!(materials.get(&material.0).unwrap().color, custom_color);
+        }
+        assert_eq!(world.resource::<Match>().sim.state_hash(), hash);
     }
 
     #[test]

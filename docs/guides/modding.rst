@@ -1,10 +1,13 @@
-Change units, terrain, and maps
-===============================
+Change units, terrain, maps, and graphics
+=========================================
 
-Game content lives in two RON files: a *rules* file with terrain and unit
+Simulation content lives in two RON files: a *rules* file with terrain and unit
 types, and a *map* file with terrain tiles, player starts, and starting units.
 A server can run modified copies of both, and clients receive them when they
 join, so content mods need no client rebuild.
+
+Local graphics settings live in a separate
+``assets/data/client.graphics.ron`` file. They are bundled with each client.
 
 What you can change
 -------------------
@@ -27,6 +30,8 @@ What you can change
      - ``players`` in the map file.
    * - Starting units
      - ``units`` in the map file.
+   * - Player colors, selection and move markers, terrain detail thresholds
+     - ``client.graphics.ron`` in the client's asset pack.
 
 Executable game code, textures, fonts, and the interface are part of the
 client and are not downloaded. Lua scripting for missions and triggers is
@@ -77,6 +82,20 @@ Clients load textures from their own asset pack. A mod can reuse a bundled
 path such as ``Some("textures/terrain/grass.png")``, or use ``texture: None``
 to draw the terrain with its ``color``. A path that the client does not have
 fails to load and leaves every terrain drawn with flat colors.
+
+Change local graphics
+---------------------
+
+Edit ``assets/data/client.graphics.ron`` and run ``cargo run``. The asset
+pack rebuilds automatically; restart the game after subsequent edits. For
+example, changing the first ``player_colors`` entry changes player zero's
+unit color. Selection colors, outline padding, move marker colors, sizes,
+duration, and terrain detail thresholds are also configurable. The bundled
+file preserves the original appearance.
+
+See :doc:`../reference/graphics-format` for the full schema and validation.
+These settings apply to solo, online, and replay rendering on that client;
+servers do not distribute them, and simulation state is unaffected.
 
 Test a map locally
 ------------------

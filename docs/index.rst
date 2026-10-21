@@ -57,6 +57,7 @@ Find what you need
    reference/server-cli
    reference/rules-format
    reference/map-format
+   reference/graphics-format
    reference/protocol
    reference/setup-frame
    reference/replay-format

@@ -6,6 +6,11 @@ for selection. Everything is derived from the simulation each frame; nothing
 drawn feeds back into it. Code lives in ``crates/client/src/map.rs`` and
 ``units.rs`` (including ``units/layout.rs``).
 
+Local presentation settings live in ``assets/data/client.graphics.ron`` and
+are installed as the ``Graphics`` resource before the lobby opens. Player
+colors, selection and order markers, and terrain detail thresholds come from
+this file. See :doc:`../reference/graphics-format` for fields and validation.
+
 Terrain
 -------
 
@@ -56,7 +61,9 @@ Detail by zoom
 --------------
 
 ``update_terrain_detail`` measures screen pixels per tile (``128 / scale``)
-and switches the chunk's material between tilesets with hysteresis:
+and switches the chunk's material between tilesets with hysteresis. The
+following thresholds are the bundled defaults, configurable through
+``terrain_detail`` in the graphics file:
 
 .. list-table::
    :header-rows: 1
@@ -106,7 +113,7 @@ per living unit:
 * Meshes are cached per ``UnitKind`` and materials per ``PlayerId``, so all
   units of a kind share one mesh and all units of a player share one material.
   Player colors by slot: blue, red, yellow, green, purple, orange, cyan, and
-  white.
+  white in the bundled graphics file. Slots wrap through the configured palette.
 * ``UnitVisuals`` maps ``UnitId`` to entity. It is a Bevy ``HashMap`` because
   it is presentation state; determinism rules apply only to ``rts_base``.
 * ``OnExit(InGame)`` resets the caches. The visual roots themselves despawn
@@ -192,12 +199,14 @@ Gizmos
 
 ``draw_selection`` in ``PostUpdate`` draws, with Bevy gizmos:
 
-* A yellow ring for a default circle or a rectangle for custom bounds,
-  four screen pixels outside the displayed footprint. Outlines may overlap;
+* A ring for a default circle or a rectangle for custom bounds,
+  using ``selection.color`` and ``selection.padding`` (yellow and four
+  screen pixels in the bundled file). Outlines may overlap;
   they do not participate in packing.
 * The drag box while box-selecting.
-* An order marker for 0.6 seconds after a move: a green circle and cross for
-  an accepted target, red for blocked terrain.
+* An order marker after a move: a circle and cross using the configured
+  radius, cross size, duration, and accepted/blocked colors. Bundled defaults
+  show green for accepted targets and red for blocked terrain for 0.6 seconds.
 
 Gizmo sizes are multiplied by the camera scale so they keep a constant size on
 screen.
