@@ -254,12 +254,33 @@ border; ocher marks selected minimap units and an armed Move command.
   and are disabled without a selection, while orders are disabled, or while
   the pause menu is open.
 
-The console is 184 logical pixels high. Below 620 logical pixels of width,
-its height becomes 152 and the command card changes from three rows to two.
-Below 560 the center panel hides, with a selection count below the command
-card instead. The minimap shrinks with available width and hides below 240 logical pixels
-to preserve touch targets. Layout and input
-exclusion use window width divided by ``UiScale``.
+Desktop windows use a 184-logical-pixel console. Phone mode applies when
+logical width is below 620 **or logical height is below 520**, including
+landscape phones. The phone canvas reserves no bottom strip:
+
+* A small terrain thumbnail sits in the top-right corner. Tap it to open a
+  larger map with camera navigation and a **Close** button.
+* Orders appear only while units are selected. Portrait uses a floating
+  102×102-pixel, two-by-two dock; landscape uses a 210×48-pixel row. Only the
+  actual **Move**, **Stop**, **Clear**, and selection buttons are shown.
+* The selection button has a sprite and count. Tap it to open unit details
+  and a wrapping portrait roster. The entire details panel scrolls on short
+  screens, with **Close** fixed above it. Closing returns to the map.
+* Keyboard hints hide on phones. The destination hint appears only while
+  Move targeting is active. All touch buttons retain 48-pixel targets.
+
+``hud/layout.rs`` owns the logical rectangles used by UI, hit testing, and
+camera limits. ``hud/phone.rs`` places the floating controls and popup
+surfaces. Only visible controls exclude world input; spaces around the dock
+and the bottom-left battlefield remain playable. Map and selection popups
+capture world gestures while open, without pausing the match. Escape closes
+a phone popup before opening the pause menu. Panel closure clears focus.
+
+The approach follows Mindustry's corner-anchored, contextual command UI and
+HUD visibility controls; see its
+`HUD <https://github.com/Anuken/Mindustry/blob/master/core/src/mindustry/ui/fragments/HudFragment.java>`_
+and `placement panel <https://github.com/Anuken/Mindustry/blob/master/core/src/mindustry/ui/fragments/PlacementFragment.java>`_.
+Artwork and the RTS command behavior remain specific to this game.
 
 Pause menu
 ----------

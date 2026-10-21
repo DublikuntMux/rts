@@ -123,8 +123,11 @@ In-game console and pause menu
    interactive terrain minimap with unit markers and camera outline,
    selected-unit portraits and details, and a spatial Move/Stop/Clear command
    card. Command icons load from PNG assets in ``textures/ui/commands`` and
-   follow the button-state tint. Narrow layouts retain 48-pixel commands. Camera limits keep the
-   bottom map edge accessible above the HUD.
+   follow the button-state tint. Phone layouts use a floating contextual dock
+   with 48-pixel commands, a top-right map thumbnail, and on-demand map/details
+   panels. Width and height thresholds cover both phone orientations. Shared
+   geometry keeps unused space playable, and camera limits allow edge units
+   to move out from under corner controls.
 
 Main menu
    Scene-based menu with a sidebar, pages, dialogs, and a compact layout.

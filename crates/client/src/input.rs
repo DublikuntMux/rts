@@ -13,7 +13,7 @@ use rts_base::{Command, IVec2 as SimPos, UnitId};
 use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
-    hud::{MoveTargeting, hud_height},
+    hud::{HudLayout, MoveTargeting, PhoneHud},
     map::TILE_PX,
     menu::Menu,
     pause_menu::{PAUSE_BUTTON_BOUNDS, PauseMenu, world_input_blocked},
@@ -202,6 +202,7 @@ struct ScreenView {
     size: Vec2,
     /// Interface scale; the HUD and pause button grow with it.
     ui_scale: f32,
+    hud: HudLayout,
 }
 
 impl ScreenView {
@@ -211,15 +212,16 @@ impl ScreenView {
     }
 
     fn playable(&self, screen: Vec2) -> bool {
-        world_pointer_allowed(screen, self.size, self.ui_scale)
+        world_pointer_allowed(screen, self.size, self.ui_scale, &self.hud)
     }
 }
 
 /// Pointer positions are in window pixels; UI bounds are in logical pixels before scaling.
-pub fn world_pointer_allowed(screen: Vec2, size: Vec2, ui_scale: f32) -> bool {
+pub fn world_pointer_allowed(screen: Vec2, size: Vec2, ui_scale: f32, hud: &HudLayout) -> bool {
     screen.cmpge(Vec2::ZERO).all()
         && screen.x < size.x
-        && screen.y < hud_height(size.x / ui_scale).mul_add(-ui_scale, size.y)
+        && screen.y < size.y
+        && !hud.blocks_point(screen / ui_scale)
         && !PAUSE_BUTTON_BOUNDS.contains(screen / ui_scale)
 }
 
@@ -239,22 +241,31 @@ fn control_units(
     pause: Option<Res<PauseMenu>>,
     menu: Option<Res<Menu>>,
     mut targeting: Option<ResMut<MoveTargeting>>,
+    phone_hud: Option<Res<PhoneHud>>,
 ) {
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
         return;
-    };
-    let view = ScreenView {
-        center: transform.translation.truncate(),
-        scale: projection.scale,
-        size: window.size(),
-        ui_scale: ui_scale.0,
     };
     selection.units.retain(|id| {
         game.sim
             .unit(*id)
             .is_some_and(|unit| unit.owner == game.local_player)
     });
-    let blocked = world_input_blocked(pause.as_deref(), menu.as_deref());
+    let panel = phone_hud.as_deref().and_then(|hud| hud.panel);
+    let hud = HudLayout::new(
+        window.size() / ui_scale.0,
+        !selection.units.is_empty(),
+        panel,
+    );
+    let blocked =
+        world_input_blocked(pause.as_deref(), menu.as_deref()) || (hud.phone && panel.is_some());
+    let view = ScreenView {
+        center: transform.translation.truncate(),
+        scale: projection.scale,
+        size: window.size(),
+        ui_scale: ui_scale.0,
+        hud,
+    };
     if pointer.capture(
         blocked || !window.focused || keys.just_pressed(KeyCode::Escape),
         &touches,
@@ -473,6 +484,7 @@ fn draw_selection(
     window: Single<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     visuals: Query<(&UnitVisual, &Transform)>,
+    phone_hud: Option<Res<PhoneHud>>,
 ) {
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
         return;
@@ -506,6 +518,11 @@ fn draw_selection(
         scale: projection.scale,
         size: window.size(),
         ui_scale: ui_scale.0,
+        hud: HudLayout::new(
+            window.size() / ui_scale.0,
+            !selection.units.is_empty(),
+            phone_hud.as_deref().and_then(|hud| hud.panel),
+        ),
     };
     if let Some(press) = pointer
         .mouse
@@ -547,6 +564,7 @@ mod tests {
             scale: 2.0,
             size: Vec2::new(800.0, 600.0),
             ui_scale: 1.0,
+            hud: HudLayout::new(Vec2::new(800.0, 600.0), false, None),
         };
         assert_eq!(view.world(Vec2::new(400.0, 300.0)), view.center);
         assert_eq!(view.world(Vec2::new(500.0, 200.0)), Vec2::new(328.0, -56.0));
@@ -864,26 +882,151 @@ mod tests {
         assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
     }
     #[test]
-    fn ui_exclusion_tracks_compact_height_scale_and_only_the_pause_button() {
-        let size = Vec2::new(800.0, 600.0);
-        assert!(!world_pointer_allowed(Vec2::new(20.0, 20.0), size, 1.0));
-        assert!(world_pointer_allowed(Vec2::new(100.0, 20.0), size, 1.0));
-        assert!(world_pointer_allowed(Vec2::new(5.0, 5.0), size, 1.0));
-        assert!(world_pointer_allowed(Vec2::new(400.0, 415.0), size, 1.0));
-        assert!(!world_pointer_allowed(Vec2::new(400.0, 416.0), size, 1.0));
-        assert!(world_pointer_allowed(
-            Vec2::new(250.0, 447.0),
-            Vec2::new(500.0, 600.0),
-            1.0
-        ));
-        assert!(!world_pointer_allowed(
-            Vec2::new(250.0, 448.0),
-            Vec2::new(500.0, 600.0),
-            1.0
-        ));
-        assert!(!world_pointer_allowed(Vec2::new(100.0, 100.0), size, 2.0));
-        assert!(world_pointer_allowed(Vec2::new(400.0, 295.0), size, 2.0));
-        assert!(!world_pointer_allowed(Vec2::new(400.0, 296.0), size, 2.0));
+    fn desktop_exclusion_tracks_interface_scale_and_only_the_pause_button() {
+        for ui_scale in [1.0, 1.5] {
+            let logical_size = Vec2::new(1200.0, 800.0);
+            let size = logical_size * ui_scale;
+            let hud = HudLayout::new(logical_size, true, None);
+            let allowed = |point| world_pointer_allowed(point * ui_scale, size, ui_scale, &hud);
+            assert!(!allowed(Vec2::new(20.0, 20.0)));
+            assert!(allowed(Vec2::new(100.0, 20.0)));
+            assert!(allowed(Vec2::new(5.0, 5.0)));
+            assert!(allowed(Vec2::new(600.0, 615.0)));
+            assert!(!allowed(Vec2::new(600.0, 616.0)));
+            assert!(!allowed(Vec2::new(-1.0, 100.0)));
+            assert!(!allowed(Vec2::new(1200.0, 100.0)));
+        }
+    }
+
+    #[test]
+    fn phone_exclusion_uses_visible_controls_selection_and_modal_state_at_each_scale() {
+        for logical_size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                let size = logical_size * ui_scale;
+                let hud = HudLayout::new(logical_size, true, None);
+                let allowed = |point| world_pointer_allowed(point * ui_scale, size, ui_scale, &hud);
+                let bottom_left = Vec2::new(20.0, logical_size.y - 20.0);
+                let dock = hud.commands.unwrap().center();
+                assert!(allowed(bottom_left));
+                assert!(!allowed(dock));
+                assert!(!allowed(hud.minimap.center()));
+                assert!(!allowed(Vec2::new(20.0, 20.0)));
+                assert!(!allowed(Vec2::new(20.0, logical_size.y)));
+                let empty = HudLayout::new(logical_size, false, None);
+                assert!(world_pointer_allowed(
+                    dock * ui_scale,
+                    size,
+                    ui_scale,
+                    &empty
+                ));
+                for panel in [
+                    crate::hud::PhonePanel::Map,
+                    crate::hud::PhonePanel::Selection,
+                ] {
+                    let modal = HudLayout::new(logical_size, true, Some(panel));
+                    assert!(!world_pointer_allowed(
+                        bottom_left * ui_scale,
+                        size,
+                        ui_scale,
+                        &modal
+                    ));
+                    assert!(!world_pointer_allowed(size / 2.0, size, ui_scale, &modal));
+                }
+            }
+        }
+    }
+
+    fn phone_app(logical_size: Vec2, ui_scale: f32) -> App {
+        let mut app = test_app();
+        app.insert_resource(UiScale(ui_scale));
+        app.insert_resource(PhoneHud::default());
+        app.world_mut()
+            .query_filtered::<&mut Window, With<PrimaryWindow>>()
+            .single_mut(app.world_mut())
+            .unwrap()
+            .resolution
+            .set(logical_size.x * ui_scale, logical_size.y * ui_scale);
+        {
+            let mut projection = app
+                .world_mut()
+                .query_filtered::<&mut Projection, With<RtsCamera>>()
+                .single_mut(app.world_mut())
+                .unwrap();
+            let Projection::Orthographic(projection) = projection.as_mut() else {
+                panic!("orthographic camera");
+            };
+            projection.scale = 0.25;
+        }
+        app.world_mut()
+            .resource_mut::<Selection>()
+            .units
+            .insert(UnitId(0));
+        app
+    }
+
+    #[test]
+    fn phone_controls_consume_taps_and_empty_bottom_left_issues_a_move() {
+        for size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                let mut app = phone_app(size, ui_scale);
+                let hud = HudLayout::new(size, true, None);
+                tap(&mut app, hud.commands.unwrap().center() * ui_scale);
+                tap(&mut app, hud.minimap.center() * ui_scale);
+                assert_eq!(app.world().resource::<Match>().pending, []);
+                tap(&mut app, Vec2::new(20.0, size.y - 20.0) * ui_scale);
+                assert!(
+                    matches!(app.world().resource::<Match>().pending.as_slice(), [Command::Move { units, .. }] if units == &[UnitId(0)])
+                );
+                assert_eq!(app.world().resource::<Match>().sim.tick(), 0);
+                app.world_mut().resource_mut::<Match>().pending.clear();
+                app.world_mut().resource_mut::<Selection>().units.clear();
+                let former_dock = hud.commands.unwrap().center() * ui_scale;
+                touch(&mut app, &[(1, TouchPhase::Started, former_dock)]);
+                assert!(app.world().resource::<PointerState>().finger.is_some());
+                touch(&mut app, &[(1, TouchPhase::Ended, former_dock)]);
+                assert_eq!(app.world().resource::<Match>().pending, []);
+            }
+        }
+    }
+
+    #[test]
+    fn phone_panels_cancel_pending_presses_and_block_orders_through_close() {
+        for size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                for panel in [
+                    crate::hud::PhonePanel::Map,
+                    crate::hud::PhonePanel::Selection,
+                ] {
+                    let mut app = phone_app(size, ui_scale);
+                    let position = Vec2::new(20.0, size.y - 20.0) * ui_scale;
+                    mouse_event(&mut app, position, MouseButton::Left, true);
+                    app.world_mut().resource_mut::<PhoneHud>().panel = Some(panel);
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .press(KeyCode::KeyX);
+                    mouse_event(&mut app, position, MouseButton::Right, true);
+                    touch(&mut app, &[(1, TouchPhase::Started, position)]);
+                    assert_eq!(app.world().resource::<Match>().pending, []);
+                    assert!(app.world().resource::<PointerState>().mouse.is_none());
+                    app.world_mut().resource_mut::<PhoneHud>().panel = None;
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .reset_all();
+                    app.update();
+                    touch(&mut app, &[(1, TouchPhase::Ended, position)]);
+                    mouse_event(&mut app, position, MouseButton::Left, false);
+                    mouse_event(&mut app, position, MouseButton::Right, false);
+                    assert_eq!(app.world().resource::<Match>().pending, []);
+                    tap(&mut app, position);
+                    assert_eq!(app.world().resource::<Match>().pending.len(), 1);
+                    assert_eq!(
+                        app.world().resource::<Selection>().units,
+                        BTreeSet::from([UnitId(0)])
+                    );
+                    assert_eq!(app.world().resource::<Match>().sim.tick(), 0);
+                }
+            }
+        }
     }
 
     #[test]

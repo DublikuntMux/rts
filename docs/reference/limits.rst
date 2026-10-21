@@ -172,8 +172,8 @@ Client
      - 128
      - Screen pixels per tile at camera scale 1 (``map.rs``).
    * - ``HUD_HEIGHT``
-     - 184 px / 152 px
-     - Bottom RTS console, compact below 620 logical pixels (``hud.rs``).
+     - 184 px
+     - Desktop RTS console; phone mode reserves no bottom strip (``hud.rs``).
    * - ``PAUSE_BUTTON_BOUNDS``
      - (12, 12)–(60, 60)
      - Top-left 48-pixel button (``pause_menu.rs``), before interface scaling.

@@ -9,6 +9,20 @@ device.
 Client scenes
 -------------
 
+**Phone HUD with floating controls.** All 241 workspace tests, strict
+all-target Clippy, formatting, the client WebAssembly check, a Trunk build,
+and the strict Sphinx build passed. Shared-geometry regressions cover phone
+portrait and landscape at 100 and 150 percent scale, visible-only pointer
+exclusion, hidden docks with no selection, popup capture and focus cleanup,
+full-window camera limits, corner-control clearance, small-map centering, and
+whole-panel scrolling on short screens at 150 percent scale.
+Headless Chromium with software WebGL rendered 320×640 portrait and 844×390
+landscape, selected five units, and opened the map and unit-details panels.
+At 568×320 and 150 percent UI scale, mouse-wheel and emulated touch drags
+revealed complete portrait targets while the Close control stayed fixed.
+Physical-device gameplay and an Android build were not run.
+
+
 **Command image assets.** Bottom-HUD Move, Stop, and Clear icons load from
 transparent PNG files through the existing asset server and pack. A regression
 checks the actual HUD image paths and decodes each asset, including transparent

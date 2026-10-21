@@ -9,8 +9,8 @@ use bevy::{
 
 use crate::{
     game::{AppState, Match},
-    hud::hud_height,
-    input::world_pointer_allowed,
+    hud::{HudLayout, PhoneHud},
+    input::{Selection, world_pointer_allowed},
     map::{MapBounds, to_world},
     menu::{Menu, MenuActions},
     pause_menu::{PauseMenu, world_input_blocked},
@@ -132,8 +132,19 @@ fn control_camera(
     pause: Option<Res<PauseMenu>>,
     menu: Option<Res<Menu>>,
     ui_scale: Option<Res<UiScale>>,
+    selection: Option<Res<Selection>>,
+    phone_hud: Option<Res<PhoneHud>>,
 ) {
-    let blocked = world_input_blocked(pause.as_deref(), menu.as_deref());
+    let ui_scale = ui_scale.as_ref().map_or(1.0, |scale| scale.0);
+    let window_size = window.size();
+    let panel = phone_hud.as_deref().and_then(|hud| hud.panel);
+    let hud = HudLayout::new(
+        window_size / ui_scale,
+        selection.is_some_and(|selection| !selection.units.is_empty()),
+        panel,
+    );
+    let blocked =
+        world_input_blocked(pause.as_deref(), menu.as_deref()) || (hud.phone && panel.is_some());
     let was_blocked = gestures.was_blocked;
     gestures.was_blocked = blocked;
     if blocked || was_blocked || !window.focused || keys.just_pressed(KeyCode::Escape) {
@@ -147,19 +158,18 @@ fn control_camera(
     let Projection::Orthographic(ortho) = projection.as_mut() else {
         return;
     };
-    let window_size = window.size();
     if window_size.min_element() <= 0.0 {
         return;
     }
-    let ui_scale = ui_scale.as_ref().map_or(1.0, |scale| scale.0);
-    let bottom_inset = hud_height(window_size.x / ui_scale) * ui_scale;
+    let bottom_inset = hud.bottom_inset * ui_scale;
     let playable_size = Vec2::new(window_size.x, (window_size.y - bottom_inset).max(1.0));
-    let pointer_allowed = |position| world_pointer_allowed(position, window_size, ui_scale);
+    let pointer_allowed = |position| world_pointer_allowed(position, window_size, ui_scale, &hud);
     let mut view = View {
         center: transform.translation.truncate(),
         scale: ortho.scale,
         window_size,
         bottom_inset,
+        overscroll: hud.camera_overscroll() * ui_scale,
         min_scale: settings.min_scale,
         max_scale: settings
             .max_scale
@@ -238,6 +248,8 @@ struct View {
     window_size: Vec2,
     /// Screen area covered by the bottom HUD, in window pixels.
     bottom_inset: f32,
+    /// Room beyond each map edge, in window pixels, to uncover units behind phone controls.
+    overscroll: f32,
     min_scale: f32,
     max_scale: f32,
 }
@@ -261,7 +273,7 @@ impl View {
         self.scale = scale;
     }
 
-    /// Keeps the visible area inside `bounds`, centering it on axes where it is larger.
+    /// Bounds the visible area, allowing phone overscroll and centering oversized views.
     fn clamp_to(&mut self, bounds: Rect) {
         self.scale = self.scale.clamp(self.min_scale, self.max_scale);
         // Clamp the visible world above the HUD, retaining the full-window projection used
@@ -271,7 +283,15 @@ impl View {
             (self.window_size.y - self.bottom_inset).max(1.0),
         );
         let offset = Vec2::Y * (self.bottom_inset * self.scale / 2.0);
-        let half_view = (visible_size / 2.0 * self.scale).min(bounds.half_size());
+        let half_view = visible_size / 2.0 * self.scale;
+        // Keep a small map centered; only scroll past edges on axes larger than the view.
+        let extra = Vec2::select(
+            half_view.cmplt(bounds.half_size()),
+            Vec2::splat(self.overscroll * self.scale),
+            Vec2::ZERO,
+        );
+        let bounds = Rect::from_corners(bounds.min - extra, bounds.max + extra);
+        let half_view = half_view.min(bounds.half_size());
         self.center =
             (self.center + offset).clamp(bounds.min + half_view, bounds.max - half_view) - offset;
     }
@@ -334,6 +354,7 @@ mod tests {
             scale: 1.0,
             window_size: Vec2::new(800.0, 600.0),
             bottom_inset: 0.0,
+            overscroll: 0.0,
             min_scale: 0.25,
             max_scale: 4.0,
         }
@@ -595,7 +616,16 @@ mod tests {
         for ui_scale in [1.0, 1.5] {
             let mut app = control_app();
             app.insert_resource(UiScale(ui_scale));
-            let bottom = hud_height(800.0 / ui_scale).mul_add(-ui_scale, 600.0);
+            let size = Vec2::new(1200.0, 800.0) * ui_scale;
+            let bottom = 184.0_f32.mul_add(-ui_scale, size.y);
+            {
+                let mut window = app
+                    .world_mut()
+                    .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                    .single_mut(app.world_mut())
+                    .unwrap();
+                window.resolution.set(size.x, size.y);
+            }
             app.world_mut()
                 .query_filtered::<&mut Window, With<PrimaryWindow>>()
                 .single_mut(app.world_mut())
@@ -611,6 +641,243 @@ mod tests {
                 .set_cursor_position(Some(Vec2::new(400.0, bottom + 2.0)));
             app.update();
             assert_eq!(camera_state(&mut app).0, after_pan);
+        }
+    }
+
+    fn phone_control_app(size: Vec2, ui_scale: f32) -> App {
+        let mut app = control_app();
+        app.insert_resource(UiScale(ui_scale))
+            .init_resource::<Selection>()
+            .init_resource::<PhoneHud>();
+        {
+            let mut window = app
+                .world_mut()
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(app.world_mut())
+                .unwrap();
+            window.resolution.set(size.x * ui_scale, size.y * ui_scale);
+            window.set_cursor_position(Some(Vec2::new(20.0, size.y - 20.0) * ui_scale));
+        }
+        app
+    }
+
+    #[test]
+    fn phone_camera_clamps_full_window_with_room_to_reach_units_beneath_corner_controls() {
+        for logical_size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                for zoom in [0.5, 2.0] {
+                    let mut app = phone_control_app(logical_size, ui_scale);
+                    let size = logical_size * ui_scale;
+                    let bounds = app.world().resource::<MapBounds>().0;
+                    let margin = HudLayout::new(logical_size, false, None).camera_overscroll();
+                    let overscroll = Vec2::splat(margin * ui_scale * zoom);
+                    for direction in [Vec2::NEG_ONE, Vec2::ONE] {
+                        {
+                            let (mut transform, mut projection) = app.world_mut()
+                                .query_filtered::<(&mut Transform, &mut Projection), With<RtsCamera>>()
+                                .single_mut(app.world_mut())
+                                .unwrap();
+                            transform.translation = (direction * 100_000.0).extend(0.0);
+                            let Projection::Orthographic(ortho) = projection.as_mut() else {
+                                panic!("orthographic camera");
+                            };
+                            ortho.scale = zoom;
+                        }
+                        app.update();
+                        let (center, actual_zoom) = camera_state(&mut app);
+                        assert_eq!(actual_zoom, zoom);
+                        let half_view = size / 2.0 * zoom;
+                        if direction == Vec2::NEG_ONE {
+                            assert!(
+                                (center.truncate() - half_view)
+                                    .abs_diff_eq(bounds.min - overscroll, 0.001)
+                            );
+                        } else {
+                            assert!(
+                                (center.truncate() + half_view)
+                                    .abs_diff_eq(bounds.max + overscroll, 0.001)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn phone_camera_zoom_limit_uses_full_height() {
+        for logical_size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                let mut app = phone_control_app(logical_size, ui_scale);
+                let bounds = Rect::from_center_size(Vec2::ZERO, Vec2::splat(1000.0));
+                app.insert_resource(MapBounds(bounds));
+                {
+                    let mut projection = app
+                        .world_mut()
+                        .query_filtered::<&mut Projection, With<RtsCamera>>()
+                        .single_mut(app.world_mut())
+                        .unwrap();
+                    let Projection::Orthographic(ortho) = projection.as_mut() else {
+                        panic!("orthographic camera");
+                    };
+                    ortho.scale = 4.0;
+                }
+                app.update();
+                let expected = (bounds.size() / (logical_size * ui_scale)).min_element();
+                assert!((camera_state(&mut app).1 - expected).abs() < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn minimum_phone_viewports_center_maps_smaller_than_the_minimum_zoom_without_invalid_clamps() {
+        for size in [Vec2::new(320.0, 568.0), Vec2::new(568.0, 320.0)] {
+            for ui_scale in [1.0, 1.5] {
+                let mut app = phone_control_app(size / ui_scale, ui_scale);
+                let bounds = Rect::from_center_size(Vec2::ZERO, Vec2::splat(8.0));
+                app.insert_resource(MapBounds(bounds));
+                for direction in [Vec2::NEG_ONE, Vec2::ONE] {
+                    app.world_mut()
+                        .query_filtered::<&mut Transform, With<RtsCamera>>()
+                        .single_mut(app.world_mut())
+                        .unwrap()
+                        .translation = (direction * 100_000.0).extend(0.0);
+                    app.update();
+                    let (center, zoom) = camera_state(&mut app);
+                    assert_eq!(zoom, RtsCamera::default().min_scale);
+                    assert_eq!(center.truncate(), bounds.center());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn phone_edge_pan_and_wheel_ignore_only_visible_controls() {
+        for logical_size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                let mut app = phone_control_app(logical_size, ui_scale);
+                app.world_mut()
+                    .resource_mut::<Selection>()
+                    .units
+                    .insert(rts_base::UnitId(0));
+                let hud = HudLayout::new(logical_size, true, None);
+                for point in [hud.minimap.center(), hud.commands.unwrap().center()] {
+                    app.world_mut()
+                        .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                        .single_mut(app.world_mut())
+                        .unwrap()
+                        .set_cursor_position(Some(point * ui_scale));
+                    app.world_mut()
+                        .resource_mut::<AccumulatedMouseScroll>()
+                        .delta
+                        .y = 1.0;
+                    let before = camera_state(&mut app);
+                    app.update();
+                    assert_eq!(camera_state(&mut app), before);
+                }
+                app.world_mut()
+                    .resource_mut::<AccumulatedMouseScroll>()
+                    .delta = Vec2::ZERO;
+                app.world_mut()
+                    .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                    .single_mut(app.world_mut())
+                    .unwrap()
+                    .set_cursor_position(Some(Vec2::new(
+                        20.0 * ui_scale,
+                        logical_size.y.mul_add(ui_scale, -2.0),
+                    )));
+                app.update();
+                assert!(camera_state(&mut app).0.y < 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn phone_panels_capture_keyboard_wheel_middle_drag_and_held_fingers_through_close() {
+        use bevy::input::touch::{TouchInput, TouchPhase};
+        for logical_size in [Vec2::new(390.0, 844.0), Vec2::new(844.0, 390.0)] {
+            for ui_scale in [1.0, 1.5] {
+                for panel in [
+                    crate::hud::PhonePanel::Map,
+                    crate::hud::PhonePanel::Selection,
+                ] {
+                    let mut app = phone_control_app(logical_size, ui_scale);
+                    let window = app
+                        .world_mut()
+                        .query_filtered::<Entity, With<PrimaryWindow>>()
+                        .single(app.world())
+                        .unwrap();
+                    let before = camera_state(&mut app);
+                    app.world_mut().resource_mut::<PhoneHud>().panel = Some(panel);
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .press(KeyCode::KeyW);
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<MouseButton>>()
+                        .press(MouseButton::Middle);
+                    app.world_mut()
+                        .resource_mut::<AccumulatedMouseScroll>()
+                        .delta
+                        .y = 1.0;
+                    for id in [1, 2] {
+                        app.world_mut().write_message(TouchInput {
+                            id,
+                            phase: TouchPhase::Started,
+                            position: Vec2::new(if id == 1 { 100.0 } else { 200.0 }, 200.0)
+                                * ui_scale,
+                            window,
+                            force: None,
+                        });
+                    }
+                    app.update();
+                    assert_eq!(camera_state(&mut app), before);
+                    app.world_mut().resource_mut::<PhoneHud>().panel = None;
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .reset_all();
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<MouseButton>>()
+                        .clear();
+                    app.world_mut()
+                        .resource_mut::<AccumulatedMouseScroll>()
+                        .delta = Vec2::ZERO;
+                    app.update();
+                    for id in [1, 2] {
+                        app.world_mut().write_message(TouchInput {
+                            id,
+                            phase: TouchPhase::Moved,
+                            position: Vec2::new(if id == 1 { 80.0 } else { 220.0 }, 220.0)
+                                * ui_scale,
+                            window,
+                            force: None,
+                        });
+                    }
+                    app.world_mut().write_message(CursorMoved {
+                        window,
+                        position: Vec2::new(200.0, 300.0),
+                        delta: Some(Vec2::splat(20.0)),
+                    });
+                    app.update();
+                    app.update();
+                    assert_eq!(camera_state(&mut app), before);
+                    for id in [1, 2] {
+                        app.world_mut().write_message(TouchInput {
+                            id,
+                            phase: TouchPhase::Ended,
+                            position: Vec2::new(if id == 1 { 80.0 } else { 220.0 }, 220.0)
+                                * ui_scale,
+                            window,
+                            force: None,
+                        });
+                    }
+                    app.update();
+                    app.world_mut()
+                        .resource_mut::<ButtonInput<KeyCode>>()
+                        .press(KeyCode::KeyW);
+                    app.update();
+                    assert!(camera_state(&mut app).0.y > before.0.y);
+                }
+            }
         }
     }
 }

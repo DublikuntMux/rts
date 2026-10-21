@@ -43,7 +43,7 @@ limits) and applies, in order:
 1. **Keyboard and edge pan.** WASD and arrows, plus the window edges when the
    window is focused and no finger is down. The direction is normalized, so
    diagonals are not faster. The downward edge is the top of the HUD;
-   pointers on the HUD itself do not pan.
+   pointers on the HUD itself do not pan. Phones use the full window edges.
 2. **Middle-drag.** The world follows the pointer.
 3. **Wheel zoom.** Zoom toward the cursor: the world point under the cursor
    stays fixed on screen.
@@ -51,7 +51,9 @@ limits) and applies, in order:
    previous centroid and the centroid's movement pans.
 5. **Clamp.** The visible area above the bottom HUD stays inside the map.
    Camera limits account for the HUD so units at the bottom edge remain
-   reachable. Smaller maps center in the usable area.
+   reachable. Phone controls float, so the full window is usable; camera
+   overscroll leaves enough space to move edge units past corner controls
+   and their touch areas. Smaller maps center in the usable area.
 
 The camera tracks finger positions itself instead of using
 ``Touch::previous_position``, which only refreshes on frames that carry
@@ -63,13 +65,17 @@ before and after.
 Pointer areas
 -------------
 
-The bottom HUD excludes 184 logical pixels, or 152 below 620 logical pixels
-of width. Only the top-left pause button's rectangle, (12, 12) to (60, 60),
-is excluded at the top. ``world_pointer_allowed`` scales these bounds with
-``UiScale``. Presses must start and end in the playable area. Menus and
-dialogs block world input entirely, clear pending presses, and suppress
-continuing gestures until their fingers or buttons lift. Camera input also
-ignores HUD pointers and clears captured pan/zoom gestures at modal changes.
+Desktop windows exclude the bottom 184 logical pixels. Phone mode (logical
+width below 620 or height below 520) uses ``HudLayout`` to exclude only the
+visible minimap thumbnail and selected-unit dock. The remaining bottom area
+is playable. Pause-button bounds remain (12, 12) to (60, 60).
+``world_pointer_allowed`` scales these rectangles with ``UiScale``.
+
+Presses must start and end in the playable area. Menus, dialogs, and phone
+map/details popups block world input entirely, clear pending presses, and
+suppress continuing gestures until their fingers or buttons lift. Camera
+input also ignores HUD pointers and clears captured pan/zoom gestures at
+modal changes. Phone HUD popups do not pause the simulation.
 
 Screen positions convert to the world with the camera's ``Transform`` and
 ``Projection`` from this frame rather than ``GlobalTransform``, which is only

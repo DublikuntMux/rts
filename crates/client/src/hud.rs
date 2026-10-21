@@ -1,6 +1,9 @@
 //! RTS console: tactical map, selected units, and a spatial command card.
 
+mod layout;
 mod minimap;
+mod phone;
+pub use layout::{HudLayout, PhoneHud, PhonePanel, hud_inset, phone_layout};
 #[cfg(test)]
 mod tests;
 
@@ -10,7 +13,6 @@ use bevy::{
     text::{FontWeight, LineHeight},
     ui::{InteractionDisabled, Pressed, UiSystems},
     ui_widgets::{Activate, Button, observe},
-    window::PrimaryWindow,
 };
 use rts_assets::Graphics;
 use rts_base::UnitId;
@@ -25,16 +27,6 @@ use crate::{
 
 /// Maximum height, in logical pixels before interface scaling.
 pub const HUD_HEIGHT: f32 = 184.0;
-const COMPACT_WIDTH: f32 = 620.0;
-
-pub fn hud_height(width: f32) -> f32 {
-    if width < COMPACT_WIDTH {
-        152.0
-    } else {
-        HUD_HEIGHT
-    }
-}
-
 /// The Move command waits for a world destination without changing the selection.
 #[derive(Resource, Default)]
 pub struct MoveTargeting(pub bool);
@@ -44,12 +36,15 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MoveTargeting>()
+            .init_resource::<PhoneHud>()
             .add_systems(OnEnter(AppState::InGame), spawn_hud)
-            .add_systems(OnExit(AppState::InGame), reset_targeting)
+            .add_systems(OnExit(AppState::InGame), (reset_targeting, phone::reset))
             .add_systems(
                 Update,
                 (
-                    resize_hud,
+                    phone::resize_hud,
+                    phone::update_surfaces,
+                    phone::update_controls,
                     update_selection,
                     update_button_availability,
                     update_button_looks,
@@ -87,14 +82,11 @@ enum TextRole {
     Title,
     Detail,
     Hint,
-    Compact,
 }
 #[derive(Component)]
 struct HealthFill;
 #[derive(Component)]
 struct CommandCard;
-#[derive(Component)]
-struct CompactSummary;
 #[derive(Component)]
 struct CommandSlot(usize);
 
@@ -130,6 +122,7 @@ fn spawn_hud(
                 justify_content: JustifyContent::SpaceBetween,
                 ..default()
             },
+            Pickable::IGNORE,
             BackgroundColor(BAR),
             BorderColor::all(EDGE),
         ))
@@ -137,12 +130,17 @@ fn spawn_hud(
     commands.entity(root).add_child(map).with_children(|bar| {
         spawn_selection_panel(bar, &font.0);
         spawn_command_card(bar, &font.0, &assets);
+        phone::spawn_overlays(bar, &font.0);
     });
 }
 
 fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     bar.spawn((
         SelectionPanel,
+        GlobalZIndex(4),
+        bevy::ui_widgets::ScrollArea,
+        observe(crate::menu::scroll_on_touch_drag),
+        observe(crate::menu::scroll_focus_into_view),
         Node {
             flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
@@ -155,10 +153,15 @@ fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
             ..default()
         },
         BorderColor::all(EDGE),
+        BackgroundColor(Color::NONE),
     ))
     .with_children(|panel| {
         panel.spawn((
             HudText(TextRole::Title),
+            Node {
+                flex_shrink: 0.0,
+                ..default()
+            },
             Text::new("No units selected"),
             text_font(font, 20.0),
             TextColor(INK),
@@ -167,6 +170,7 @@ fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
             .spawn(Node {
                 column_gap: px(12),
                 min_height: px(48),
+                flex_shrink: 0.0,
                 ..default()
             })
             .with_children(|row| {
@@ -184,6 +188,7 @@ fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
         ));
         panel.spawn((
             HudText(TextRole::Hint),
+            phone::DesktopOnly,
             Text::new("Click or drag to select units."),
             text_font(font, 12.0),
             TextColor(INK_MUTED),
@@ -287,20 +292,7 @@ fn spawn_command_card(bar: &mut ChildSpawnerCommands, font: &Handle<Font>, asset
                 ));
             }
         }
-        card.spawn((
-            CompactSummary,
-            HudText(TextRole::Compact),
-            Text::new("No selection"),
-            text_font(font, 11.0),
-            TextColor(INK_MUTED),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(12),
-                bottom: px(6),
-                display: Display::None,
-                ..default()
-            },
-        ));
+        phone::spawn_selection_button(card, font);
     });
 }
 
@@ -348,6 +340,8 @@ fn spawn_order_contents(
     };
     if !key.is_empty() {
         button.spawn((
+            phone::DesktopOnly,
+            Pickable::IGNORE,
             Text::new(key),
             text_font(font, 9.0),
             TextColor(INK_MUTED),
@@ -371,6 +365,7 @@ fn spawn_order_contents(
     ));
     button.spawn((
         ButtonInk,
+        Pickable::IGNORE,
         Text::new(label),
         text_font(font, 11.0),
         TextColor(INK),
@@ -390,57 +385,9 @@ fn text_font(font: &Handle<Font>, size: f32) -> TextFont {
     }
 }
 
-type ConsoleNode<'a> = (
-    &'a mut Node,
-    Has<Console>,
-    Has<SelectionPanel>,
-    Has<CommandCard>,
-    Option<&'a CommandSlot>,
-    Has<CompactSummary>,
-);
 type PortraitFilter = (With<Portrait>, Without<Roster>);
 type HealthFilter = (With<HealthFill>, Without<Portrait>, Without<Roster>);
 type RosterFilter = (With<Roster>, Without<Portrait>, Without<HealthFill>);
-
-fn resize_hud(
-    window: Single<&Window, With<PrimaryWindow>>,
-    scale: Res<UiScale>,
-    mut nodes: Query<ConsoleNode>,
-) {
-    let width = window.width() / scale.0;
-    let compact = width < COMPACT_WIDTH;
-    for (mut node, root, selection, card, slot, summary) in &mut nodes {
-        if summary {
-            node.display = if width < 560.0 {
-                Display::Flex
-            } else {
-                Display::None
-            };
-        }
-        if root {
-            node.height = px(hud_height(width));
-        }
-        if selection {
-            node.display = if width < 560.0 {
-                Display::None
-            } else {
-                Display::Flex
-            };
-        }
-        if card {
-            node.width = px(if compact { 176 } else { 184 });
-            node.column_gap = px(if compact { 4 } else { 8 });
-            node.grid_template_rows = RepeatedGridTrack::px(if compact { 2 } else { 3 }, 48.0);
-        }
-        if let Some(slot) = slot {
-            node.display = if compact && (5..8).contains(&slot.0) {
-                Display::None
-            } else {
-                Display::Flex
-            };
-        }
-    }
-}
 
 fn activate_order(
     event: On<Activate>,
@@ -468,9 +415,11 @@ fn update_button_availability(
     selection: Res<Selection>,
     game: Res<Match>,
     pause: Res<PauseMenu>,
+    phone: Res<PhoneHud>,
     buttons: Query<(Entity, Has<InteractionDisabled>), With<Order>>,
 ) {
-    let disabled = selection.units.is_empty() || !game.accepts_orders || pause.open;
+    let disabled =
+        selection.units.is_empty() || !game.accepts_orders || pause.open || phone.panel.is_some();
     for (entity, was_disabled) in &buttons {
         if disabled != was_disabled {
             if disabled {
@@ -500,7 +449,7 @@ fn update_button_looks(
 ) {
     for (order, hovered, pressed, disabled, children, mut fill, mut border) in &mut buttons {
         let selected = *order == Order::Move && targeting.0;
-        let look = button_look(Tone::Secondary, selected, hovered.get(), pressed, disabled);
+        let look = button_look(Tone::Item, selected, hovered.get(), pressed, disabled);
         fill.set_if_neq(BackgroundColor(look.fill));
         border.set_if_neq(BorderColor::all(if selected { SIGNAL } else { look.edge }));
         for child in children {
@@ -564,13 +513,6 @@ fn update_selection(
             TextRole::Title => title.clone(),
             TextRole::Detail => detail.clone(),
             TextRole::Hint => hint(&selection, targeting.0).into(),
-            TextRole::Compact => {
-                if units.is_empty() {
-                    "No selection".into()
-                } else {
-                    format!("{} selected", units.len())
-                }
-            }
         };
         text.set_if_neq(Text::new(value));
     }

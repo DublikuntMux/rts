@@ -66,10 +66,12 @@ The match screen
 * The right **command card** has **Move**, **Stop**, and **Clear**. Commands
   are disabled without a selection or during replay playback.
 
-The HUD becomes shorter below 620 logical pixels of width. On narrower
-screens the center details hide and a selection count appears below the
-commands. At very large interface scales, the minimap hides when fewer than
-240 logical pixels are available; commands keep their touch targets.
+On phones, the bottom bar is replaced by floating controls. Tap the top-right
+map thumbnail to open the minimap. Selecting units shows a small command dock
+in the bottom-right corner: two rows in portrait, one row in landscape. Tap
+its unit portrait to see selection details. With no selection, the command
+dock disappears. The rest of the battlefield stays playable. This layout
+also applies to short landscape windows and accounts for interface scale.
 
 Buttons are at least 48 logical pixels tall before interface scaling.
 

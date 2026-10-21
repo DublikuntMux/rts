@@ -19,7 +19,7 @@ use bevy::{
 use rts_assets::Graphics;
 use rts_base::{Sim, UnitId};
 
-use super::{COMPACT_WIDTH, HUD_HEIGHT};
+use super::{HUD_HEIGHT, HudLayout, PhoneHud, PhonePanel, hud_inset};
 use crate::{
     camera::RtsCamera,
     game::Match,
@@ -144,37 +144,35 @@ pub(super) fn update_minimap(
     selection: Res<Selection>,
     window: Single<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
+    phone: Res<PhoneHud>,
     bounds: Res<MapBounds>,
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     mut nodes: Query<MapNodes, Without<UnitMarker>>,
     map: Single<Entity, With<MapImage>>,
+    root: Single<Entity, With<Minimap>>,
     markers: Query<(Entity, &UnitMarker)>,
     mut marker_styles: Query<(&mut Node, &mut BackgroundColor), MarkerFilter>,
 ) {
-    let width = window.width() / scale.0;
-    let compact = width < COMPACT_WIDTH;
-    let map_width = if compact {
-        (width - 176.0).clamp(64.0, 128.0)
-    } else {
-        184.0
-    };
-    let side = map_width - 16.0;
+    let size = window.size() / scale.0;
+    let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
     let dimensions = game.sim.terrain().size().as_vec2();
-    let image_size = dimensions * (side / dimensions.max_element());
+    let available = layout.minimap.size() - Vec2::splat(16.0);
+    let image_size = dimensions * (available / dimensions).min_element();
+    commands.entity(*root).insert(GlobalZIndex(
+        if layout.phone && phone.panel == Some(PhonePanel::Map) {
+            4
+        } else {
+            0
+        },
+    ));
     let (camera, projection) = camera.into_inner();
     let rect = if let Projection::Orthographic(projection) = projection {
         footprint(
             camera.translation.truncate()
-                + Vec2::Y
-                    * super::hud_height(window.width() / scale.0)
-                    * scale.0
-                    * projection.scale
-                    / 2.0,
+                + Vec2::Y * hud_inset(size) * scale.0 * projection.scale / 2.0,
             Vec2::new(
                 window.width(),
-                super::hud_height(window.width() / scale.0)
-                    .mul_add(-scale.0, window.height())
-                    .max(1.0),
+                hud_inset(size).mul_add(-scale.0, window.height()).max(1.0),
             ),
             projection.scale,
             bounds.0,
@@ -184,16 +182,29 @@ pub(super) fn update_minimap(
     };
     for (mut node, root, image, footprint) in &mut nodes {
         if root {
-            node.width = px(map_width);
-            node.display = if width < 240.0 {
-                Display::None
+            node.position_type = if layout.phone {
+                PositionType::Absolute
             } else {
-                Display::Flex
+                PositionType::Relative
             };
+            node.left = if layout.phone {
+                px(layout.minimap.min.x)
+            } else {
+                auto()
+            };
+            node.top = if layout.phone {
+                px(layout.minimap.min.y)
+            } else {
+                auto()
+            };
+            node.width = px(layout.minimap.width());
+            node.height = px(layout.minimap.height());
+            node.display = Display::Flex;
         }
         if image {
             node.width = px(image_size.x);
             node.height = px(image_size.y);
+            node.max_height = auto();
         }
         if footprint {
             node.left = percent(rect.min.x * 100.0);
@@ -267,11 +278,17 @@ fn click_map(
     bounds: Res<MapBounds>,
     pause: Res<PauseMenu>,
     scale: Res<UiScale>,
+    mut phone: ResMut<PhoneHud>,
+    map: Single<Entity, With<MapImage>>,
     camera: Single<(&mut Transform, &Projection), With<RtsCamera>>,
 ) {
     if event.button == PointerButton::Primary && !pause.open {
+        if super::phone_layout(window.size() / scale.0) && phone.panel != Some(PhonePanel::Map) {
+            phone.panel = Some(PhonePanel::Map);
+            return;
+        }
         recenter(
-            event.entity,
+            *map,
             event.pointer.position,
             &nodes,
             &window,
@@ -289,11 +306,16 @@ fn drag_map(
     bounds: Res<MapBounds>,
     pause: Res<PauseMenu>,
     scale: Res<UiScale>,
+    phone: Res<PhoneHud>,
+    map: Single<Entity, With<MapImage>>,
     camera: Single<(&mut Transform, &Projection), With<RtsCamera>>,
 ) {
-    if event.button == PointerButton::Primary && !pause.open {
+    if event.button == PointerButton::Primary
+        && !pause.open
+        && (!super::phone_layout(window.size() / scale.0) || phone.panel == Some(PhonePanel::Map))
+    {
         recenter(
-            event.entity,
+            *map,
             event.pointer.position,
             &nodes,
             &window,
@@ -324,7 +346,7 @@ fn recenter(
     let Projection::Orthographic(projection) = projection else {
         return;
     };
-    let inset = super::hud_height(window.width() / scale) * scale;
+    let inset = hud_inset(window.size() / scale) * scale;
     let visible_size = Vec2::new(window.width(), (window.height() - inset).max(1.0));
     let half = (visible_size * projection.scale / 2.0).min(bounds.half_size());
     let target = Vec2::new(

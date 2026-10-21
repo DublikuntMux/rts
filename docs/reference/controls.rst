@@ -3,9 +3,11 @@ Controls
 
 Every action is reachable by touch. No feature depends on hover or on a
 hotkey alone. Pointer input over the top-left pause button or bottom RTS
-console never reaches the map. The console is 184 logical pixels high, or
-152 below 620 logical pixels of width. Bounds grow with interface scale.
-Menus and dialogs capture all world input.
+console never reaches the map. Desktop reserves 184 logical pixels at the
+bottom; phones use floating corner controls, leaving the rest playable.
+Phone mode starts below 620 logical pixels wide or 520 high. Bounds grow
+with interface scale. Menus, dialogs, and expanded phone panels capture
+world input.
 
 Desktop
 -------
@@ -34,18 +36,21 @@ Desktop
      - Stop the selection.
    * - Escape
      - Cancel Move targeting first, then close a dialog or toggle the pause
-       menu. Keep the selection.
+       menu. Keep the selection. Close a phone HUD popup before opening
+       the pause menu.
    * - W A S D or arrow keys
      - Pan the camera.
    * - Pointer at a world-view edge (8 pixels)
      - Pan when **Edge scrolling** is on. The downward edge is just above
-       the HUD.
+       the desktop HUD; phones use the full window edge.
    * - Middle-drag
      - Pan the camera with the pointer.
    * - Mouse wheel
      - Zoom toward the pointer, 1.15× per line.
 
 Clicking or dragging the minimap centers the camera without issuing orders.
+On phones, tap the top-right thumbnail to open the map first. Tap the
+selection portrait in the floating dock to inspect units.
 Losing window focus cancels a pending press. Clicking a unit of another player
 does not select it.
 

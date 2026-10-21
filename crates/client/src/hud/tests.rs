@@ -1,4 +1,4 @@
-use bevy::state::app::StatesPlugin;
+use bevy::{state::app::StatesPlugin, window::PrimaryWindow};
 use rts_base::PlayerId;
 use rts_net::MatchSetup;
 
@@ -130,23 +130,124 @@ fn console_selection_and_orders_keep_simulation_authoritative() {
 }
 
 #[test]
-fn console_reflows_at_narrow_width_without_shrinking_order_targets() {
+fn phone_controls_float_and_keep_full_sized_targets_in_both_orientations() {
+    for dimensions in [Vec2::new(320.0, 640.0), Vec2::new(844.0, 390.0)] {
+        for scale in [1.0, 1.5] {
+            let mut app = app();
+            app.world_mut()
+                .query_filtered::<&mut Window, With<PrimaryWindow>>()
+                .single_mut(app.world_mut())
+                .unwrap()
+                .resolution
+                .set(dimensions.x, dimensions.y);
+            app.world_mut().resource_mut::<UiScale>().0 = scale;
+            app.update();
+            let (root, fill) = app
+                .world_mut()
+                .query_filtered::<(&Node, &BackgroundColor), With<Console>>()
+                .single(app.world())
+                .unwrap();
+            assert_eq!(root.height, percent(100));
+            assert_eq!(fill.0, Color::NONE);
+            assert_eq!(
+                app.world_mut()
+                    .query_filtered::<&Node, With<CommandCard>>()
+                    .single(app.world())
+                    .unwrap()
+                    .display,
+                Display::None
+            );
+            app.world_mut()
+                .resource_mut::<Selection>()
+                .units
+                .insert(rts_base::UnitId(0));
+            app.update();
+            assert_eq!(
+                app.world_mut()
+                    .query_filtered::<&Node, With<CommandCard>>()
+                    .single(app.world())
+                    .unwrap()
+                    .display,
+                Display::Grid
+            );
+            for node in app
+                .world_mut()
+                .query_filtered::<&Node, With<Order>>()
+                .iter(app.world())
+            {
+                assert_eq!(node.width, px(48));
+                assert_eq!(node.height, px(48));
+                assert_ne!(node.display, Display::None);
+            }
+            let layout = HudLayout::new(dimensions / scale, true, None);
+            let card = app
+                .world_mut()
+                .query_filtered::<&Node, With<CommandCard>>()
+                .single(app.world())
+                .unwrap();
+            assert_eq!(card.left, px(layout.commands.unwrap().min.x));
+            assert_eq!(card.top, px(layout.commands.unwrap().min.y));
+            assert_eq!(
+                app.world_mut()
+                    .query_filtered::<&Node, With<SelectionPanel>>()
+                    .single(app.world())
+                    .unwrap()
+                    .display,
+                Display::None
+            );
+        }
+    }
+}
+
+#[test]
+fn phone_details_open_from_selection_and_close_without_leaving_hidden_focus() {
+    use bevy::input_focus::{FocusCause, InputFocus};
     let mut app = app();
+    app.init_resource::<InputFocus>();
     app.world_mut()
         .query_filtered::<&mut Window, With<PrimaryWindow>>()
         .single_mut(app.world_mut())
         .unwrap()
         .resolution
         .set(320.0, 640.0);
+    app.world_mut()
+        .resource_mut::<Selection>()
+        .units
+        .insert(rts_base::UnitId(0));
+    app.update();
+    let toggle = app
+        .world_mut()
+        .query_filtered::<Entity, With<phone::SelectionButton>>()
+        .single(app.world())
+        .unwrap();
+    app.world_mut().trigger(Activate { entity: toggle });
     app.update();
     assert_eq!(
+        app.world().resource::<PhoneHud>().panel,
+        Some(PhonePanel::Selection)
+    );
+    assert_eq!(
         app.world_mut()
-            .query_filtered::<&Node, With<Console>>()
+            .query_filtered::<&Node, With<SelectionPanel>>()
             .single(app.world())
             .unwrap()
-            .height,
-        px(152)
+            .display,
+        Display::Flex
     );
+    let close = app
+        .world_mut()
+        .query::<(Entity, &Name)>()
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == "Close HUD panel")
+        .unwrap()
+        .0;
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(close, FocusCause::Navigated);
+    app.world_mut().trigger(Activate { entity: close });
+    app.update();
+    assert_eq!(app.world().resource::<PhoneHud>().panel, None);
+    assert_eq!(app.world().resource::<InputFocus>().get(), None);
     assert_eq!(
         app.world_mut()
             .query_filtered::<&Node, With<SelectionPanel>>()
@@ -155,17 +256,45 @@ fn console_reflows_at_narrow_width_without_shrinking_order_targets() {
             .display,
         Display::None
     );
-    let buttons: Vec<_> = app
+}
+
+#[test]
+fn short_scaled_phone_scrolls_all_selection_details_together() {
+    let mut app = app();
+    app.world_mut()
+        .query_filtered::<&mut Window, With<PrimaryWindow>>()
+        .single_mut(app.world_mut())
+        .unwrap()
+        .resolution
+        .set(568.0, 320.0);
+    app.world_mut().resource_mut::<UiScale>().0 = 1.5;
+    app.world_mut()
+        .resource_mut::<Selection>()
+        .units
+        .insert(rts_base::UnitId(0));
+    app.world_mut().resource_mut::<PhoneHud>().panel = Some(PhonePanel::Selection);
+    app.update();
+
+    let (panel, area) = app
         .world_mut()
-        .query_filtered::<&Node, With<Order>>()
-        .iter(app.world())
-        .collect();
-    assert_eq!(buttons.len(), 3);
-    for node in buttons {
-        assert_eq!(node.width, px(48));
-        assert_eq!(node.height, px(48));
-        assert_ne!(node.display, Display::None);
-    }
+        .query_filtered::<(&Node, Option<&bevy::ui_widgets::ScrollArea>), With<SelectionPanel>>()
+        .single(app.world())
+        .unwrap();
+    let Val::Px(height) = panel.height else {
+        panic!("phone details need a fixed viewport height");
+    };
+    assert!((height - (320.0 / 1.5 - 88.0)).abs() < 0.001);
+    assert_eq!(panel.overflow, Overflow::scroll_y());
+    assert!(area.is_some());
+    let (roster, nested_area) = app
+        .world_mut()
+        .query_filtered::<(&Node, Option<&bevy::ui_widgets::ScrollArea>), With<Roster>>()
+        .single(app.world())
+        .unwrap();
+    assert_eq!(roster.height, auto());
+    assert_eq!(roster.max_height, auto());
+    assert_eq!(roster.overflow, Overflow::visible());
+    assert!(nested_area.is_none());
 }
 
 #[test]

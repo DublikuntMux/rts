@@ -7,7 +7,7 @@ use bevy::{
 
 use crate::{
     game::AppState,
-    hud::MoveTargeting,
+    hud::{MoveTargeting, PhoneHud},
     menu::{
         Action, DialogHost, Menu, MenuActions, View,
         widgets::{INK, INK_MUTED, ShowIf, Tone, bound_text, dialog, wide_button},
@@ -59,8 +59,14 @@ fn pause_on_escape(
     mut pause: ResMut<PauseMenu>,
     mut menu: ResMut<Menu>,
     mut targeting: Option<ResMut<MoveTargeting>>,
+    mut phone: Option<ResMut<PhoneHud>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        if let Some(phone) = phone.as_deref_mut()
+            && phone.panel.take().is_some()
+        {
+            return;
+        }
         if let Some(targeting) = targeting.as_deref_mut()
             && targeting.0
         {
@@ -128,12 +134,12 @@ fn pause_menu() -> impl Scene {
                 @wide_button("Leave", Action::Game(SessionAction::Leave), Tone::Danger)
             })
             PausePanel
-            GlobalZIndex(4)
+            GlobalZIndex(10)
             Node { display: Display::None }
             --
             DialogHost
             dialog_shown
-            GlobalZIndex(5)
+            GlobalZIndex(11)
             Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
