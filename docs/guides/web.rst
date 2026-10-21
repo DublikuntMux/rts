@@ -119,8 +119,13 @@ reverse proxy. See :doc:`multiplayer` for hosting options.
 Browser differences
 -------------------
 
-* **Save replay** downloads ``match.replay.ron`` instead of writing a file.
-* **Load replay** opens a file picker instead of reading a fixed path.
+* **Save**, **Save replay**, and settings persist in this site's
+  ``localStorage``. Documents use ``rts/`` keys and deflate compression.
+  Clearing site data removes them. Storage failures appear as messages.
+* **Replays → Import replay file** adds a chosen recording to the library.
+  **Export** downloads a selected stored replay as ``match.replay.ron``.
+* **Quit** and the **Fullscreen** setting are hidden. Close the browser tab
+  or use the browser's fullscreen controls.
 * The browser handles WebSocket ping and pong frames itself.
 * The server crate compiles for ``wasm32`` as a stub only; there is no
   in-browser server.

@@ -9,6 +9,44 @@ device.
 Client scenes
 -------------
 
+**Crisp map previews.** Generated catalog, save, and replay previews now use
+nearest-neighbor sampling. Workspace tests, strict Clippy, formatting, the
+full-workspace ``wasm32`` check, and the strict Sphinx build passed. Rendered
+browser and device sessions were not rerun for this sampler-only change.
+
+**Plotting-table interface redesign.** 199 workspace tests, strict workspace
+Clippy, formatting, and full-workspace ``wasm32`` checks. A Trunk debug build
+rendered in Chromium with SwiftShader WebGL at desktop and phone widths;
+visual checks cover the home page, compact navigation, map previews,
+scrolling to Start game, and the in-game bars at 320 pixels wide.
+The existing scene smoke test still covers every page and dialog in both
+layout modes. No Android device session was run.
+
+**Scene-based main menu.** 199 workspace tests, strict workspace Clippy on
+native and the client on ``wasm32``, formatting, full-workspace ``wasm32``
+and Android arm64 checks, and the strict Sphinx build. Tests cover storage
+round trips and the browser codec; library numbering, reload, and corrupt
+records; settings repair; catalog loading with an invalid map skipped and
+no valid map staying in ``Loading``; map previews; and the keypad for all
+three fields. A headless menu smoke test spawns every page and dialog in
+wide and compact layouts and checks that no entities remain after cleanup.
+Menu tests cover action availability, Back, dialog closure, recent server,
+leave confirmation, browse filters, and selection.
+
+Session tests cover saved games continuing with matching hashes, replay
+import, lobby readiness, room closure, and refusal while connecting. A
+real-socket two-client match covers the room list, create/join with names,
+explicit Ready, Start, 40 verified turns, leaving with connections kept,
+and replay saving. Protocol and server tests cover v5. A rendered native
+Wayland session captures every page and dialog in desktop and compact
+layouts, using 150 percent interface scale for compact mode, against a live
+server with a second client hosting a public room. A Trunk debug build in
+headless Chromium (SwiftShader WebGL) rendered the menu without Quit, stored
+settings and a saved solo game in compressed ``localStorage`` entries, and
+listed the save with its preview after a page reload. Multiplayer, replay
+import and export, and touch input were not run in a browser. No physical
+Android device session was run.
+
 **Graphics settings in RON.** 178 workspace tests, strict workspace Clippy,
 formatting, full-workspace ``wasm32`` and Android arm64 checks, and the strict
 Sphinx build. Tests cover the bundled palette, slot wrapping, invalid colors,

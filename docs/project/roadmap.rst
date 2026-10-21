@@ -92,14 +92,30 @@ M3 — Multiplayer
    map and rules delivery as a compressed binary setup, readiness handshake,
    fixed-rate simulation, input delay, input validation, per-turn hashes, and
    disconnect handling. Replay recording, playback, native persistence, and
-   browser import and export. The touch keypad for lobby fields. Unit visuals
+   browser import and export. The touch keypad for menu fields. Unit visuals
    as Bevy scenes.
 
 Client presentation data
    Player palettes, selection outlines, move feedback, and terrain detail
    thresholds are configured in a validated local ``client.graphics.ron``
-   asset. Startup loads it before opening the lobby. Graphics stay outside
+   asset. Startup loads it before opening the main menu. Graphics stay outside
    simulation state, network setup, and replays.
+
+Interface redesign
+   Plotting-table visual direction with graphite and slate surfaces, ocher
+   actions, terrain previews with corner marks, selection stripes, and square
+   status lamps. Compact navigation moves above the page. The menu and
+   in-game command bar share their control palette and interaction states.
+
+Main menu
+   Scene-based menu with a sidebar, pages, dialogs, and a compact layout.
+   Map selection includes crisp, nearest-neighbor previews and a second map,
+   *Crossroads* (four players, 40×40 tiles). Solo saved games continue
+   recorded matches.
+   A replay library supports browsing, filtering, deletion, and browser
+   import/export. Persistent settings cover player name, interface scale,
+   edge scrolling, and desktop fullscreen. Protocol v5 adds a room list,
+   player names, and explicit readiness separate from setup loading.
 
 Upcoming
 --------

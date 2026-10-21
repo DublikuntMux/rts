@@ -2,7 +2,7 @@ Client application
 ==================
 
 ``rts_client`` (``crates/client``) is the game. It is a Bevy application that
-loads content, shows the lobby, runs match sessions, draws the simulation, and
+loads content, shows the main menu, runs match sessions, draws the simulation, and
 turns input into commands. The binary ``rts`` and the Android library both
 call ``rts_client::run()``.
 
@@ -27,7 +27,7 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
      - Loaders for rules and map files.
    * - ``GamePlugin``
      - ``game.rs``
-     - ``AppState``, the 20 Hz fixed clock, loading the bundled setup, and
+     - ``AppState``, the 20 Hz fixed clock, loading the map catalog, and
        the ``Match`` resource.
    * - ``MapPlugin``
      - ``map.rs``
@@ -48,12 +48,23 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
    * - ``SessionPlugin``
      - ``session.rs``
      - Solo, online, and playback sessions; networking; replay recording.
-   * - ``LobbyPlugin``
-     - ``lobby.rs``
-     - Lobby screen, touch keypad, and top session bar.
+   * - ``SettingsPlugin``
+     - ``settings.rs``
+     - Persistent player settings, interface scale, edge scrolling, and
+       desktop fullscreen.
+   * - ``MenuPlugin``
+     - ``menu/``
+     - Main menu pages, dialogs, bindings, navigation, and touch keypad.
+   * - ``SessionBarPlugin``
+     - ``session_bar.rs``
+     - In-game title, messages, save actions, and Leave.
 
-``replay_io.rs`` saves and loads replay files and ``font.rs`` holds the
-``GameFont`` resource.
+``library.rs`` manages saved games and replays; ``storage.rs`` handles native
+files and browser storage. ``replay_io.rs`` imports and exports browser
+replays. ``preview.rs`` generates map images, and ``menu/previews.rs``
+caches previews for library records. ``font.rs`` holds ``GameFont`` for
+rendering outside the menu. The client uses ``serde`` and ``ron`` for
+persistent documents and ``miniz_oxide`` for browser storage compression.
 
 Application states
 ------------------
@@ -66,10 +77,10 @@ Application states
    @startuml
    skinparam backgroundColor transparent
    [*] --> Loading
-   Loading : rules and map loading
-   Loading --> Menu : bundled setup is valid
-   Menu : lobby
-   Menu --> InGame : Play solo, Started from server,\nReplay last, loaded replay
+   Loading : rules, maps folder, and graphics loading
+   Loading --> Menu : graphics and at least one valid map
+   Menu : sidebar, pages, dialogs
+   Menu --> InGame : Start game, Load save,\nStarted from server, Watch replay
    InGame : terrain, units, HUD, session bar
    InGame --> Menu : Leave
    @enduml
@@ -95,7 +106,7 @@ Schedules
    skinparam backgroundColor transparent
    start
    :PreUpdate\npoll_network: drain socket events,\nhandle server messages;
-   :Update\nhandle_actions, finish_replay_load\ncontrol_camera (CameraControl)\nsync_units (SyncUnits)\ncontrol_units after both\nlobby and HUD updates;
+   :Update\nmenu actions before SessionActions\nhandle_actions, finish_replay_import\ncontrol_camera (CameraControl)\nsync_units (SyncUnits)\ncontrol_units after both\nmenu, session bar, and HUD updates;
    while (fixed clock owes a 50 ms step?) is (yes)
      :FixedUpdate\nadvance_session: apply up to 8 turns;
    endwhile (no)
@@ -132,7 +143,9 @@ The match resource
   or when adding it would break the per-turn command limits. Commands are
   never applied optimistically.
 
-``MatchData`` holds the bundled ``MatchSetup`` for solo play.
+``MapCatalog`` holds valid bundled maps sorted by name. Each ``CatalogMap``
+has a name, a ``MatchSetup``, and a preview image. Solo play selects a catalog
+entry; online play uses the server's setup.
 ``PreviousPositions`` holds unit positions from just before the latest tick,
 for interpolation only.
 
@@ -153,7 +166,7 @@ enabled features are:
    * - ``bevy_asset``, ``png``
      - Asset server and terrain textures.
    * - ``bevy_scene``
-     - Scene composition for unit visuals.
+     - Scene composition for unit visuals, menu widgets, pages, and dialogs.
    * - ``bevy_log``, ``bevy_state``
      - Logging and ``AppState``.
    * - ``bevy_winit``, ``x11``, ``wayland``, ``webgl2``
@@ -161,11 +174,18 @@ enabled features are:
    * - ``bevy_sprite_render``
      - 2D meshes and the terrain tilemap.
    * - ``bevy_ui_render``, ``bevy_ui_widgets``, ``ui_picking``
-     - Lobby, HUD, buttons, text input, and pointer picking.
+     - Menu, bars, buttons, text input, and pointer picking.
    * - ``bevy_gizmos_render``
      - Selection rings, box, and order markers.
    * - ``keyboard``, ``mouse``, ``touch``
      - Input.
+   * - ``bevy_clipboard``
+     - Clipboard resource and text editing integration.
+
+``crates/client`` enables ``system_clipboard`` on non-Android targets for
+system clipboard access, including **Copy code**. Android has no system
+backend, so that button is hidden there. Browser ``web-sys`` features include
+``Storage`` for ``localStorage``.
 
 ``crates/android`` adds ``android-game-activity``. Bevy's ``2d`` and ``ui``
 convenience presets are avoided because they enable unused modules. The
@@ -185,9 +205,19 @@ The client uses Bevy 0.20 scene composition (``bsn!`` and functions returning
 ``impl Scene``) for reusable presentation objects. ``DefaultPlugins`` installs
 ``ScenePlugin``; do not register it twice.
 
-``units.rs::unit_scene`` is the first scene. It spawns one unit visual with
+``units.rs::unit_scene`` spawns one unit visual with
 its stable ``UnitId``, shared mesh and material handles, its interpolated
 transform, and ``DespawnOnExit(AppState::InGame)``. See :doc:`rendering`.
+
+``menu/widgets.rs`` contains reusable widget scenes. ``menu/pages.rs``
+composes them into pages and dialogs from ``View``. ``PageKey`` selects when
+to replace a page; bindings update text, visibility, and control states in
+place. Pages and dialogs spawn immediately with ``Commands::spawn_scene``
+under their host entity. Font handles resolve with ``template(...)`` at
+spawn time. The menu skips rendering while ``NextState<AppState>`` has a
+pending transition, so new scenes cannot outlive their screen.
+``session_bar.rs`` composes the in-game bar from the same widgets.
+See :doc:`interface` for the layout and navigation.
 
 Rules for scenes:
 

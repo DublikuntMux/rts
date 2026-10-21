@@ -14,9 +14,16 @@ path = "src/main.rs"
 [dependencies]
 bevy.workspace = true
 ewebsock.workspace = true
+miniz_oxide.workspace = true
+ron.workspace = true
 rts_assets.workspace = true
 rts_base.workspace = true
 rts_net.workspace = true
+serde.workspace = true
+
+# The system clipboard backend has no Android implementation; Android keeps an in-app buffer.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+bevy = { workspace = true, features = ["system_clipboard"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys.workspace = true

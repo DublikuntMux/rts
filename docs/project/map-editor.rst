@@ -9,7 +9,7 @@ Design
 
 * A new ``rts_editor`` crate plugged into the client, created when M7 starts.
 * Interface with ``bevy_egui`` if it supports the Bevy version at the time.
-  Otherwise use Bevy UI, like the lobby.
+  Otherwise use Bevy UI, like the main menu.
 * The editor reads and writes ``*.map.ron`` in the existing format
   (:doc:`../reference/map-format`); maps stay RON, not Bevy scene files.
 * Decorative groups can use scene composition; see

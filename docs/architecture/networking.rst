@@ -141,7 +141,7 @@ Setup delivery
 
 Before a match, every client receives the server's exact rules and map in a
 compressed binary frame (:doc:`../reference/setup-frame`), builds the
-simulation from it, and acknowledges with a checksum. Clients never compare
+simulation from it, and acknowledges with ``Loaded { checksum }``. Clients never compare
 the setup with their bundled files, so a server can run content mods without
 client rebuilds. The client must still run compatible game code: the protocol
 version must match, and the simulation code must be the same.
@@ -157,17 +157,32 @@ version must match, and the simulation code must be the same.
    participant Client as C
    participant Server as S
    S -> S : startup: read files,\nbuild Sim, compute checksum K
-   C -> S : Join { version: 4, code }
+   C -> S : Join { version: 5, code, name }
    S --> C : Setup (minified + zlib)
    C -> C : inflate with bounds,\nparse, build Sim
    C -> C : k = checksum(setup)
-   C -> S : Ready { checksum: k }
+   C -> S : Loaded { checksum: k }
    alt k == K
-     S --> C : Lobby { ready + 1 }
+     S --> C : Lobby (setup loaded)
    else
      S --> C : Error "setup checksum does not match"
    end
    @enduml
+
+Room browsing and readiness
+---------------------------
+
+A connection can request ``Rooms { version: 5 }`` before creating or joining
+a room. The response lists at most 64 public rooms with space that have not
+started, sorted by code. Private rooms require their code. Creating or
+joining supplies a display name. Lobby updates carry room visibility and
+an optional named slot for each player start.
+
+Loading the setup and choosing readiness are separate steps. After a matching
+``Loaded``, the player can send ``Ready { ready: true }`` or clear readiness
+with ``Ready { ready: false }``. Only the host can start, and the room must be
+full with every player loaded and ready. Leaving a room keeps the connection
+open for browsing, creating, or joining again.
 
 Solo play
 ---------

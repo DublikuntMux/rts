@@ -116,11 +116,18 @@ fn absent_network_turn_stalls_without_consuming_input_or_repeating_interpolation
 
 #[cfg(not(target_arch = "wasm32"))]
 fn headless() -> App {
+    use crate::{game::CatalogMap, storage::tests::temporary_store};
+
     let mut app = App::new();
     app.add_plugins(bevy::state::app::StatesPlugin)
         .insert_state(AppState::Menu)
         .insert_resource(Time::<()>::default())
-        .insert_resource(MatchData(setup()))
+        .insert_resource(MapCatalog(vec![CatalogMap {
+            name: "Proving Grounds".into(),
+            setup: setup(),
+            preview: Handle::default(),
+        }]))
+        .insert_resource(Library::new(temporary_store("session")))
         .init_resource::<Selection>()
         .init_resource::<PreviousPositions>()
         .add_plugins(SessionPlugin);
@@ -128,25 +135,93 @@ fn headless() -> App {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn status(app: &App) -> &SessionStatus {
+    app.world().resource::<SessionStatus>()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn completed_replay_load_cannot_replace_a_match_starting_this_frame() {
+fn imported_replay_joins_the_library_without_replacing_a_starting_match() {
     let mut app = headless();
     let text = Replay::new(setup()).unwrap().to_ron().unwrap();
     app.world().resource::<ReplayIo>().complete_for_test(text);
-    app.world_mut().write_message(SessionAction::Solo);
+    app.world_mut()
+        .write_message(SessionAction::NewGame { map: 0 });
     app.update();
     assert!(app.world().resource::<Session>().mode == Mode::Offline);
     assert!(app.world().resource::<Match>().accepts_orders);
-    assert!(
+    assert_eq!(status(&app).message, "Imported as Replay 01.");
+    assert_eq!(
         app.world()
-            .resource::<SessionStatus>()
-            .message
-            .contains("Leave the current match")
+            .resource::<Library>()
+            .records(Shelf::Replays)
+            .len(),
+        1
     );
     app.update();
     assert_eq!(
         *app.world().resource::<State<AppState>>().get(),
         AppState::InGame
+    );
+    assert_eq!(status(&app).kind, MatchKind::Solo);
+    assert!(status(&app).can_save_game());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn saved_solo_game_continues_from_its_recorded_state() {
+    let mut app = headless();
+    app.world_mut()
+        .write_message(SessionAction::NewGame { map: 0 });
+    app.update();
+    app.update();
+    let target = IVec2::new(5 * TILE, 10 * TILE);
+    app.world_mut()
+        .resource_mut::<Match>()
+        .queue_command(Command::Move {
+            units: vec![UnitId(0)],
+            target,
+        });
+    for _ in 0..6 {
+        app.world_mut().run_schedule(FixedUpdate);
+    }
+    let saved_hash = app.world().resource::<Match>().sim.state_hash();
+    let saved_tick = app.world().resource::<Match>().sim.tick();
+    assert_eq!(
+        app.world().resource::<Match>().sim.move_target(UnitId(0)),
+        Some(target)
+    );
+    app.world_mut().write_message(SessionAction::SaveGame);
+    app.update();
+    assert_eq!(status(&app).message, "Saved as Save 01.");
+    let record = app.world().resource::<Library>().records(Shelf::Saves)[0].clone();
+    assert_eq!(record.meta.ticks, saved_tick);
+    assert_eq!(record.meta.map, "Proving Grounds");
+
+    // Saving is refused for playback and in the menu.
+    app.world_mut().write_message(SessionAction::Leave);
+    app.update();
+    app.update();
+    assert!(!status(&app).can_save_game());
+    app.world_mut().write_message(SessionAction::SaveGame);
+    app.update();
+    assert!(status(&app).error);
+
+    app.world_mut()
+        .write_message(SessionAction::LoadGame { id: record.id });
+    app.update();
+    let game = app.world().resource::<Match>();
+    assert_eq!(game.sim.tick(), saved_tick);
+    assert_eq!(game.sim.state_hash(), saved_hash);
+    assert!(game.accepts_orders);
+    app.update();
+    app.world_mut().run_schedule(FixedUpdate);
+    let session = app.world().resource::<Session>();
+    let replay = session.replay().unwrap();
+    assert_eq!(replay.turns.len(), saved_tick as usize + 1);
+    assert_eq!(
+        replay.playback().unwrap().state_hash(),
+        app.world().resource::<Match>().sim.state_hash()
     );
 }
 
@@ -154,7 +229,7 @@ fn completed_replay_load_cannot_replace_a_match_starting_this_frame() {
 #[tokio::test(flavor = "current_thread")]
 #[expect(
     clippy::too_many_lines,
-    reason = "one scripted real-socket match from lobby through replay verification and disconnect"
+    reason = "one scripted real-socket match from the room list through replay verification"
 )]
 async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     use std::time::Duration;
@@ -185,9 +260,14 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     let server = tokio::spawn(rts_server::serve_with_config(listener, config));
     let mut host = headless();
     let mut guest = headless();
-    host.world_mut()
-        .write_message(SessionAction::Host { url: url.clone() });
+    for app in [&mut host, &mut guest] {
+        app.world_mut()
+            .write_message(SessionAction::Connect { url: url.clone() });
+    }
+    let mut created = false;
     let mut joined = false;
+    let mut host_ready = false;
+    let mut guest_ready = false;
     let mut started = false;
     let mut moved = false;
     let mut stopped = false;
@@ -200,14 +280,42 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     for _ in 0..1000 {
         host.update();
         guest.update();
-        if !joined && let Some(code) = host.world().resource::<SessionStatus>().room_code.clone() {
-            guest.world_mut().write_message(SessionAction::Join {
-                url: url.clone(),
-                code,
+        if !created && status(&host).connected() {
+            host.world_mut().write_message(SessionAction::CreateRoom {
+                name: "Host".into(),
+                public: true,
             });
-            joined = true;
+            created = true;
         }
-        if !started && host.world().resource::<SessionStatus>().can_start {
+        if created && !joined && status(&guest).connected() {
+            if let Some(room) = status(&guest).rooms.first().cloned() {
+                assert_eq!(room.host, "Host");
+                assert_eq!(room.map, "Server mod");
+                assert_eq!((room.players, room.capacity), (1, 2));
+                guest.world_mut().write_message(SessionAction::JoinRoom {
+                    name: "Guest".into(),
+                    code: room.code,
+                });
+                joined = true;
+            } else {
+                guest.world_mut().write_message(SessionAction::RefreshRooms);
+            }
+        }
+        for (app, readied) in [(&mut host, &mut host_ready), (&mut guest, &mut guest_ready)] {
+            if !*readied
+                && status(app)
+                    .lobby
+                    .as_ref()
+                    .is_some_and(|lobby| lobby.joined() == 2)
+            {
+                app.world_mut().write_message(SessionAction::SetReady(true));
+                *readied = true;
+            }
+        }
+        if !started && status(&host).lobby.as_ref().is_some_and(Lobby::can_start) {
+            let lobby = status(&host).lobby.clone().unwrap();
+            assert_eq!(lobby.host(), "Host");
+            assert_eq!(lobby.slots[1].as_ref().unwrap().name, "Guest");
             host.world_mut().write_message(SessionAction::Start);
             started = true;
         }
@@ -256,7 +364,7 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert!(moved && stopped);
+    assert!(moved && stopped, "{:?}", status(&host));
     for tick in 0..=40 {
         assert_eq!(
             host_hashes.get(&tick),
@@ -265,11 +373,7 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
         );
     }
     let game = host.world().resource::<Match>();
-    assert!(
-        game.sim.tick() >= 40,
-        "{}",
-        host.world().resource::<SessionStatus>().message
-    );
+    assert!(game.sim.tick() >= 40, "{}", status(&host).message);
     assert_ne!(
         game.sim.unit(UnitId(0)).unwrap().pos,
         IVec2::new(TILE * 9 / 2, TILE * 8)
@@ -278,6 +382,11 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
         game.sim.move_target(UnitId(0)).is_none(),
         "Stop must be applied by the server"
     );
+    assert_eq!(status(&host).kind, MatchKind::Online);
+    assert!(
+        !status(&host).can_save_game(),
+        "online matches are not saved games"
+    );
     let replay = host.world().resource::<Session>().replay().unwrap();
     assert_eq!(replay.setup, mod_setup.minified());
     assert_eq!(
@@ -285,7 +394,7 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
         mod_setup.minified()
     );
     assert_eq!(
-        host.world().resource::<MatchData>().0,
+        host.world().resource::<MapCatalog>().0[0].setup,
         setup(),
         "solo configuration stays local"
     );
@@ -302,6 +411,7 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     guest.update();
     for _ in 0..200 {
         host.update();
+        guest.update();
         if host.world().resource::<Session>().mode == Mode::Stopped {
             break;
         }
@@ -309,7 +419,14 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     }
     assert!(host.world().resource::<Session>().mode == Mode::Stopped);
     assert!(!host.world().resource::<Match>().accepts_orders);
-    assert!(host.world().resource::<SessionStatus>().room_code.is_some());
+    assert!(status(&host).stopped);
+    // Both clients keep their connection and can browse rooms again.
+    assert!(status(&host).connected());
+    assert!(status(&guest).connected());
+    assert!(!status(&guest).running);
+    host.world_mut().write_message(SessionAction::SaveReplay);
+    host.update();
+    assert_eq!(status(&host).message, "Replay saved as Replay 01.");
     server.abort();
 }
 
@@ -320,14 +437,17 @@ fn deliver(app: &mut App, message: ServerMessage) -> Result<Option<ClientMessage
     let mut state = SystemState::<(
         ResMut<Session>,
         ResMut<SessionStatus>,
+        Option<ResMut<Match>>,
         Commands,
         ResMut<NextState<AppState>>,
     )>::new(app.world_mut());
-    let (mut session, mut status, mut commands, mut next) = state.get_mut(app.world_mut()).unwrap();
+    let (mut session, mut status, mut game, mut commands, mut next) =
+        state.get_mut(app.world_mut()).unwrap();
     let result = receive_message(
         message,
         &mut session,
         &mut status,
+        game.as_deref_mut(),
         &mut commands,
         &mut next,
         0.0,
@@ -337,9 +457,29 @@ fn deliver(app: &mut App, message: ServerMessage) -> Result<Option<ClientMessage
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn lobby_message(ready: [bool; 2]) -> ServerMessage {
+    ServerMessage::Lobby {
+        code: "AAAAAA".into(),
+        player: PlayerId(0),
+        public: true,
+        slots: ["Host", "Guest"]
+            .into_iter()
+            .zip(ready)
+            .map(|(name, ready)| {
+                Some(LobbySlot {
+                    name: name.into(),
+                    ready,
+                })
+            })
+            .collect(),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn setup_acknowledges_server_content_and_start_requires_it() {
+fn setup_acknowledges_server_content_and_start_requires_readiness() {
     let mut app = headless();
+    app.world_mut().resource_mut::<SessionStatus>().joining = true;
     assert!(
         deliver(
             &mut app,
@@ -356,34 +496,17 @@ fn setup_acknowledges_server_content_and_start_requires_it() {
     };
     assert_eq!(
         deliver(&mut app, ServerMessage::Setup(server_setup.clone())).unwrap(),
-        Some(ClientMessage::Ready {
+        Some(ClientMessage::Loaded {
             checksum: server_setup.checksum()
         })
     );
-    deliver(
-        &mut app,
-        ServerMessage::Lobby {
-            code: "AAAAAA".into(),
-            player: PlayerId(0),
-            players: 2,
-            capacity: 2,
-            ready: 1,
-        },
-    )
-    .unwrap();
-    assert!(!app.world().resource::<SessionStatus>().can_start);
-    deliver(
-        &mut app,
-        ServerMessage::Lobby {
-            code: "AAAAAA".into(),
-            player: PlayerId(0),
-            players: 2,
-            capacity: 2,
-            ready: 2,
-        },
-    )
-    .unwrap();
-    assert!(app.world().resource::<SessionStatus>().can_start);
+    deliver(&mut app, lobby_message([true, false])).unwrap();
+    let lobby = status(&app).lobby.clone().unwrap();
+    assert!(!status(&app).joining);
+    assert!(lobby.is_host() && lobby.ready() && !lobby.can_start());
+    assert_eq!(lobby.host(), "Host");
+    deliver(&mut app, lobby_message([true, true])).unwrap();
+    assert!(status(&app).lobby.as_ref().unwrap().can_start());
     deliver(
         &mut app,
         ServerMessage::Started {
@@ -392,6 +515,7 @@ fn setup_acknowledges_server_content_and_start_requires_it() {
         },
     )
     .unwrap();
+    assert!(status(&app).lobby.is_none());
     assert_eq!(
         app.world()
             .resource::<Match>()
@@ -405,6 +529,73 @@ fn setup_acknowledges_server_content_and_start_requires_it() {
         app.world().resource::<Session>().replay().unwrap().setup,
         server_setup
     );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn closed_room_returns_to_the_room_list_and_stale_lobbies_are_ignored() {
+    let mut app = headless();
+    {
+        let mut status = app.world_mut().resource_mut::<SessionStatus>();
+        status.server = Server::Connected {
+            url: "ws://host".into(),
+        };
+    }
+    // An update for a room this client never asked to join is ignored.
+    deliver(&mut app, lobby_message([false, false])).unwrap();
+    assert!(status(&app).lobby.is_none());
+    app.world_mut().resource_mut::<SessionStatus>().joining = true;
+    deliver(&mut app, lobby_message([false, false])).unwrap();
+    assert!(status(&app).lobby.is_some());
+    assert_eq!(
+        deliver(
+            &mut app,
+            ServerMessage::Ended {
+                reason: "a player left the room".into()
+            }
+        )
+        .unwrap(),
+        Some(ClientMessage::Rooms {
+            version: PROTOCOL_VERSION
+        })
+    );
+    assert!(status(&app).lobby.is_none());
+    assert!(status(&app).connected());
+    assert_eq!(
+        status(&app).message,
+        "The room closed: a player left the room."
+    );
+    assert!(status(&app).error);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn refusal_while_connecting_fails_the_connection_and_later_errors_do_not() {
+    let mut app = headless();
+    app.world_mut().resource_mut::<SessionStatus>().server = Server::Connecting {
+        url: "ws://host".into(),
+    };
+    assert!(
+        deliver(
+            &mut app,
+            ServerMessage::Error {
+                message: "protocol version does not match".into()
+            }
+        )
+        .is_err()
+    );
+    deliver(&mut app, ServerMessage::Rooms { rooms: Vec::new() }).unwrap();
+    assert!(status(&app).connected());
+    app.world_mut().resource_mut::<SessionStatus>().joining = true;
+    deliver(
+        &mut app,
+        ServerMessage::Error {
+            message: "room is full".into(),
+        },
+    )
+    .unwrap();
+    assert!(!status(&app).joining);
+    assert_eq!(status(&app).message, "Room is full.");
 }
 
 #[test]

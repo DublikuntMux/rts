@@ -46,7 +46,7 @@ Layout
    * - 4
      - 4
      - ``u32`` version
-     - Protocol version, currently 4.
+     - Protocol version, currently 5.
    * - 8
      - 8
      - ``u64`` seed
@@ -96,7 +96,7 @@ Decoding
 --------
 
 A client accepts the frame only if every check passes, before it sends
-``Ready``:
+``Loaded { checksum }``:
 
 1. The frame is at most ``33 + 2 × 8 MiB`` bytes and at least 33 bytes.
 2. The tag is ``RTSS`` and the version matches.
@@ -142,4 +142,4 @@ Checksum
 
 FNV-1a starts at ``0xcbf29ce484222325`` and multiplies by ``0x100000001b3``
 after XOR-ing each byte. Because the checksum covers minified text, comments
-and formatting never affect readiness, while any change to a literal does.
+and formatting never affect setup acknowledgment, while any change to a literal does.

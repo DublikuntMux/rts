@@ -24,7 +24,8 @@ Content
            +++ core.rules.ron | Terrain and unit types
            +++ client.graphics.ron | Player palette, selection and order markers, terrain detail
            ++ maps/ | .
-           +++ proving_grounds.map.ron | Two-player sample map, 48×32 tiles
+           +++ proving_grounds.map.ron | Two-player map, 48×32 tiles
+           +++ crossroads.map.ron | Four-player map, 40×40 tiles
            ++ textures/terrain/ | 128×128 PNG per terrain type
            ++ fonts/ | .
            +++ Exo2.ttf | Interface font
@@ -70,7 +71,7 @@ A missing or corrupt pack panics at startup with the path and the error.
 
 .. kroki::
    :type: plantuml
-   :caption: Startup from the asset pack to the lobby.
+   :caption: Startup from the asset pack to the main menu.
    :align: center
 
    @startuml
@@ -84,10 +85,10 @@ A missing or corrupt pack panics at startup with the path and the error.
    bundle -> app : build_app(bundle).run()
    app -> app : BundledAssetPlugin\nserves AssetServer reads
    app -> game : Startup: load_match_data
-   game -> app : load data/core.rules.ron\nload maps/proving_grounds.map.ron\nload data/client.graphics.ron
-   app --> game : RulesAsset, MapAsset, Graphics loaded
-   game -> game : build MatchSetup,\nvalidate with simulation()
-   game -> app : install Graphics resource\nAppState::Loading → Menu
+   game -> app : load data/core.rules.ron\nload_folder maps/\nload data/client.graphics.ron
+   app --> game : RulesAsset, LoadedFolder, MapAsset handles, Graphics
+   game -> game : build and validate each MatchSetup\nskip invalid maps, sort by name\ngenerate preview images
+   game -> app : install MapCatalog and Graphics\nif at least one valid map: Loading → Menu
    @enduml
 
 Data loaders
@@ -120,11 +121,28 @@ the simulation through ``MatchSetup::simulation``. See
 
 The loader reads the file, checks UTF-8, and calls ``Rules::from_ron`` or
 ``MapData::from_ron``, or ``Graphics::from_ron``. A failure becomes a Bevy load
-error. Startup waits for all three assets; a failed load logs the file path
-and error once and stops startup in the loading state. If the bundled
-setup does not build a valid simulation, the client logs
-``cannot start `maps/proving_grounds.map.ron`: <error>`` and stays in the
-loading state.
+error. Startup waits for rules, the maps folder, and graphics. A failed
+rules, folder, or graphics load logs the path and error once and leaves the
+client in ``Loading``. Individual maps that fail to load or simulate are
+skipped. Bevy logs asset-load failures; simulation failures log the map name
+and reason. If no playable map remains, startup logs
+``no playable map in `maps``` and stays in ``Loading``.
+
+Map catalog and previews
+------------------------
+
+``game.rs`` calls ``AssetServer::load_folder("maps")`` and collects
+``MapAsset`` handles for ``*.map.ron`` files. It waits for pending map loads,
+builds a ``MatchSetup`` for each valid map with the bundled rules and seed 0,
+and validates each setup through ``simulation()``. ``MapCatalog`` stores
+the maps sorted by name, with their setups and preview handles.
+**Singleplayer → New game** lists this catalog automatically.
+
+``preview.rs`` generates an image with four pixels per tile, terrain colors,
+and player start markers in the local player palette. Library records reuse
+a catalog preview when their map text matches. ``menu/previews.rs`` generates
+other previews on first use and caches them by setup checksum. A broken
+record setup leaves the image blank without hiding its details.
 
 ``Graphics`` is cloned into a resource before entering the menu and retained
 across matches. It supplies player colors, selection and order feedback, and
@@ -138,7 +156,8 @@ Textures and fonts
   ``RenderAssetUsages::MAIN_WORLD`` so their pixels stay on the CPU until they
   are assembled into one texture array. See :doc:`rendering`.
 * ``GameFont`` loads ``fonts/Exo2.ttf`` at startup. Bevy's built-in font is
-  disabled, so every text node uses this handle.
+  disabled. Menu widgets resolve the same font path through scene templates
+  when they spawn.
 
 Adding an asset
 ---------------

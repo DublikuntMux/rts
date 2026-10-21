@@ -17,24 +17,57 @@ Components
    * - Item
      - Role
    * - ``SessionAction``
-     - Bevy message sent by the interface: ``Solo``, ``Host { url }``,
-       ``Join { url, code }``, ``Start``, ``Leave``, ``ReplayLast``,
-       ``SaveReplay``, ``LoadReplay``.
+     - Interface messages for local games, connections, rooms, and the library.
    * - ``Session``
-     - Resource with the mode, buffered turns, local input frames, the
-       pending online setup, the current recording, the last replay, and the
-       replay being played.
+     - Mode, buffered turns, local input frames, pending online setup,
+       current recording, last replay, playback, and timing.
    * - ``SessionStatus``
-     - Resource the interface reads: message, room code, slot, player
-       counts, and availability flags (``can_start``, ``has_replay``,
-       ``running``, ``playback``, ``busy``).
+     - Interface view: ``message``, ``error``, ``server``, ``rooms``,
+       ``lobby``, ``joining``, ``running``, ``stopped``, ``kind``,
+       ``has_replay``, and ``importing``.
    * - ``Network``
      - Non-send resource holding the WebSocket ``Connection``, if any.
+   * - ``Library``
+     - Save and replay records, backed by ``Store`` in ``storage.rs``.
    * - ``ReplayIo``
-     - Saves and loads replay text; see :doc:`../guides/replays`.
+     - Browser file picker and download bridge in ``replay_io.rs``.
 
-``SessionStatus`` is a projection for the interface; ``Session::mode`` is the
-real state machine.
+``SessionStatus`` is a projection; ``Session::mode`` is the match state
+machine. Server state is separate: ``Offline``, ``Connecting { url }``,
+``Connected { url }``, or ``Failed { url, reason }``. ``Lobby`` holds the
+``code``, local ``player`` slot, ``public`` visibility, and optional named
+``slots``. Its helpers derive readiness and host start availability.
+``MatchKind`` is ``Solo``, ``Online``, or ``Playback``.
+
+Actions
+-------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Action
+     - Effect
+   * - ``NewGame { map }``, ``LoadGame { id }``, ``SaveGame``
+     - Start a catalog map, resume a save, or save a running solo match.
+   * - ``Connect { url }``, ``Disconnect``, ``RefreshRooms``
+     - Open or close the server connection, or request its public rooms.
+   * - ``CreateRoom { name, public }``, ``JoinRoom { name, code }``
+     - Create or join on the current connection with a display name.
+   * - ``SetReady(bool)``, ``Start``, ``LeaveRoom``
+     - Change explicit readiness, start as host, or leave the waiting room.
+   * - ``Leave``
+     - Return from the current match to the menu.
+   * - ``WatchReplay { id }``, ``WatchLast``, ``SaveReplay``
+     - Watch a library record or the last match, or add a recording to the
+       replay shelf.
+   * - ``Delete { shelf, id }``
+     - Remove a save or replay record.
+   * - ``ImportReplay``, ``ExportReplay { id }``
+     - Import into the browser library or download a stored replay.
+
+The ``SessionActions`` system set runs ``handle_actions`` followed by
+``finish_replay_import``. Menu action processing runs before this set.
 
 Modes
 -----
@@ -47,9 +80,9 @@ Modes
    @startuml
    skinparam backgroundColor transparent
    [*] --> Idle
-   Idle --> Offline : Solo
+   Idle --> Offline : NewGame, LoadGame
    Idle --> Online : Started from server
-   Idle --> Playback : ReplayLast, or a loaded file
+   Idle --> Playback : WatchLast, WatchReplay
    Offline --> Idle : Leave
    Online --> Stopped : hash mismatch, stall,\ndisconnect, Ended
    Online --> Idle : Leave
@@ -59,28 +92,29 @@ Modes
    Stopped : match stays on screen,\norders disabled
    @enduml
 
-A connection failure while still in the lobby also sets ``Stopped``; starting
-any new match from the lobby leaves it. New matches can only start from the
-lobby with no match running; otherwise
-the action is refused with *Leave the current match before starting
-another.* ``Leave`` and ``SaveReplay`` work at any time.
+Connection failures in the menu set ``Server::Failed`` without creating a
+stopped match. Only ``Leave``, ``SaveReplay``, and ``SaveGame`` are allowed
+while a match is on screen. Other actions require ``AppState::Menu`` and no
+running match; otherwise they fail with *Leave the current match first.*
+Saving a game also requires a running, unstopped solo match.
 
 Starting a match
 ----------------
 
-``Session::begin`` is shared by solo and online play:
+``Session::begin`` is shared by new solo and online matches:
 
-1. Archive the previous session: move the current recording to
-   ``last_replay`` and clear buffers.
-2. Build the ``Sim`` from the ``MatchSetup``.
-3. Start a new ``Replay`` from the same setup.
-4. Insert a ``Match`` for the local player and switch to ``InGame``.
+1. Build the ``Sim`` and a new ``Replay`` from the ``MatchSetup``.
+2. Archive the old recording into ``last_replay`` and clear buffers.
+3. Install the new recording, mode, and step time.
+4. Return a ``Match`` for the local player. The caller inserts it and
+   switches to ``InGame``.
 
-Solo play uses the bundled ``MatchData`` setup and slot 0. Online play uses
-the setup received from the server and the slot from the last ``Lobby``
-message. ``Session::begin_replay`` validates a complete replay by playing it
-back *before* replacing anything, then starts in ``Playback`` with orders
-disabled.
+Solo play selects a setup from ``MapCatalog`` and controls slot 0. Online
+play uses the server setup and the local slot from ``Lobby``.
+``Session::begin_replay`` accepts a recording already verified by the library
+or recorded locally. It starts a fresh simulation in ``Playback`` with
+orders disabled. Starting any local match, save, or replay disconnects from
+the server.
 
 The fixed-step loop
 -------------------
@@ -141,9 +175,9 @@ buffered turns remain, so a slow frame catches up with bounded work.
    stop
    @enduml
 
-On any failure the session leaves the network, switches to ``Stopped``,
-disables orders, clears pending commands and the interpolation snapshot, and
-shows the reason. The match stays on screen until the player leaves.
+On a fixed-step failure an online session closes its connection. The session
+switches to ``Stopped``, disables orders, clears pending commands and the
+interpolation snapshot, and shows the reason. The match stays on screen until the player leaves.
 
 Input delay
 -----------
@@ -160,14 +194,15 @@ latest *received* tick plus two. Using the received tick rather than the
 applied tick keeps input ahead of the server even when the client has a
 backlog. ``submitted_tick`` makes sure each tick is sent at most once.
 
-Networking
-----------
+Connection flow
+---------------
 
 ``Connection::connect`` validates the address (``ws://`` or ``wss://``, at most
-2048 characters; native builds refuse ``wss://``) and opens an ``ewebsock``
-socket. Socket events go into a bounded channel of 128 events; if it fills,
-the socket stops reading. The first message, ``Create`` or ``Join``, is sent
-when the socket opens.
+2048 bytes; native builds refuse ``wss://``) and opens an ``ewebsock``
+socket. Socket events enter a bounded channel of 128 events; if it fills,
+the socket stops reading. On open, the client sends
+``Rooms { version: 5 }``. The first ``Rooms`` reply marks the server
+``Connected``. Create and join use this same connection.
 
 ``poll_network`` runs in ``PreUpdate`` and handles up to 128 events per frame:
 
@@ -177,43 +212,77 @@ when the socket opens.
 
    * - Server message
      - Client reaction
+   * - ``Rooms``
+     - Mark a connecting server connected and replace the public room list.
    * - ``Setup``
-     - Accept only before a match and only once; build the simulation to
-       validate it; reply ``Ready { checksum }``.
+     - Accept only before a match and once per join/create request; validate
+       through ``simulation()`` and reply ``Loaded { checksum }``.
    * - ``Lobby``
-     - Update the room code, slot, counts, and ``can_start``.
+     - Update code, local slot, visibility, names, and readiness. Ignore
+       updates when neither joining nor already in a lobby. An update during
+       a match fails the connection.
    * - ``Started``
-     - Check it matches the setup's player count and a delay of 2; begin the
-       online match.
+     - Require a setup and lobby, matching player count, delay 2, and no
+       running match. Begin online play with the assigned slot.
    * - ``Turn``
-     - Require online mode, at most 128 buffered turns, and the next tick in
-       sequence; buffer it with its hash.
+     - Require online mode, fewer than 128 buffered turns, and the next tick
+       in sequence. Buffer the turn with its hash.
    * - ``Ended``
-     - Stop the session with the reason.
+     - During online play, stop the match and show the reason; keep the
+       connection. In a lobby, clear the lobby and setup, show the reason,
+       and request ``Rooms`` again.
    * - ``Error``
-     - Show the message. The match continues; for example, a late input was
-       rejected.
+     - While connecting, fail the connection with the refusal reason.
+       Otherwise clear ``joining`` and show the error. The match continues.
 
-A socket error, close, decoding failure, unexpected message, or a socket that
-does not open within 10 seconds stops the session the same way.
+A socket error, close, decode failure, unexpected message, or socket that
+fails to open within 10 seconds closes the connection and sets
+``Server::Failed``. A running online match stops with orders disabled.
+Loading the setup and choosing **Ready** are separate steps; see
+:doc:`../reference/protocol`.
 
-Replay files
-------------
+Saved games and library
+-----------------------
 
-``ReplayIo`` keeps platform file access out of the session:
+A saved game is a solo match's ``Replay``. ``Library::load`` calls
+``Replay::from_ron_with_sim`` to verify it once and return both the recording
+and its final ``Sim``. ``Session::resume`` continues from that simulation in
+``Offline`` mode as player 1. Recorded turns remain in the recording and new
+turns append to it. Online matches cannot be saved as games.
 
-* ``save`` writes synchronously: native writes a temporary file and renames
-  it; the browser creates a ``Blob`` and clicks a download link.
-* ``load`` delivers text through a one-slot channel. Native reads the saved
-  file immediately; the browser opens a file picker and reads the chosen file
-  asynchronously. ``finish_replay_load`` picks up the result on a later frame.
+``library.rs`` keeps two shelves: ``saves/`` and ``replays/``. Each record
+contains ``<id>.meta.ron`` and ``<id>.data.ron``. The data is replay RON;
+``RecordMeta`` contains ``name``, ``map``, ``players``, ``ticks``,
+``saved_at`` (Unix milliseconds), and ``setup`` for previews. IDs use
+13-digit millisecond stamps, incremented when necessary to avoid collisions.
+Names use one more than the highest automatic number in use, such as
+**Save 01** or **Replay 03**. Data is written before metadata. Unreadable
+metadata is skipped; records sort newest first.
 
-A loaded replay is refused if a match started in the meantime. Files larger
-than 32 MiB are rejected before they are read.
+``storage.rs`` bounds each document to 32 MiB. Native storage uses
+``$XDG_DATA_HOME/rts``, then ``%LOCALAPPDATA%/rts``, then
+``~/.local/share/rts``. Android uses the app's internal data path. Writes
+use ``<file>.tmp`` followed by rename. Browsers use ``localStorage`` keys
+``rts/<path>``. Values use ``miniz_oxide`` deflate and encode each byte as
+one character in U+0100 through U+01FF.
+
+``ReplayIo`` handles browser import and export only. Import reads a chosen
+file asynchronously through a one-slot channel. ``finish_replay_import``
+validates it and adds it to the replay shelf. Export downloads a stored
+record as ``match.replay.ron``. Native builds expose neither button; their
+records live in the data folder. See :doc:`../guides/replays`.
 
 Leaving
 -------
 
-``Leave`` sends ``Leave`` to the server if the socket is open, closes it,
-archives the recording, sets the mode to ``Idle``, and returns to the lobby.
-The last recording remains available for **Replay last** and **Save replay**.
+The interface confirms leaving a live solo or online match. Stopped matches
+and replay playback leave at once. ``Leave`` archives the recording, sets
+``Idle``, and returns to the menu. The **Last match** replay row offers
+**Watch replay** and **Save to library**.
+
+Leaving an online match sends ``Leave`` while it is live and refreshes
+``Rooms`` if still connected. The server connection stays open. ``LeaveRoom``
+also sends ``Leave`` and requests rooms without disconnecting. Host departure
+closes a waiting room; any departure ends a live match for everyone.
+``Disconnect`` closes the connection. Starting a local game or replay also
+closes it.

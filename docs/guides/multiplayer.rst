@@ -71,19 +71,20 @@ Play through a room
    actor Host
    participant "rts-server" as S
    actor Guest
-   Host -> S : Create room
+   Host -> S : Browse public rooms
+   S --> Host : Available rooms
+   Host -> S : Create room (name, visibility)
    S --> Host : map and rules (binary setup)
-   S --> Host : Room K7Q2PX, 1/2 players, 0 ready
-   Host -> S : Ready (setup checksum)
-   S --> Host : 1/2 players, 1 ready
+   S --> Host : Room K7Q2PX, named player slots
+   Host -> S : Loaded (setup checksum)
+   Host -> S : Ready
    Host ->> Guest : shares code K7Q2PX
-   Guest -> S : Join room K7Q2PX
+   Guest -> S : Join room K7Q2PX (name)
    S --> Guest : map and rules
-   S --> Host : 2/2 players, 1 ready
-   S --> Guest : 2/2 players, 1 ready
+   Guest -> S : Loaded (setup checksum)
    Guest -> S : Ready
-   S --> Host : 2/2 players, 2 ready
-   S --> Guest : 2/2 players, 2 ready
+   S --> Host : Both players ready
+   S --> Guest : Both players ready
    Host -> S : Start match
    S --> Host : Started
    S --> Guest : Started
@@ -93,18 +94,19 @@ Play through a room
    end
    @enduml
 
-1. Every player enters the same server address.
-2. The host chooses **Create room**. The room panel shows the room code,
-   *You are the host, player 1*, and *1 of 2 players joined*.
-3. The host shares the six-character code. Other players type it and choose
-   **Join room**, or press Enter in the code field. Codes are random, but
-   anyone with the code can join while the room waits, so share it only with
-   your players.
-4. Each client loads the server's map and rules, validates them, and confirms
+1. Every player sets **Player name** under **Settings**, then opens
+   **Multiplayer**, enters the same server address, and chooses **Connect**.
+2. In the room browser, the host chooses **+ Create room**, chooses
+   **Public** or **Private**, then **Create room**. Guests select a public
+   room and choose **Join room**, or choose **Join by code** and enter the
+   six-character invite code in the dialog. Private rooms require that code.
+3. Each client loads the server's map and rules, validates them, and confirms
    with a checksum. Room size comes from the number of player starts in the
    server's map (two on *Proving Grounds*).
-5. When the room is full and everyone is ready, the host's **Start match**
-   button becomes available.
+4. Each player chooses **Ready** after loading. **Not ready** clears
+   readiness while waiting. The room shows each player's name and readiness.
+5. The host chooses **Start match** when the room is full and every player has loaded and
+   is ready.
 
 The match runs at 20 ticks per second whether or not anyone sends orders.
 Each order is scheduled two ticks after the latest turn the client has
@@ -112,7 +114,7 @@ received, so orders take effect about 100 ms later plus network latency.
 
 Clients can have different bundled content from the server. The server sends
 its own map and rules, and clients use them for the match. Clients only need
-compatible game code and the same protocol version (currently 4).
+compatible game code and the same protocol version (currently 5).
 
 Leaving and disconnects
 -----------------------
@@ -124,7 +126,7 @@ Leaving and disconnects
    * - Event
      - Result
    * - A guest leaves before the start
-     - Their slot frees and readiness clears; others see the new count.
+     - Their slot frees and load and readiness flags clear; others see the update.
    * - The host leaves before the start
      - The room closes for everyone.
    * - Anyone leaves or disconnects during a match
@@ -134,7 +136,9 @@ Leaving and disconnects
    * - A lobby member stays silent for 30 minutes
      - The server drops it.
 
-Reconnecting and joining a running match are not supported yet.
+Leaving keeps the server connection open. Players can browse, create, or
+join another room on that connection. Recovering a running match after a
+disconnect and joining a running match are not supported yet.
 
 Messages you may see
 --------------------

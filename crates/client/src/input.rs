@@ -14,8 +14,8 @@ use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
     hud::HUD_HEIGHT,
-    lobby::SESSION_BAR_HEIGHT,
     map::TILE_PX,
+    session_bar::SESSION_BAR_HEIGHT,
     units::{SyncUnits, UnitBounds, UnitVisual},
 };
 
@@ -154,6 +154,8 @@ struct ScreenView {
     center: Vec2,
     scale: f32,
     size: Vec2,
+    /// Interface scale; the bars grow with it.
+    ui_scale: f32,
 }
 
 impl ScreenView {
@@ -163,9 +165,11 @@ impl ScreenView {
     }
 
     fn playable(&self, screen: Vec2) -> bool {
-        screen.cmpge(Vec2::new(0.0, SESSION_BAR_HEIGHT)).all()
+        screen
+            .cmpge(Vec2::new(0.0, SESSION_BAR_HEIGHT * self.ui_scale))
+            .all()
             && screen.x < self.size.x
-            && screen.y < self.size.y - HUD_HEIGHT
+            && screen.y < HUD_HEIGHT.mul_add(-self.ui_scale, self.size.y)
     }
 }
 
@@ -179,6 +183,7 @@ fn control_units(
     touches: Res<Touches>,
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
+    ui_scale: Res<UiScale>,
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     visuals: Query<(&UnitVisual, &Transform)>,
 ) {
@@ -189,6 +194,7 @@ fn control_units(
         center: transform.translation.truncate(),
         scale: projection.scale,
         size: window.size(),
+        ui_scale: ui_scale.0,
     };
     selection.units.retain(|id| {
         game.sim
@@ -401,6 +407,7 @@ fn draw_selection(
     game: Res<Match>,
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    ui_scale: Res<UiScale>,
     visuals: Query<(&UnitVisual, &Transform)>,
 ) {
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
@@ -434,6 +441,7 @@ fn draw_selection(
         center: transform.translation.truncate(),
         scale: projection.scale,
         size: window.size(),
+        ui_scale: ui_scale.0,
     };
     if let Some(press) = pointer
         .mouse
@@ -474,6 +482,7 @@ mod tests {
             center: Vec2::new(128.0, -256.0),
             scale: 2.0,
             size: Vec2::new(800.0, 600.0),
+            ui_scale: 1.0,
         };
         assert_eq!(view.world(Vec2::new(400.0, 300.0)), view.center);
         assert_eq!(view.world(Vec2::new(500.0, 200.0)), Vec2::new(328.0, -56.0));
@@ -507,6 +516,7 @@ mod tests {
         app.insert_resource(Time::<()>::default())
             .insert_resource(Match::new(sim, PlayerId(0), true))
             .init_resource::<Selection>()
+            .init_resource::<UiScale>()
             .init_resource::<PointerState>()
             .init_resource::<OrderFeedback>()
             .init_resource::<Touches>()

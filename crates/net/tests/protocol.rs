@@ -73,14 +73,22 @@ fn stop_command() -> Command {
 #[test]
 fn all_wire_messages_roundtrip() {
     for message in [
+        ClientMessage::Rooms {
+            version: PROTOCOL_VERSION,
+        },
+        ClientMessage::Ready { ready: true },
+        ClientMessage::Ready { ready: false },
         ClientMessage::Create {
             version: PROTOCOL_VERSION,
+            name: "Host".to_owned(),
+            public: true,
         },
         ClientMessage::Join {
             version: PROTOCOL_VERSION,
             code: "AB12C3".to_owned(),
+            name: "Guest".to_owned(),
         },
-        ClientMessage::Ready {
+        ClientMessage::Loaded {
             checksum: setup().checksum(),
         },
         ClientMessage::Start,
@@ -96,13 +104,25 @@ fn all_wire_messages_roundtrip() {
         );
     }
     for message in [
+        ServerMessage::Rooms {
+            rooms: vec![room_info()],
+        },
+        ServerMessage::Rooms { rooms: vec![] },
         ServerMessage::Setup(setup()),
         ServerMessage::Lobby {
             code: "AB12C3".to_owned(),
             player: PlayerId(1),
-            players: 2,
-            capacity: 2,
-            ready: 1,
+            public: true,
+            slots: vec![
+                Some(rts_net::LobbySlot {
+                    name: "Host".into(),
+                    ready: true,
+                }),
+                Some(rts_net::LobbySlot {
+                    name: "Guest".into(),
+                    ready: false,
+                }),
+            ],
         },
         ServerMessage::Started {
             players: 2,
@@ -661,4 +681,192 @@ fn binary_setup_rejects_forged_frames_before_client_readiness() {
     // Setup is binary-only; no legacy plaintext or base64 decoder remains.
     assert!(decode_server(&format!("Setup({})", ron::to_string(&setup()).unwrap())).is_err());
     assert!(decode_server("Setup((rules:(len:0,zlib:\"eJwDAAAAAAE=\"),map:(len:0,zlib:\"eJwDAAAAAAE=\"),seed:42,players:2))").is_err());
+}
+
+fn room_info() -> rts_net::RoomInfo {
+    rts_net::RoomInfo {
+        code: "AB12C3".into(),
+        host: "Host".into(),
+        map: "Proving Grounds".into(),
+        players: 1,
+        capacity: 2,
+    }
+}
+
+fn assert_invalid_server(message: &ServerMessage) {
+    assert!(encode_server(message).is_err(), "encoded {message:?}");
+    assert!(
+        decode_server(&ron::to_string(message).unwrap()).is_err(),
+        "decoded {message:?}"
+    );
+}
+
+#[test]
+fn names_validate_unicode_character_limits_whitespace_and_controls() {
+    use rts_net::{MAX_NAME_CHARS, validate_name};
+    for valid in [
+        "A".to_owned(),
+        "Ada Lovelace".into(),
+        "界".repeat(MAX_NAME_CHARS),
+        "🚀".repeat(MAX_NAME_CHARS),
+    ] {
+        assert!(validate_name(&valid).is_ok(), "rejected {valid:?}");
+        for message in [
+            ClientMessage::Create {
+                version: PROTOCOL_VERSION,
+                name: valid.clone(),
+                public: false,
+            },
+            ClientMessage::Join {
+                version: PROTOCOL_VERSION,
+                code: "AB12C3".into(),
+                name: valid,
+            },
+        ] {
+            assert_eq!(
+                decode_client(&encode_client(&message).unwrap()).unwrap(),
+                message
+            );
+        }
+    }
+    for invalid in [
+        String::new(),
+        " ".into(),
+        " Ada".into(),
+        "Ada ".into(),
+        "\u{2003}Ada".into(),
+        "Ada\u{a0}".into(),
+        "A\nB".into(),
+        "A\0B".into(),
+        "A\u{7f}B".into(),
+        "A\u{85}B".into(),
+        "界".repeat(MAX_NAME_CHARS + 1),
+    ] {
+        assert!(validate_name(&invalid).is_err(), "accepted {invalid:?}");
+        for message in [
+            ClientMessage::Create {
+                version: PROTOCOL_VERSION,
+                name: invalid.clone(),
+                public: true,
+            },
+            ClientMessage::Join {
+                version: PROTOCOL_VERSION,
+                code: "AB12C3".into(),
+                name: invalid.clone(),
+            },
+        ] {
+            assert!(encode_client(&message).is_err());
+            assert!(decode_client(&ron::to_string(&message).unwrap()).is_err());
+        }
+        let mut room = room_info();
+        room.host = invalid.clone();
+        assert_invalid_server(&ServerMessage::Rooms { rooms: vec![room] });
+        assert_invalid_server(&ServerMessage::Lobby {
+            code: "AB12C3".into(),
+            player: PlayerId(0),
+            public: true,
+            slots: vec![Some(rts_net::LobbySlot {
+                name: invalid,
+                ready: false,
+            })],
+        });
+    }
+}
+
+#[test]
+fn room_lists_validate_all_fields_counts_and_small_message_limit() {
+    use rts_net::{MAX_LISTED_ROOMS, MAX_MAP_NAME_CHARS};
+    let mut room = room_info();
+    room.map = "界".repeat(MAX_MAP_NAME_CHARS);
+    let maximum = ServerMessage::Rooms {
+        rooms: vec![room.clone(); MAX_LISTED_ROOMS],
+    };
+    assert_eq!(decode_server(&text_frame(&maximum)).unwrap(), maximum);
+    assert_invalid_server(&ServerMessage::Rooms {
+        rooms: vec![room_info(); MAX_LISTED_ROOMS + 1],
+    });
+    for field in 0..8 {
+        let mut room = room_info();
+        match field {
+            0 => room.code = "bad123".into(),
+            1 => room.host = " Host".into(),
+            2 => room.map = "x".repeat(MAX_MAP_NAME_CHARS + 1),
+            3 => room.map = "Map\nName".into(),
+            4 => room.players = 0,
+            5 => room.players = room.capacity + 1,
+            6 => room.capacity = 0,
+            _ => room.capacity = u8::try_from(rts_base::MAX_PLAYERS + 1).unwrap(),
+        }
+        assert_invalid_server(&ServerMessage::Rooms { rooms: vec![room] });
+    }
+    // Full rooms are valid on the wire, though the server does not list them.
+    room.players = 1;
+    room.capacity = 1;
+    room.map.clear();
+    let message = ServerMessage::Rooms { rooms: vec![room] };
+    assert_eq!(decode_server(&text_frame(&message)).unwrap(), message);
+    assert!(
+        decode_server(&format!(
+            "{}{}",
+            text_frame(&message),
+            " ".repeat(MAX_MESSAGE_BYTES)
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn lobby_validates_host_receiver_slot_count_names_and_unknown_fields() {
+    let member = Some(rts_net::LobbySlot {
+        name: "Player".into(),
+        ready: true,
+    });
+    let valid = ServerMessage::Lobby {
+        code: "AB12C3".into(),
+        player: PlayerId(2),
+        public: false,
+        slots: vec![member.clone(), None, member.clone()],
+    };
+    assert_eq!(decode_server(&text_frame(&valid)).unwrap(), valid);
+    for (player, slots) in [
+        (0, vec![]),
+        (0, vec![member.clone(); rts_base::MAX_PLAYERS + 1]),
+        (1, vec![member.clone()]),
+        (0, vec![None]),
+        (1, vec![member.clone(), None]),
+        (1, vec![None, member]),
+    ] {
+        assert_invalid_server(&ServerMessage::Lobby {
+            code: "AB12C3".into(),
+            player: PlayerId(player),
+            public: true,
+            slots,
+        });
+    }
+    for message in [
+        "Rooms(rooms:[(code:\"AB12C3\",host:\"Host\",map:\"Map\",players:1,capacity:2,extra:0)])",
+        "Lobby(code:\"AB12C3\",player:(0),public:true,slots:[Some((name:\"Host\",ready:false,extra:0))])",
+        "Rooms(rooms:[],extra:0)",
+    ] {
+        assert!(decode_server(message).is_err(), "accepted {message}");
+    }
+    for message in [
+        "Rooms(version:5,extra:0)",
+        "Create(version:5,name:\"Host\",public:true,extra:0)",
+        "Join(version:5,code:\"AB12C3\",name:\"Guest\",extra:0)",
+        "Loaded(checksum:0,extra:0)",
+        "Ready(ready:true,extra:0)",
+        "Ready(checksum:0)",
+        "Rooms(version:4)",
+    ] {
+        assert!(decode_client(message).is_err(), "accepted {message}");
+    }
+    assert!(
+        decode_server(&format!(
+            "{}{}",
+            text_frame(&valid),
+            " ".repeat(MAX_MESSAGE_BYTES)
+        ))
+        .is_err()
+    );
 }

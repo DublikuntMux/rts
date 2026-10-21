@@ -30,7 +30,8 @@ settings:
      - Keyboard and edge-scroll speed in screen pixels per second.
    * - ``edge_margin``
      - 8
-     - Width of the window border that scrolls, in logical pixels.
+     - Width of the window border that scrolls, in logical pixels. Zero
+       disables edge scrolling.
    * - ``wheel_zoom_step``
      - 1.15
      - Scale multiplier per wheel line.
@@ -60,9 +61,10 @@ before and after.
 Pointer areas
 -------------
 
-The top 56 pixels (session bar) and bottom 88 pixels (command bar) belong to
-the interface. ``ScreenView::playable`` rejects presses that start or end
-there, so tapping a button never also selects or orders.
+The session bar uses the top 56 logical pixels and the command bar uses the
+bottom 88, before interface scaling. ``ScreenView::playable`` multiplies
+both heights by ``UiScale`` and rejects presses that start or end there,
+so tapping a button never also selects or orders.
 
 Screen positions convert to the world with the camera's ``Transform`` and
 ``Projection`` from this frame rather than ``GlobalTransform``, which is only

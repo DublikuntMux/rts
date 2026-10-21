@@ -7,8 +7,8 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use rts_net::{
-    ClientMessage, MAX_MESSAGE_BYTES, MAX_SERVER_MESSAGE_BYTES, ServerFrame, ServerMessage,
-    decode_client, encode_server,
+    ClientMessage, MAX_MESSAGE_BYTES, MAX_SERVER_MESSAGE_BYTES, NetError, ServerFrame,
+    ServerMessage, decode_client, encode_server,
 };
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -25,7 +25,7 @@ use crate::{ClientId, Config, Coordinator, Delivery};
 
 enum Event {
     Message(ClientId, ClientMessage),
-    Invalid(ClientId),
+    Invalid(ClientId, &'static str),
     Activity(ClientId),
 }
 
@@ -92,8 +92,8 @@ pub async fn serve_with_config(listener: TcpListener, config: Config) -> io::Res
             event = events_rx.recv() => {
                 let deliveries = match event {
                     Some(Event::Message(id, message)) => coordinator.receive(id, message, started.elapsed()),
-                    Some(Event::Invalid(id)) => vec![Delivery { client: id, message: ServerMessage::Error {
-                        message: "invalid or oversized protocol message".into(),
+                    Some(Event::Invalid(id, message)) => vec![Delivery { client: id, message: ServerMessage::Error {
+                        message: message.into(),
                     }}],
                     Some(Event::Activity(id)) => {
                         coordinator.touch(id, started.elapsed());
@@ -173,15 +173,19 @@ async fn connection(
             }
             incoming = socket.next() => {
                 let event = match incoming {
-                    Some(Ok(Message::Text(text))) => decode_client(&text)
-                        .map_or(Event::Invalid(id), |message| Event::Message(id, message)),
+                    Some(Ok(Message::Text(text))) => match decode_client(&text) {
+                        Ok(message) => Event::Message(id, message),
+                        Err(NetError::Invalid(message)) if message == "protocol version does not match" =>
+                            Event::Invalid(id, "protocol version does not match"),
+                        Err(_) => Event::Invalid(id, "invalid or oversized protocol message"),
+                    },
                     Some(Ok(Message::Ping(_) | Message::Pong(_))) => {
                         // Flush tungstenite's automatic pong. A blocked writer cannot retain
                         // a task indefinitely.
                         if !matches!(timeout(config.peer_timeout, socket.flush()).await, Ok(Ok(()))) { return; }
                         Event::Activity(id)
                     }
-                    Some(Ok(Message::Binary(_))) => Event::Invalid(id),
+                    Some(Ok(Message::Binary(_))) => Event::Invalid(id, "invalid or oversized protocol message"),
                     Some(Ok(Message::Frame(_))) => continue,
                     Some(Ok(Message::Close(_)) | Err(_)) | None => return,
                 };

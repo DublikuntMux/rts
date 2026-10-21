@@ -36,8 +36,9 @@ the ``rts`` binary. The first build also packs ``assets/`` into
 Dependencies are optimized even in debug builds (``opt-level = 3``), so the
 first build takes a while and later builds are fast.
 
-The game opens on the lobby. Choose **Play solo** to start a match on the
-bundled *Proving Grounds* map as player 1.
+The game opens on **Singleplayer**. Choose **New game**, select a map,
+then **Start game**. *Proving Grounds* has two players and *Crossroads* has
+four. You control player 1.
 
 Play a few orders
 -----------------
@@ -64,12 +65,15 @@ Start the authoritative server in a second terminal:
 
 It listens on ``ws://127.0.0.1:9001``. Then start two clients:
 
-1. In the first client, keep the server address ``ws://127.0.0.1:9001`` and
-   choose **Create room**. The lobby shows a six-character room code.
-2. In the second client, enter the same address and the room code, then
-   choose **Join room**.
-3. When both players have loaded the server's map and rules, the host's
-   **Start match** button becomes available.
+1. In each client, open **Settings** and enter a player name. Then choose
+   **Multiplayer**, keep ``ws://127.0.0.1:9001``, and choose **Connect**.
+2. In the first client's room browser, choose **+ Create room**, choose
+   **Public**, then **Create room**. The room page shows its invite code.
+3. In the second client, choose **Refresh**, select the public room, then
+   **Join room**. For a private room, choose **Join by code**, enter the
+   invite code, then **Join room**.
+4. Each player chooses **Ready** after loading the server's map and rules.
+   When all slots are filled and ready, the host chooses **Start match**.
 
 The server simulates the match at 20 ticks per second and sends every client
 the same ordered commands. :doc:`guides/multiplayer` covers LAN and Internet
@@ -78,10 +82,12 @@ hosting, and :doc:`architecture/networking` explains how clients stay in sync.
 Save and watch a replay
 -----------------------
 
-During or after a match, choose **Save replay**. Back in the lobby,
-**Replay last** plays the most recent recording, and **Load saved replay**
-opens the saved file. Playback re-simulates every turn and verifies the final
-state. See :doc:`guides/replays`.
+Choose **Save replay** in the match's top bar. After leaving, open
+**Replays**, select the stored recording, and choose **Watch replay**.
+**Last match** also offers **Watch replay** and **Save to library**.
+Playback re-simulates every turn and verifies the final state. **Save**
+in solo play creates a save that **Singleplayer → Load game** can continue.
+See :doc:`guides/replays`.
 
 Run the checks
 --------------

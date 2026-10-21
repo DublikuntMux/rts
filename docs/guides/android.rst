@@ -99,8 +99,20 @@ Like other native clients, Android supports ``ws://`` servers only.
 Storage
 -------
 
-Saved replays go to ``replays/latest.replay.ron`` in the app's internal data
-directory. Uninstalling the app deletes them.
+Saved games use ``saves/`` and the replay library uses ``replays/`` in the
+app's internal data directory. Each record has ``<id>.meta.ron`` and
+``<id>.data.ron`` documents. Settings persist in ``settings.ron`` there too.
+Uninstalling the app deletes this data. See :doc:`replays`.
+
+Menu controls
+-------------
+
+The menu shares the desktop pages and uses a compact rail on narrow screens.
+Tapping the server address, invite code, or player name opens the in-game
+keypad. **Done** commits edits and **Cancel** discards them. **Settings**
+offers interface scale and edge scrolling; fullscreen is controlled by the
+activity. **Copy code** is hidden because Android has no system clipboard
+backend. Replay import and export buttons are browser-only.
 
 Check without a device
 ----------------------

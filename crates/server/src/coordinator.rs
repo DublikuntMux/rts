@@ -1,10 +1,11 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use rand::{RngExt, rngs::StdRng};
-use rts_base::{Command, PlayerId, Sim, TICK_RATE};
+use rts_base::{Command, MapData, PlayerId, Sim, TICK_RATE};
 use rts_net::{
-    ClientMessage, INPUT_DELAY_TICKS, MatchSetup, PROTOCOL_VERSION, PlayerInput, ServerMessage,
-    Turn, encode_client, encode_server, validate_commands,
+    ClientMessage, INPUT_DELAY_TICKS, LobbySlot, MAX_LISTED_ROOMS, MAX_MAP_NAME_CHARS, MatchSetup,
+    PROTOCOL_VERSION, PlayerInput, RoomInfo, ServerMessage, Turn, encode_client, encode_server,
+    validate_commands, validate_name,
 };
 
 /// Connection identity allocated by the socket runtime, never supplied by a client.
@@ -60,9 +61,28 @@ struct Peer {
     last_seen: Duration,
 }
 
+#[derive(Clone)]
+struct Slot {
+    client: ClientId,
+    name: String,
+    loaded: bool,
+    ready: bool,
+}
+
+impl Slot {
+    const fn new(client: ClientId, name: String) -> Self {
+        Self {
+            client,
+            name,
+            loaded: false,
+            ready: false,
+        }
+    }
+}
+
 struct Room {
-    slots: Vec<Option<ClientId>>,
-    ready: Vec<bool>,
+    slots: Vec<Option<Slot>>,
+    public: bool,
     game: Option<Game>,
 }
 
@@ -86,6 +106,7 @@ const CODE_LEN: usize = 6;
 pub struct Coordinator {
     config: Config,
     initial_sim: Option<Sim>,
+    map_name: String,
     peers: BTreeMap<ClientId, Peer>,
     rooms: BTreeMap<String, Room>,
     /// Chooses room codes. Codes admit players to rooms, so seed it from OS entropy.
@@ -98,9 +119,20 @@ impl Coordinator {
     #[must_use]
     pub fn new(config: Config, codes: StdRng) -> Self {
         let initial_sim = config.setup.simulation().ok();
+        let map_name = MapData::from_ron(&config.setup.map).map_or_else(
+            |_| String::new(),
+            |map| {
+                map.name
+                    .chars()
+                    .take(MAX_MAP_NAME_CHARS)
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect()
+            },
+        );
         Self {
             config,
             initial_sim,
+            map_name,
             peers: BTreeMap::new(),
             rooms: BTreeMap::new(),
             codes,
@@ -150,8 +182,17 @@ impl Coordinator {
         }
         self.touch(client, now);
         let result = match message {
-            ClientMessage::Create { version } => self.create(client, version),
-            ClientMessage::Join { version, code } => self.join(client, version, &code),
+            ClientMessage::Rooms { version } => self.list_rooms(client, version),
+            ClientMessage::Create {
+                version,
+                name,
+                public,
+            } => self.create(client, version, name, public),
+            ClientMessage::Join {
+                version,
+                code,
+                name,
+            } => self.join(client, version, &code, name),
             message => self.in_room(client, message, now),
         };
         result.unwrap_or_else(|message| vec![error(client, message)])
@@ -168,13 +209,16 @@ impl Coordinator {
         let Some(mut room) = self.rooms.remove(&code) else {
             return Vec::new();
         };
-        if room.game.is_some() || room.slots[0] == Some(client) {
+        if room.game.is_some()
+            || room.slots[0]
+                .as_ref()
+                .is_some_and(|slot| slot.client == client)
+        {
             return self.end_room(room, "a player disconnected");
         }
-        for (slot, ready) in room.slots.iter_mut().zip(&mut room.ready) {
-            if *slot == Some(client) {
+        for slot in &mut room.slots {
+            if slot.as_ref().is_some_and(|slot| slot.client == client) {
                 *slot = None;
-                *ready = false;
             }
         }
         let messages = lobby(&code, &room);
@@ -233,16 +277,47 @@ impl Coordinator {
         messages
     }
 
-    fn create(&mut self, client: ClientId, version: u32) -> Result<Vec<Delivery>, &'static str> {
+    fn list_rooms(&self, client: ClientId, version: u32) -> Result<Vec<Delivery>, &'static str> {
         self.available(client, version)?;
+        let rooms = self
+            .rooms
+            .iter()
+            .filter(|(_, room)| {
+                room.public && room.game.is_none() && room.slots.iter().any(Option::is_none)
+            })
+            .take(MAX_LISTED_ROOMS)
+            .map(|(code, room)| RoomInfo {
+                code: code.clone(),
+                host: room.slots[0].as_ref().expect("host slot").name.clone(),
+                map: self.map_name.clone(),
+                players: u8::try_from(room.slots.iter().flatten().count())
+                    .expect("bounded player count"),
+                capacity: u8::try_from(room.slots.len()).expect("bounded player count"),
+            })
+            .collect();
+        Ok(vec![Delivery {
+            client,
+            message: ServerMessage::Rooms { rooms },
+        }])
+    }
+
+    fn create(
+        &mut self,
+        client: ClientId,
+        version: u32,
+        name: String,
+        public: bool,
+    ) -> Result<Vec<Delivery>, &'static str> {
+        self.available(client, version)?;
+        validate_name(&name).map_err(|_| "invalid player display name")?;
         if self.rooms.len() >= self.config.max_rooms {
             return Err("server room limit reached");
         }
         let code = self.allocate_code();
         let mut slots = vec![None; usize::from(self.config.setup.players)];
-        slots[0] = Some(client);
+        slots[0] = Some(Slot::new(client, name));
         let room = Room {
-            ready: vec![false; slots.len()],
+            public,
             slots,
             game: None,
         };
@@ -264,8 +339,10 @@ impl Coordinator {
         client: ClientId,
         version: u32,
         code: &str,
+        name: String,
     ) -> Result<Vec<Delivery>, &'static str> {
         self.available(client, version)?;
+        validate_name(&name).map_err(|_| "invalid player display name")?;
         if code.len() != CODE_LEN || !code.bytes().all(|b| CODE_ALPHABET.contains(&b)) {
             return Err("invalid room code");
         }
@@ -278,7 +355,7 @@ impl Coordinator {
             .iter_mut()
             .find(|slot| slot.is_none())
             .ok_or("room is full")?;
-        *slot = Some(client);
+        *slot = Some(Slot::new(client, name));
         self.peers
             .get_mut(&client)
             .expect("registered connection")
@@ -330,14 +407,13 @@ impl Coordinator {
         let slot = room
             .slots
             .iter()
-            .position(|slot| *slot == Some(client))
+            .position(|slot| slot.as_ref().is_some_and(|slot| slot.client == client))
             .expect("room member");
         if matches!(message, ClientMessage::Leave) {
             if slot == 0 || room.game.is_some() {
                 return Ok(self.end_room(room, "a player left the room"));
             }
             room.slots[slot] = None;
-            room.ready[slot] = false;
             self.peers
                 .get_mut(&client)
                 .expect("registered connection")
@@ -352,39 +428,52 @@ impl Coordinator {
             self.rooms.insert(code, room);
             return Ok(messages);
         }
-        let action = if let ClientMessage::Ready { checksum } = message {
-            if room.game.is_some() {
-                Err("match has already started")
-            } else if checksum != self.config.setup.checksum() {
-                Err("setup checksum does not match")
-            } else {
-                room.ready[slot] = true;
-                Ok(lobby(&code, &room))
+        let action = match message {
+            ClientMessage::Loaded { checksum } => {
+                if room.game.is_some() {
+                    Err("match has already started")
+                } else if checksum != self.config.setup.checksum() {
+                    Err("setup checksum does not match")
+                } else {
+                    room.slots[slot].as_mut().expect("room member").loaded = true;
+                    Ok(lobby(&code, &room))
+                }
             }
-        } else {
-            room.receive(slot, message, now, self.initial_sim.as_ref())
+            ClientMessage::Ready { ready } => {
+                let member = room.slots[slot].as_mut().expect("room member");
+                if room.game.is_some() {
+                    Err("match has already started")
+                } else if ready && !member.loaded {
+                    Err("load the match setup first")
+                } else {
+                    member.ready = ready;
+                    Ok(lobby(&code, &room))
+                }
+            }
+            message => room
+                .receive(slot, message, now, self.initial_sim.as_ref())
                 .map(|messages| {
                     if messages
                         .iter()
                         .any(|m| matches!(m, ServerMessage::Started { .. }))
                     {
-                        for &id in room.slots.iter().flatten() {
-                            self.touch(id, now);
+                        for member in room.slots.iter().flatten() {
+                            self.touch(member.client, now);
                         }
                     }
                     messages
                         .into_iter()
                         .flat_map(|m| broadcast(&room, m))
                         .collect()
-                })
+                }),
         };
         self.rooms.insert(code, room);
         action
     }
 
     fn end_room(&mut self, room: Room, reason: &str) -> Vec<Delivery> {
-        for id in room.slots.iter().flatten() {
-            if let Some(peer) = self.peers.get_mut(id) {
+        for member in room.slots.iter().flatten() {
+            if let Some(peer) = self.peers.get_mut(&member.client) {
                 peer.room = None;
             }
         }
@@ -415,8 +504,11 @@ impl Room {
             if self.slots.iter().any(Option::is_none) {
                 return Err("room is not full");
             }
-            if !self.ready.iter().all(|&ready| ready) {
+            if !self.slots.iter().flatten().all(|slot| slot.loaded) {
                 return Err("all players must acknowledge the setup");
+            }
+            if !self.slots.iter().flatten().all(|slot| slot.ready) {
+                return Err("all players must be ready");
             }
             let sim = initial_sim.ok_or("invalid server setup")?.clone();
             let players = u8::try_from(self.slots.len()).expect("bounded player count");
@@ -539,21 +631,27 @@ fn error(client: ClientId, message: &str) -> Delivery {
 }
 
 fn lobby(code: &str, room: &Room) -> Vec<Delivery> {
-    let players = u8::try_from(room.slots.iter().flatten().count()).expect("bounded player count");
-    let capacity = u8::try_from(room.slots.len()).expect("bounded player count");
+    let slots: Vec<_> = room
+        .slots
+        .iter()
+        .map(|slot| {
+            slot.as_ref().map(|slot| LobbySlot {
+                name: slot.name.clone(),
+                ready: slot.ready,
+            })
+        })
+        .collect();
     room.slots
         .iter()
         .enumerate()
-        .filter_map(|(player, &client)| {
-            client.map(|client| Delivery {
-                client,
+        .filter_map(|(player, slot)| {
+            slot.as_ref().map(|slot| Delivery {
+                client: slot.client,
                 message: ServerMessage::Lobby {
                     code: code.to_owned(),
                     player: PlayerId(u8::try_from(player).expect("bounded player count")),
-                    players,
-                    capacity,
-                    ready: u8::try_from(room.ready.iter().filter(|&&ready| ready).count())
-                        .expect("bounded player count"),
+                    public: room.public,
+                    slots: slots.clone(),
                 },
             })
         })
@@ -564,8 +662,8 @@ fn broadcast(room: &Room, message: ServerMessage) -> Vec<Delivery> {
     room.slots
         .iter()
         .flatten()
-        .map(|&client| Delivery {
-            client,
+        .map(|slot| Delivery {
+            client: slot.client,
             message: message.clone(),
         })
         .collect()
@@ -601,7 +699,7 @@ mod tests {
             taken.clone(),
             Room {
                 slots: vec![None],
-                ready: vec![false],
+                public: false,
                 game: None,
             },
         );

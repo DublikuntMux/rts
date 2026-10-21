@@ -100,12 +100,15 @@ servers do not distribute them, and simulation state is unaffected.
 Test a map locally
 ------------------
 
-Solo play always uses the bundled files in ``assets/``. To try a map in solo
-play, edit ``assets/maps/proving_grounds.map.ron`` or
-``assets/data/core.rules.ron`` and run ``cargo run``; the asset pack rebuilds
-automatically. To try a mod without touching the bundled files, run a local
-server with the mod and create a room. A map with a single player start makes
-a one-player room that the host can start immediately.
+Solo play uses the bundled rules in ``assets/data/core.rules.ron`` and maps
+under ``assets/maps/``. Add a ``*.map.ron`` file there and run ``cargo run``;
+the asset pack rebuilds automatically. Valid maps appear in
+**Singleplayer → New game** with previews, sorted by name. Invalid maps are
+logged and skipped. At least one valid map is required to open the menu.
+
+To try a mod without changing bundled files, run a local server with the mod
+and create a room. A single player start makes a one-player room. The host
+chooses **Ready**, then **Start match**.
 
 Validation errors
 -----------------

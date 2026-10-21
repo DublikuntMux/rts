@@ -124,8 +124,8 @@ Crates
        ``*.graphics.ron``.
      - base
    * - ``rts_client``
-     - The game: rendering, input, camera, lobby, match sessions, and
-       replay files. Binary ``rts``; ``cargo run`` starts it.
+     - The game: rendering, input, camera, scene-based menu, match sessions,
+       saved games, replay library, and settings. Binary ``rts``; ``cargo run`` starts it.
      - base, assets, net
    * - ``rts_android``
      - Android ``cdylib`` entry point.

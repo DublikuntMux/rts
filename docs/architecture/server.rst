@@ -97,27 +97,38 @@ Rooms
    @startuml
    skinparam backgroundColor transparent
    [*] --> Waiting : Create (host takes slot 0)
-   Waiting : slots: Vec<Option<ClientId>>
-   Waiting : ready: Vec<bool>
-   Waiting --> Waiting : Join / Ready /\nguest Leave or disconnect
-   Waiting --> Running : host Start,\nroom full, all ready
+   Waiting : public: bool\nslots: Vec<Option<Slot>>
+   Waiting : Slot: client, name, loaded, ready
+   Waiting --> Waiting : Join / Loaded / Ready /\nguest Leave or disconnect
+   Waiting --> Running : host Start,\nroom full, all loaded and ready
    Running : Game { sim, last_input,\ninputs, next_turn }
    Running --> Running : Input, 20 Hz turns
    Waiting --> [*] : host leaves or disconnects
    Running --> [*] : anyone leaves or disconnects,\nsilent socket, or tick overflow
    @enduml
 
-* The room size is the server map's player count.
+* The room size is the server map's player count. Occupied slots store the
+  connection, display name, loaded flag, and ready flag.
+* Connections outside a room can request ``Rooms``. The coordinator walks
+  its ``BTreeMap`` in code order and returns at most 64 public rooms with
+  space that have not started. The listed map name is read from ``MapData``
+  at startup, truncated to 64 characters, with controls replaced by spaces.
+* ``Loaded`` checks the setup checksum. ``Ready { ready: true }`` requires
+  that acknowledgment; players may clear readiness before the start.
+  Lobby updates contain each occupied slot's name and ready flag.
+* Only the host can start a full room where every slot is loaded and ready.
+* A waiting guest's departure frees the slot and clears both flags. An
+  explicit leave sends that guest ``Ended`` and keeps their connection open.
 * Room codes are six characters from ``A``–``Z`` and ``0``–``9``, about
   2.2 billion possibilities. Each character is drawn uniformly from a
   ChaCha-based ``StdRng`` that the runtime seeds from OS entropy at startup,
   so codes cannot be predicted from codes seen earlier. A code that a live
   room already uses is drawn again, so no two rooms share a code. A closed
   room's code may be reused later.
-* A code is the only thing needed to join a waiting room. Share it only with
-  the players you want.
+* Public rooms appear in room lists. Private rooms are joinable only by code,
+  so share a private code only with the players you want.
 * Every member of a room receives ``Ended`` with the reason when the room
-  closes, and their connection becomes free to create or join another room.
+  closes, and their connection becomes free to list, create, or join rooms again.
 * Requests that fail (wrong version, unknown room, not the host, room not
   full, wrong checksum) return ``Error`` and leave state unchanged, so the
   client can retry.

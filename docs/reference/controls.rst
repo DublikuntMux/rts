@@ -3,7 +3,8 @@ Controls
 
 Every action is reachable by touch. No feature depends on hover or on a
 hotkey alone. Pointer input over the session bar (top, 56 logical pixels) or
-the command bar (bottom, 88 logical pixels) never reaches the map.
+the command bar (bottom, 88 logical pixels) never reaches the map. These
+exclusion areas grow with the interface scale.
 
 Desktop
 -------
@@ -33,7 +34,7 @@ Desktop
    * - W A S D or arrow keys
      - Pan the camera.
    * - Pointer at a window edge (8 pixels)
-     - Pan the camera.
+     - Pan the camera when **Edge scrolling** is on.
    * - Middle-drag
      - Pan the camera with the pointer.
    * - Mouse wheel
@@ -85,31 +86,68 @@ Buttons
    * - Clear
      - Command bar
      - Clear the selection.
+   * - Save
+     - Session bar, solo only
+     - Add a save for later continuation through **Singleplayer → Load game**.
    * - Save replay
-     - Session bar, lobby
-     - Save the current or last recording.
+     - Session bar
+     - Add the current recording to the replay library.
    * - Leave
      - Session bar
-     - Return to the lobby; ends an online match for everyone.
-   * - Play solo
-     - Lobby
-     - Start an offline match.
-   * - Create room, Join room
-     - Lobby
-     - Connect to the server address.
+     - Return to the menu. Live solo and online matches ask for confirmation;
+       leaving online ends the match for everyone and keeps the connection.
+   * - New game, Start game
+     - Singleplayer
+     - Open map selection, then start the selected map offline.
+   * - Load save, Delete…
+     - Load game
+     - Continue the selected save, or confirm its deletion.
+   * - Connect, Cancel, Disconnect
+     - Multiplayer
+     - Open or close the server connection.
+   * - Refresh
+     - Room browser
+     - Request the public room list again.
+   * - + Create room, Join room, Join by code
+     - Room browser
+     - Choose visibility and create a room, join the selected room, or enter
+       an invite code in a dialog.
+   * - Ready / Not ready
+     - Room page
+     - Set or clear your explicit readiness.
    * - Start match
-     - Lobby
-     - Host only; available when the room is full and ready.
+     - Room page
+     - Host only; enabled when all slots are filled and ready.
+   * - Copy code
+     - Room page, except Android
+     - Copy the invite code to the system clipboard.
    * - Leave room
-     - Lobby
-     - Leave the room or cancel connecting.
-   * - Replay last, Load saved replay / Load replay
-     - Lobby
-     - Watch a recording.
+     - Room page
+     - Confirm leaving; keep the server connection.
+   * - Watch replay, Save to library
+     - Replays
+     - Watch a selected recording, or save **Last match** persistently.
+   * - Import replay file, Export
+     - Replays, browser only
+     - Add a file to the library, or download a stored replay.
 
-In the lobby, Tab and Shift+Tab move keyboard focus between controls, and
-Enter in the room code field joins the room. In-game bar buttons are not
-focusable, so gameplay keys never activate them.
+Menu keyboard and touch
+-----------------------
+
+Tab and Shift+Tab move focus between menu controls. Focused controls scroll
+into view. Enter in the server address field connects; Enter in the invite
+code field joins. Escape and the compact layout's **Back** button close a
+dropdown first, then a dialog. They return New game or Load game to
+Singleplayer, disconnect from Connecting or Rooms, or ask to leave a lobby.
+
+Touch taps on **Server address**, **Invite code**, and **Player name** open
+the in-game keypad. **Done** commits and **Cancel** discards edits. Mouse
+wheels and touch drags scroll pages. In-game bar buttons stay outside the
+tab order.
+
+**Settings** offers interface scales of 75, 100, 125, and 150 percent,
+**Edge scrolling** on/off, and desktop-only **Fullscreen**. Compact mode
+starts below 760 logical pixels of width after interface scaling.
 
 Camera limits
 -------------

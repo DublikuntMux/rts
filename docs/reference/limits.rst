@@ -60,8 +60,17 @@ Constants are in ``crates/net/src/lib.rs`` unless noted.
      - Value
      - Meaning
    * - ``PROTOCOL_VERSION``
-     - 4
+     - 5
      - Wire, setup, and replay version.
+   * - ``MAX_NAME_CHARS``
+     - 24
+     - Display name characters; no controls or surrounding whitespace.
+   * - ``MAX_MAP_NAME_CHARS``
+     - 64
+     - Listed map name characters; no controls.
+   * - ``MAX_LISTED_ROOMS``
+     - 64
+     - Public waiting rooms in one response, sorted by code.
    * - ``MAX_MESSAGE_BYTES``
      - 64 KiB
      - Client messages and small server messages.
@@ -158,7 +167,7 @@ Client
      - Missing-turn time before the client stops.
    * - Server address
      - 256 characters
-     - Lobby field length; the session accepts up to 2048.
+     - Connect page field length; the session accepts up to 2048.
    * - ``TILE_PX``
      - 128
      - Screen pixels per tile at camera scale 1 (``map.rs``).
@@ -167,7 +176,7 @@ Client
      - Bottom command bar (``hud.rs``).
    * - ``SESSION_BAR_HEIGHT``
      - 56 px
-     - Top session bar (``lobby.rs``).
+     - Top session bar (``session_bar.rs``), before interface scaling.
    * - Touch target
      - 48 px
      - Smallest button side and touch hit diameter.

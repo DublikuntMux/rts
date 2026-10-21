@@ -2,8 +2,11 @@ Map file format
 ===============
 
 A map file (``*.map.ron``) describes the terrain grid, player starts, and
-starting units of one match. The bundled map is
-``assets/maps/proving_grounds.map.ron``. It is parsed by
+starting units of one match. Bundled maps live under ``assets/maps/``:
+``proving_grounds.map.ron`` has two players on 48×32 tiles, and
+``crossroads.map.ron`` has four on 40×40 tiles. Valid ``*.map.ron`` files in
+that folder appear in **Singleplayer → New game** automatically.
+A map is parsed by
 ``rts_base::MapData::from_ron`` and validated against a rules file by
 ``Sim::new`` (``crates/base/src``). The map editor (M7) will write the same
 format.

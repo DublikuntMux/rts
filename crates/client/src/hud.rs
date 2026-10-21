@@ -12,26 +12,11 @@ use crate::{
     font::GameFont,
     game::{AppState, Match},
     input::Selection,
+    menu::widgets::{BAR, EDGE, INK, INK_MUTED, Look, TOUCH_TARGET, Tone, button_look},
 };
 
 /// Height of the HUD bar in logical pixels. World input should ignore pointers over it.
 pub const HUD_HEIGHT: f32 = 88.0;
-
-/// Smallest touch target side, in logical pixels.
-const TOUCH_TARGET: f32 = 48.0;
-
-const BAR: Color = Color::srgba(0.055, 0.094, 0.157, 0.94);
-const BAR_EDGE: Color = Color::srgb(0.204, 0.278, 0.373);
-const INK: Color = Color::srgb(0.886, 0.914, 0.945);
-const INK_MUTED: Color = Color::srgb(0.596, 0.667, 0.753);
-const INK_DISABLED: Color = Color::srgb(0.337, 0.404, 0.490);
-
-/// Fill and border colors for one button state.
-struct Look {
-    fill: Color,
-    edge: Color,
-    ink: Color,
-}
 
 pub struct HudPlugin;
 
@@ -96,7 +81,7 @@ fn spawn_hud(mut commands: Commands, font: Res<GameFont>, selection: Res<Selecti
             ..default()
         },
         BackgroundColor(BAR),
-        BorderColor::all(BAR_EDGE),
+        BorderColor::all(EDGE),
         children![
             (
                 Node {
@@ -159,7 +144,7 @@ fn hud_button(style: ButtonStyle) -> impl Bundle {
             height: px(TOUCH_TARGET),
             padding: UiRect::horizontal(px(12)),
             border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(4)),
+            border_radius: BorderRadius::all(px(2)),
             column_gap: px(6),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
@@ -211,45 +196,11 @@ fn hint(selection: &Selection) -> &'static str {
 }
 
 const fn look(style: ButtonStyle, hovered: bool, pressed: bool, disabled: bool) -> Look {
-    if disabled {
-        return Look {
-            fill: Color::srgb(0.071, 0.114, 0.180),
-            edge: Color::srgb(0.157, 0.212, 0.286),
-            ink: INK_DISABLED,
-        };
-    }
-    match (style, pressed, hovered) {
-        (ButtonStyle::Primary, true, _) => Look {
-            fill: Color::srgb(0.471, 0.592, 0.722),
-            edge: Color::srgb(0.682, 0.776, 0.871),
-            ink: Color::srgb(0.043, 0.078, 0.133),
-        },
-        (ButtonStyle::Primary, false, true) => Look {
-            fill: Color::srgb(0.239, 0.329, 0.447),
-            edge: Color::srgb(0.553, 0.651, 0.765),
-            ink: INK,
-        },
-        (ButtonStyle::Primary, false, false) => Look {
-            fill: Color::srgb(0.180, 0.259, 0.361),
-            edge: Color::srgb(0.369, 0.467, 0.592),
-            ink: INK,
-        },
-        (ButtonStyle::Secondary, true, _) => Look {
-            fill: Color::srgb(0.180, 0.259, 0.361),
-            edge: Color::srgb(0.682, 0.776, 0.871),
-            ink: INK,
-        },
-        (ButtonStyle::Secondary, false, true) => Look {
-            fill: Color::srgb(0.106, 0.161, 0.235),
-            edge: Color::srgb(0.553, 0.651, 0.765),
-            ink: INK,
-        },
-        (ButtonStyle::Secondary, false, false) => Look {
-            fill: Color::NONE,
-            edge: Color::srgb(0.302, 0.392, 0.506),
-            ink: INK_MUTED,
-        },
-    }
+    let tone = match style {
+        ButtonStyle::Primary => Tone::Primary,
+        ButtonStyle::Secondary => Tone::Secondary,
+    };
+    button_look(tone, false, hovered, pressed, disabled)
 }
 
 fn stop_selected(_: On<Activate>, selection: Res<Selection>, mut game: ResMut<Match>) {

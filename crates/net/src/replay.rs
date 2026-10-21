@@ -57,9 +57,18 @@ impl Replay {
     /// # Errors
     /// Returns an error for malformed, excessive or invalid recordings, including corruption.
     pub fn from_ron(text: &str) -> Result<Self, NetError> {
+        Self::from_ron_with_sim(text).map(|(replay, _)| replay)
+    }
+
+    /// Like [`Self::from_ron`], and also returns the verified final simulation, so callers that
+    /// continue the match do not play it back twice.
+    ///
+    /// # Errors
+    /// Returns an error for malformed, excessive or invalid recordings, including corruption.
+    pub fn from_ron_with_sim(text: &str) -> Result<(Self, Sim), NetError> {
         let replay: Self = decode(text, MAX_REPLAY_BYTES)?;
-        replay.playback()?;
-        Ok(replay)
+        let sim = replay.playback()?;
+        Ok((replay, sim))
     }
 
     /// Reconstructs the match and verifies the final state against the recorded hash.

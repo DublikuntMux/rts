@@ -39,6 +39,8 @@ fn create(server: &mut Coordinator, client: u64, setup: &MatchSetup) -> String {
         client,
         ClientMessage::Create {
             version: PROTOCOL_VERSION,
+            name: "Host".to_owned(),
+            public: true,
         },
     );
     assert_eq!(messages.len(), 2);
@@ -47,16 +49,23 @@ fn create(server: &mut Coordinator, client: u64, setup: &MatchSetup) -> String {
     let ServerMessage::Lobby {
         code,
         player,
-        ready,
-        capacity,
+        slots,
+        public,
         ..
     } = &messages[1].message
     else {
         panic!("expected lobby after setup")
     };
     assert_eq!(*player, PlayerId(0));
-    assert_eq!(*ready, 0);
-    assert_eq!(*capacity, setup.players);
+    assert!(*public);
+    assert_eq!(slots.len(), usize::from(setup.players));
+    assert_eq!(
+        slots[0],
+        Some(rts_net::LobbySlot {
+            name: "Host".into(),
+            ready: false
+        })
+    );
     code.clone()
 }
 
@@ -67,6 +76,7 @@ fn join(server: &mut Coordinator, client: u64, code: &str) -> Vec<Delivery> {
         ClientMessage::Join {
             version: PROTOCOL_VERSION,
             code: code.to_owned(),
+            name: "Guest".to_owned(),
         },
     )
 }
@@ -85,13 +95,20 @@ fn lobby() -> (Coordinator, String) {
 }
 
 fn ready(server: &mut Coordinator, client: u64) -> Vec<Delivery> {
-    receive(
+    let loaded = receive(
         server,
         client,
-        ClientMessage::Ready {
+        ClientMessage::Loaded {
             checksum: setup().checksum(),
         },
-    )
+    );
+    if loaded
+        .iter()
+        .any(|d| matches!(d.message, ServerMessage::Error { .. }))
+    {
+        return loaded;
+    }
+    receive(server, client, ClientMessage::Ready { ready: true })
 }
 
 fn running() -> Coordinator {
@@ -143,6 +160,7 @@ fn joins_without_local_checksum_then_ready_requires_matching_setup_and_host_full
             ClientMessage::Join {
                 version: PROTOCOL_VERSION - 1,
                 code: code.clone(),
+                name: "Guest".to_owned(),
             },
         ),
         2,
@@ -154,26 +172,26 @@ fn joins_without_local_checksum_then_ready_requires_matching_setup_and_host_full
     assert_error(&receive(&mut server, 2, ClientMessage::Start), 2);
     assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
     assert_error(
-        &receive(&mut server, 2, ClientMessage::Ready { checksum: 0 }),
+        &receive(&mut server, 2, ClientMessage::Loaded { checksum: 0 }),
         2,
     );
     for delivery in ready(&mut server, 1) {
         assert!(matches!(
             delivery.message,
-            ServerMessage::Lobby { ready: 1, .. }
+            ServerMessage::Lobby { ref slots, .. } if slots.iter().flatten().filter(|s| s.ready).count() == 1
         ));
     }
     assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
     for delivery in ready(&mut server, 1) {
         assert!(matches!(
             delivery.message,
-            ServerMessage::Lobby { ready: 1, .. }
+            ServerMessage::Lobby { ref slots, .. } if slots.iter().flatten().filter(|s| s.ready).count() == 1
         ));
     }
     for delivery in ready(&mut server, 2) {
         assert!(matches!(
             delivery.message,
-            ServerMessage::Lobby { ready: 2, .. }
+            ServerMessage::Lobby { ref slots, .. } if slots.iter().flatten().filter(|s| s.ready).count() == 2
         ));
     }
     assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
@@ -197,10 +215,8 @@ fn readiness_clears_on_departure_and_slots_can_be_reused() {
             && matches!(
                 m.message,
                 ServerMessage::Lobby {
-                    players: 1,
-                    ready: 1,
-                    ..
-                }
+                    ref slots, ..
+                } if slots.iter().flatten().count() == 1 && slots[0].as_ref().unwrap().ready
             )));
         let messages = join(&mut server, 3, &code);
         assert!(messages.iter().any(|m| m.client == 3
@@ -208,9 +224,8 @@ fn readiness_clears_on_departure_and_slots_can_be_reused() {
                 m.message,
                 ServerMessage::Lobby {
                     player: PlayerId(1),
-                    ready: 1,
-                    ..
-                }
+                    ref slots, ..
+                } if slots[0].as_ref().unwrap().ready && !slots[1].as_ref().unwrap().ready
             )));
         assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
         ready(&mut server, 3);
@@ -484,10 +499,11 @@ fn full_room_fan_in_strips_nonexistent_and_forged_unit_selections() {
         receive(
             &mut server,
             id,
-            ClientMessage::Ready {
+            ClientMessage::Loaded {
                 checksum: content.checksum(),
             },
         );
+        receive(&mut server, id, ClientMessage::Ready { ready: true });
     }
     assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 8);
     for id in 1..=8 {
@@ -564,7 +580,9 @@ fn invalid_server_setup_refuses_connections_without_panicking() {
                 &mut server,
                 1,
                 ClientMessage::Create {
-                    version: PROTOCOL_VERSION
+                    version: PROTOCOL_VERSION,
+                    name: "Host".to_owned(),
+                    public: true,
                 }
             )
             .is_empty()
@@ -608,6 +626,8 @@ fn room_connection_limits_and_unique_codes_remain_enforced() {
             1,
             ClientMessage::Create {
                 version: PROTOCOL_VERSION - 1,
+                name: "Host".to_owned(),
+                public: true,
             },
         ),
         1,
@@ -629,6 +649,8 @@ fn room_connection_limits_and_unique_codes_remain_enforced() {
             3,
             ClientMessage::Create {
                 version: PROTOCOL_VERSION,
+                name: "Host".to_owned(),
+                public: true,
             },
         ),
         3,
@@ -636,4 +658,274 @@ fn room_connection_limits_and_unique_codes_remain_enforced() {
     server.disconnect(1);
     let third = create(&mut server, 3, &setup());
     assert_ne!(third, second);
+}
+
+fn rooms(server: &mut Coordinator, client: u64) -> Vec<rts_net::RoomInfo> {
+    let messages = receive(
+        server,
+        client,
+        ClientMessage::Rooms {
+            version: PROTOCOL_VERSION,
+        },
+    );
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].client, client);
+    let ServerMessage::Rooms { rooms } = &messages[0].message else {
+        panic!("expected rooms")
+    };
+    encode_server(&messages[0].message).unwrap();
+    rooms.clone()
+}
+
+fn assert_error_text(messages: &[Delivery], client: u64, expected: &str) {
+    assert_error(messages, client);
+    assert_eq!(
+        messages[0].message,
+        ServerMessage::Error {
+            message: expected.into()
+        }
+    );
+}
+
+#[test]
+fn room_listing_filters_public_waiting_nonfull_rooms_and_keeps_code_order_and_limit() {
+    let content = setup();
+    let mut server = coordinator(Config {
+        setup: content.clone(),
+        ..Config::default()
+    });
+    for id in 1..=80 {
+        assert!(server.connect(id, NOW));
+    }
+    assert_eq!(rooms(&mut server, 80), []);
+    let private = receive(
+        &mut server,
+        1,
+        ClientMessage::Create {
+            version: PROTOCOL_VERSION,
+            name: "Private Host".into(),
+            public: false,
+        },
+    );
+    let ServerMessage::Lobby {
+        code: private_code,
+        public: false,
+        ..
+    } = &private[1].message
+    else {
+        panic!("expected private lobby")
+    };
+    assert_eq!(rooms(&mut server, 80), []);
+    // Private rooms remain joinable by code.
+    assert_eq!(join(&mut server, 2, private_code).len(), 3);
+    let full_code = create(&mut server, 3, &content);
+    join(&mut server, 4, &full_code);
+    let started_code = create(&mut server, 5, &content);
+    join(&mut server, 6, &started_code);
+    ready(&mut server, 5);
+    ready(&mut server, 6);
+    receive(&mut server, 5, ClientMessage::Start);
+    assert_eq!(rooms(&mut server, 80), []);
+    let mut codes: Vec<_> = (7..=76)
+        .map(|id| create(&mut server, id, &content))
+        .collect();
+    codes.sort();
+    let listed = rooms(&mut server, 80);
+    assert_eq!(listed.len(), rts_net::MAX_LISTED_ROOMS);
+    assert_eq!(
+        listed.iter().map(|r| r.code.clone()).collect::<Vec<_>>(),
+        codes[..rts_net::MAX_LISTED_ROOMS]
+    );
+    for room in listed {
+        assert_eq!(room.host, "Host");
+        assert_eq!(room.map, "server");
+        assert_eq!((room.players, room.capacity), (1, 2));
+    }
+    assert_error_text(
+        &receive(
+            &mut server,
+            7,
+            ClientMessage::Rooms {
+                version: PROTOCOL_VERSION,
+            },
+        ),
+        7,
+        "connection is already in a room",
+    );
+    assert_error_text(
+        &receive(
+            &mut server,
+            80,
+            ClientMessage::Rooms {
+                version: PROTOCOL_VERSION - 1,
+            },
+        ),
+        80,
+        "protocol version does not match",
+    );
+}
+
+#[test]
+fn explicit_readiness_requires_loaded_and_all_ready_and_can_be_revoked() {
+    let (mut server, code) = lobby();
+    join(&mut server, 2, &code);
+    assert_error_text(
+        &receive(&mut server, 1, ClientMessage::Ready { ready: true }),
+        1,
+        "load the match setup first",
+    );
+    assert_error_text(
+        &receive(&mut server, 1, ClientMessage::Loaded { checksum: 0 }),
+        1,
+        "setup checksum does not match",
+    );
+    assert_error_text(
+        &receive(&mut server, 1, ClientMessage::Ready { ready: true }),
+        1,
+        "load the match setup first",
+    );
+    for id in 1..=2 {
+        let loaded = receive(
+            &mut server,
+            id,
+            ClientMessage::Loaded {
+                checksum: setup().checksum(),
+            },
+        );
+        for message in loaded {
+            assert!(
+                matches!(message.message, ServerMessage::Lobby { slots, .. } if slots.iter().flatten().all(|s| !s.ready))
+            );
+        }
+    }
+    assert_error_text(
+        &receive(&mut server, 1, ClientMessage::Start),
+        1,
+        "all players must be ready",
+    );
+    receive(&mut server, 1, ClientMessage::Ready { ready: true });
+    assert_error_text(
+        &receive(&mut server, 1, ClientMessage::Start),
+        1,
+        "all players must be ready",
+    );
+    receive(&mut server, 2, ClientMessage::Ready { ready: true });
+    let changed = receive(&mut server, 2, ClientMessage::Ready { ready: false });
+    assert_eq!(changed.len(), 2);
+    for message in changed {
+        assert!(
+            matches!(message.message, ServerMessage::Lobby { slots, .. } if slots[0].as_ref().unwrap().ready && !slots[1].as_ref().unwrap().ready)
+        );
+    }
+    assert_error_text(
+        &receive(&mut server, 1, ClientMessage::Start),
+        1,
+        "all players must be ready",
+    );
+    receive(&mut server, 2, ClientMessage::Ready { ready: true });
+    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
+    assert_error_text(
+        &receive(&mut server, 2, ClientMessage::Ready { ready: false }),
+        2,
+        "match has already started",
+    );
+    assert_error_text(
+        &receive(
+            &mut server,
+            2,
+            ClientMessage::Loaded {
+                checksum: setup().checksum(),
+            },
+        ),
+        2,
+        "match has already started",
+    );
+}
+
+#[test]
+fn guest_leave_can_list_and_rejoin_with_new_name_but_must_load_and_ready_again() {
+    let (mut server, code) = lobby();
+    join(&mut server, 2, &code);
+    ready(&mut server, 1);
+    ready(&mut server, 2);
+    let left = receive(&mut server, 2, ClientMessage::Leave);
+    assert_eq!(left.len(), 2);
+    assert_eq!(left[0].client, 2);
+    assert_eq!(
+        left[0].message,
+        ServerMessage::Ended {
+            reason: "left the room".into()
+        }
+    );
+    assert!(matches!(&left[1].message, ServerMessage::Lobby { slots, .. } if slots[1].is_none()));
+    assert!(server.is_connected(2));
+    assert_eq!(rooms(&mut server, 2)[0].code, code);
+    let joined = receive(
+        &mut server,
+        2,
+        ClientMessage::Join {
+            version: PROTOCOL_VERSION,
+            code,
+            name: "New Guest".into(),
+        },
+    );
+    for message in joined.iter().skip(1) {
+        assert!(
+            matches!(&message.message, ServerMessage::Lobby { slots, .. }
+            if slots[1] == Some(rts_net::LobbySlot { name: "New Guest".into(), ready: false }))
+        );
+    }
+    assert_error_text(
+        &receive(&mut server, 2, ClientMessage::Ready { ready: true }),
+        2,
+        "load the match setup first",
+    );
+    assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
+    ready(&mut server, 2);
+    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
+}
+
+#[test]
+fn host_leave_or_any_match_leave_ends_room_and_all_connections_can_browse_and_create_again() {
+    for started in [false, true] {
+        let (mut server, code) = lobby();
+        join(&mut server, 2, &code);
+        if started {
+            ready(&mut server, 1);
+            ready(&mut server, 2);
+            receive(&mut server, 1, ClientMessage::Start);
+        }
+        let leaving = if started { 2 } else { 1 };
+        assert_ended(&receive(&mut server, leaving, ClientMessage::Leave), 2);
+        for id in 1..=2 {
+            assert!(server.is_connected(id));
+            assert_eq!(rooms(&mut server, id), []);
+        }
+        let new_code = create(&mut server, 2, &setup());
+        assert_eq!(join(&mut server, 1, &new_code).len(), 3);
+    }
+}
+
+#[test]
+fn listed_map_name_is_sanitized_and_truncated_by_character() {
+    let mut content = setup();
+    let name = format!("Map\n{}", "界".repeat(70));
+    content.map = content
+        .map
+        .replace("\"server\"", &format!("\"Map\\n{}\"", "界".repeat(70)));
+    let mut server = coordinator(Config {
+        setup: content.clone(),
+        ..Config::default()
+    });
+    assert!(server.connect(1, NOW));
+    assert!(server.connect(2, NOW));
+    create(&mut server, 1, &content);
+    let listed = rooms(&mut server, 2);
+    assert_eq!(
+        listed[0].map,
+        name.replace('\n', " ")
+            .chars()
+            .take(rts_net::MAX_MAP_NAME_CHARS)
+            .collect::<String>()
+    );
 }

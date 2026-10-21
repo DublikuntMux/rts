@@ -43,7 +43,7 @@ pub struct RtsCamera {
     pub max_scale: f32,
     /// Keyboard and edge-scroll speed, in screen pixels per second.
     pub pan_speed: f32,
-    /// Width of the window border that scrolls the camera, in logical pixels.
+    /// Width of the window border that scrolls the camera, in logical pixels. Zero disables it.
     pub edge_margin: f32,
     /// Scale multiplier per mouse-wheel line.
     pub wheel_zoom_step: f32,
@@ -118,6 +118,7 @@ fn control_camera(
         }
     }
     if window.focused
+        && settings.edge_margin > 0.0
         && touches.iter().next().is_none()
         && !touches.any_just_pressed()
         && !touches.any_just_released()

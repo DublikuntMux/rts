@@ -21,6 +21,7 @@ bevy = { version = "0.20.0", default-features = false, features = [
     "bevy_sprite_render",
     "bevy_ui_render",
     "bevy_ui_widgets",
+    "bevy_clipboard",
     "bevy_gizmos_render",
     "ui_picking",
     "keyboard",
@@ -47,7 +48,7 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "Event", "FileList", "File"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Storage", "Blob", "BlobPropertyBag", "Url", "Event", "FileList", "File"] }
 
 rts_assets = { path = "crates/assets" }
 rts_base = { path = "crates/base" }

@@ -1,4 +1,6 @@
-//! Persistent replay files on native platforms; upload/download through browser APIs on web.
+//! Replay file import and export through browser downloads and file pickers.
+//!
+//! Native builds keep replays in the library folder instead (see `storage`).
 
 use std::sync::{
     Mutex,
@@ -10,6 +12,10 @@ use rts_net::MAX_REPLAY_BYTES;
 
 #[derive(Resource)]
 pub struct ReplayIo {
+    #[cfg_attr(
+        not(any(test, target_arch = "wasm32")),
+        expect(dead_code, reason = "native builds have no file picker")
+    )]
     sender: SyncSender<Result<String, String>>,
     receiver: Mutex<Receiver<Result<String, String>>>,
 }
@@ -35,67 +41,34 @@ impl ReplayIo {
         self.receiver.get_mut().ok()?.try_recv().ok()
     }
 
+    /// Downloads a replay file.
+    ///
+    /// # Errors
+    /// Returns an error when the browser refuses or on platforms without file downloads.
     pub fn save(text: &str) -> Result<String, String> {
         if text.len() > MAX_REPLAY_BYTES {
-            return Err("Replay is too large to save.".into());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let path = replay_path()?;
-            std::fs::create_dir_all(path.parent().ok_or("Cannot locate replay directory.")?)
-                .map_err(|error| format!("Cannot create replay directory: {error}"))?;
-            let temporary = path.with_extension("ron.tmp");
-            std::fs::write(&temporary, text)
-                .map_err(|error| format!("Cannot write replay: {error}"))?;
-            std::fs::rename(&temporary, &path)
-                .map_err(|error| format!("Cannot finish saving replay: {error}"))?;
-            Ok(format!("Replay saved to {}", path.display()))
+            return Err("Replay is too large to export.".into());
         }
         #[cfg(target_arch = "wasm32")]
-        browser::save(text)
+        return browser::save(text);
+        #[cfg(not(target_arch = "wasm32"))]
+        Err("Replay export is only available in the browser.".into())
     }
 
+    /// Opens a file picker; the chosen file arrives through [`Self::take_loaded`].
+    ///
+    /// # Errors
+    /// Returns an error when the picker cannot open or on platforms without one.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        expect(clippy::unused_self, reason = "only browsers have a file picker")
+    )]
     pub fn load(&self) -> Result<String, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use std::io::Read;
-            let path = replay_path()?;
-            let file = std::fs::File::open(&path)
-                .map_err(|error| format!("Cannot open {}: {error}", path.display()))?;
-            let mut text = String::new();
-            file.take((MAX_REPLAY_BYTES + 1) as u64)
-                .read_to_string(&mut text)
-                .map_err(|error| format!("Cannot read replay: {error}"))?;
-            if text.len() > MAX_REPLAY_BYTES {
-                return Err("Replay file is too large.".into());
-            }
-            self.sender
-                .try_send(Ok(text))
-                .map_err(|_| "A replay is already loading.".to_owned())?;
-            Ok("Loading saved replay…".into())
-        }
         #[cfg(target_arch = "wasm32")]
-        browser::load(self.sender.clone())
+        return browser::load(self.sender.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        Err("Replay import is only available in the browser.".into())
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn replay_path() -> Result<std::path::PathBuf, String> {
-    #[cfg(target_os = "android")]
-    let directory = bevy::android::ANDROID_APP
-        .get()
-        .and_then(|app| app.internal_data_path())
-        .ok_or("Cannot locate app storage.")?;
-    #[cfg(not(target_os = "android"))]
-    let directory = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from))
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
-        })
-        .ok_or("Cannot locate replay storage.")?
-        .join("rts");
-    Ok(directory.join("replays/latest.replay.ron"))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -103,12 +76,12 @@ mod browser {
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
 
-    use super::*;
+    use super::{MAX_REPLAY_BYTES, SyncSender};
 
     fn document() -> Result<web_sys::Document, String> {
         web_sys::window()
             .and_then(|window| window.document())
-            .ok_or("Browser document is unavailable.".into())
+            .ok_or_else(|| "Browser document is unavailable.".into())
     }
 
     pub fn save(text: &str) -> Result<String, String> {
@@ -145,7 +118,9 @@ mod browser {
             let Some(file) = picker.files().and_then(|files| files.get(0)) else {
                 return;
             };
-            if file.size() > MAX_REPLAY_BYTES as f64 {
+            #[expect(clippy::cast_precision_loss, reason = "the limit is far below 2^52")]
+            let limit = MAX_REPLAY_BYTES as f64;
+            if file.size() > limit {
                 let _ = sender.try_send(Err("Replay file is too large.".into()));
                 return;
             }
@@ -153,7 +128,11 @@ mod browser {
                 let result = JsFuture::from(file.text())
                     .await
                     .map_err(|_| "Cannot read replay file.".to_owned())
-                    .and_then(|value| value.as_string().ok_or("Replay is not text.".into()));
+                    .and_then(|value| {
+                        value
+                            .as_string()
+                            .ok_or_else(|| "Replay is not text.".into())
+                    });
                 let _ = sender.try_send(result);
             });
         });

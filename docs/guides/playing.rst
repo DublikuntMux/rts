@@ -4,20 +4,33 @@ Play a match
 This page explains what you see in a match and the rules that decide how
 units move. For a compact list of inputs, see :doc:`../reference/controls`.
 
-The lobby
----------
+The main menu
+-------------
 
-The game opens on the lobby. It has three parts:
+The game opens on **Singleplayer**. The sidebar also offers **Multiplayer**,
+**Replays**, **Settings**, and **Quit**. Browsers hide **Quit**.
 
-* **Play solo** starts an offline match on the bundled map. You control
-  player 1; the other player's units stand still.
-* **Online match** creates or joins a room on a server. See
-  :doc:`multiplayer`.
-* **Replays** plays, saves, and loads recordings. See :doc:`replays`.
+* **Singleplayer → New game** lists bundled maps with previews. Choose
+  *Crossroads* (four players, 40×40 tiles) or *Proving Grounds* (two players,
+  48×32 tiles), then **Start game**. You control player 1; other players'
+  units stand still.
+* **Singleplayer → Load game** lists saved solo matches. Filter by map or
+  choose **Most recent** / **Oldest first**, select a save, then **Load save**.
+  **Delete…** asks for confirmation.
+* **Multiplayer** connects to a server, browses rooms, and creates or joins
+  one. See :doc:`multiplayer`.
+* **Replays** browses recorded matches. See :doc:`replays`.
+* **Settings** changes the player name, interface scale, edge scrolling,
+  and desktop fullscreen. Changes persist automatically. An invalid typed
+  name stays visible; rooms use the last valid name until it is corrected.
 
-On short screens the lobby scrolls. On touch screens, tapping the
-**Server address** or **Room code** field opens an in-game keypad with
-**Done** and **Cancel**, because Bevy cannot open the platform keyboard yet.
+The title bar shows your location. Content scrolls, and details wrap below
+lists on narrow screens. Below 760 logical pixels of width, the sidebar
+uses short labels and a **Back** button appears when needed. Interface scale
+also affects this threshold. Escape goes back or closes a dialog or dropdown.
+
+On touch screens, tapping **Server address**, **Invite code**, or
+**Player name** opens the in-game keypad with **Done** and **Cancel**.
 
 The match screen
 ----------------
@@ -31,7 +44,7 @@ The match screen
    skinparam backgroundColor transparent
    scale 1.2
    {+
-     { <b>Solo match | . | . | . | [Save replay] | [Leave] }
+     { <b>Solo | . | . | . | [Save] | [Save replay] | [Leave] }
      { Latest session message }
      ==
      {
@@ -45,14 +58,15 @@ The match screen
    @endsalt
 
 * The **session bar** at the top shows what is running (*Solo match*,
-  *Room K7Q2PX, player 1*, or *Watching replay*) and the latest message, such
-  as *Waiting for the server…*. It has **Save replay** and **Leave**.
+  *Online match*, or *Watching replay*) and the latest message, such
+  as *Waiting for the server…*. **Save** saves a running solo match;
+  **Save replay** adds a recording to the replay library. **Leave** returns
+  to the menu.
 * The **command bar** at the bottom shows how many units are selected, a hint
   for the next action, and the **Stop** and **Clear** buttons. They are
   disabled without a selection, and during replay playback.
 
-Every button is at least 48 logical pixels tall, so the interface works on a
-320-pixel-wide phone screen.
+Buttons are at least 48 logical pixels tall before interface scaling.
 
 Select units
 ------------
@@ -84,7 +98,7 @@ order. :doc:`../architecture/networking` explains why.
 Terrain
 -------
 
-Each terrain type has a speed modifier. On the bundled map:
+Each terrain type has a speed modifier. On the bundled maps:
 
 .. list-table::
    :header-rows: 1
@@ -133,6 +147,10 @@ milestone (see :doc:`../project/roadmap`).
 Leave a match
 -------------
 
-Choose **Leave** to return to the lobby. In an online match, leaving ends the
-match for every player. The recording stays available for **Replay last** and
-**Save replay** until you record another match.
+Choose **Leave** to return to the menu. Live solo and online matches ask for
+confirmation. Leaving solo play loses progress since the last **Save**;
+leaving an online match ends it for everyone and keeps the server connection
+open. Replays and stopped matches leave at once.
+
+The recording remains available under **Replays → Last match**, with
+**Watch replay** and **Save to library**. Save it to keep it across restarts.

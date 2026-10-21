@@ -1,4 +1,8 @@
 //! Match sessions: local delayed input, server-authoritative turns, and replay playback.
+//!
+//! The session owns the server connection. Online play connects first, lists rooms, and then
+//! creates or joins a room on the same connection. [`SessionStatus`] is the read-only view the
+//! interface draws from; the interface changes it only by sending [`SessionAction`]s.
 
 #[cfg(test)]
 mod tests;
@@ -11,74 +15,209 @@ use std::{
 
 use bevy::prelude::*;
 use ewebsock::{WsEvent, WsMessage, WsSender};
-use rts_base::{Command, PlayerId};
+use rts_base::{Command, PlayerId, Sim};
 use rts_net::{
-    ClientMessage, INPUT_DELAY_TICKS, MAX_SERVER_MESSAGE_BYTES, MatchSetup, PROTOCOL_VERSION,
-    PlayerInput, Replay, ServerMessage, Turn, decode_server, decode_server_binary, encode_client,
+    ClientMessage, INPUT_DELAY_TICKS, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
+    PROTOCOL_VERSION, PlayerInput, Replay, RoomInfo, ServerMessage, Turn, decode_server,
+    decode_server_binary, encode_client,
 };
 
 use crate::{
-    game::{AppState, Match, MatchData, PreviousPositions},
+    game::{AppState, MapCatalog, Match, PreviousPositions},
     input::Selection,
+    library::{Library, Shelf},
     replay_io::ReplayIo,
 };
 
-#[derive(Message, Clone)]
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub enum SessionAction {
-    Solo,
-    Host { url: String },
-    Join { url: String, code: String },
+    /// Starts a solo match on a catalog map.
+    NewGame {
+        map: usize,
+    },
+    /// Continues a saved solo match.
+    LoadGame {
+        id: String,
+    },
+    /// Saves the running solo match.
+    SaveGame,
+    Connect {
+        url: String,
+    },
+    Disconnect,
+    RefreshRooms,
+    CreateRoom {
+        name: String,
+        public: bool,
+    },
+    JoinRoom {
+        name: String,
+        code: String,
+    },
+    SetReady(bool),
     Start,
+    LeaveRoom,
+    /// Leaves the running or stopped match for the menu.
     Leave,
-    ReplayLast,
+    WatchReplay {
+        id: String,
+    },
+    /// Watches the most recent match, saved or not.
+    WatchLast,
+    /// Adds the most recent match to the replay library.
     SaveReplay,
-    LoadReplay,
+    Delete {
+        shelf: Shelf,
+        id: String,
+    },
+    /// Adds a replay file chosen by the player (browser only).
+    ImportReplay,
+    /// Downloads a stored replay (browser only).
+    ExportReplay {
+        id: String,
+    },
 }
 
-#[derive(Resource)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "UI availability flags project the session state; Mode is the actual state machine"
-)]
-pub struct SessionStatus {
-    pub message: String,
-    pub room_code: Option<String>,
+/// The server connection as the interface sees it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Server {
+    #[default]
+    Offline,
+    Connecting {
+        url: String,
+    },
+    Connected {
+        url: String,
+    },
+    Failed {
+        url: String,
+        reason: String,
+    },
+}
+
+/// The room this client is in, before its match starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lobby {
+    pub code: String,
+    /// This client's slot.
     pub player: u8,
-    pub joined: u8,
-    pub capacity: u8,
-    pub can_start: bool,
-    pub has_replay: bool,
-    pub running: bool,
-    pub playback: bool,
-    pub busy: bool,
+    pub public: bool,
+    pub slots: Vec<Option<LobbySlot>>,
 }
 
-impl SessionStatus {
-    fn playing(message: &str, playback: bool) -> Self {
-        Self {
-            message: message.into(),
-            running: true,
-            playback,
-            has_replay: true,
-            ..default()
-        }
+impl Lobby {
+    pub const fn is_host(&self) -> bool {
+        self.player == 0
+    }
+
+    pub fn ready(&self) -> bool {
+        self.slots
+            .get(usize::from(self.player))
+            .and_then(Option::as_ref)
+            .is_some_and(|slot| slot.ready)
+    }
+
+    pub fn host(&self) -> &str {
+        self.slots
+            .first()
+            .and_then(Option::as_ref)
+            .map_or("", |slot| slot.name.as_str())
+    }
+
+    pub fn joined(&self) -> usize {
+        self.slots.iter().flatten().count()
+    }
+
+    pub fn all_ready(&self) -> bool {
+        self.slots
+            .iter()
+            .all(|slot| slot.as_ref().is_some_and(|slot| slot.ready))
+    }
+
+    /// The host may start once every slot is filled and ready.
+    pub fn can_start(&self) -> bool {
+        self.is_host() && self.all_ready()
     }
 }
 
-impl Default for SessionStatus {
-    fn default() -> Self {
-        Self {
-            message: "Play solo, or create or join a room.".into(),
-            room_code: None,
-            player: 0,
-            joined: 0,
-            capacity: 0,
-            can_start: false,
-            has_replay: false,
-            running: false,
-            playback: false,
-            busy: false,
-        }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MatchKind {
+    #[default]
+    Solo,
+    Online,
+    Playback,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "interface flags project the session state; Mode is the actual state machine"
+)]
+pub struct SessionStatus {
+    /// The latest result or failure, shown to the player.
+    pub message: String,
+    pub error: bool,
+    pub server: Server,
+    /// Public rooms from the last listing.
+    pub rooms: Vec<RoomInfo>,
+    pub lobby: Option<Lobby>,
+    /// A create or join request awaits the server.
+    pub joining: bool,
+    /// A match is on screen.
+    pub running: bool,
+    /// The match on screen no longer advances or accepts orders.
+    pub stopped: bool,
+    pub kind: MatchKind,
+    /// A recorded match exists: the current one or the last one played.
+    pub has_replay: bool,
+    /// A replay file is being imported.
+    pub importing: bool,
+}
+
+impl SessionStatus {
+    pub fn info(&mut self, message: impl Into<String>) {
+        self.message = message.into();
+        self.error = false;
+    }
+
+    pub fn fail(&mut self, message: impl Into<String>) {
+        self.message = message.into();
+        self.error = true;
+    }
+
+    pub const fn connecting(&self) -> bool {
+        matches!(self.server, Server::Connecting { .. })
+    }
+
+    pub const fn connected(&self) -> bool {
+        matches!(self.server, Server::Connected { .. })
+    }
+
+    /// The solo match on screen can be saved.
+    pub fn can_save_game(&self) -> bool {
+        self.running && !self.stopped && self.kind == MatchKind::Solo
+    }
+
+    /// Clears the match view after leaving it.
+    const fn leave_match(&mut self) {
+        self.running = false;
+        self.stopped = false;
+        self.kind = MatchKind::Solo;
+    }
+
+    fn start_match(&mut self, kind: MatchKind, message: &str) {
+        self.running = true;
+        self.stopped = false;
+        self.kind = kind;
+        self.has_replay = true;
+        self.info(message);
+    }
+
+    fn disconnect(&mut self, server: Server) {
+        self.server = server;
+        self.rooms.clear();
+        self.lobby = None;
+        self.joining = false;
     }
 }
 
@@ -99,6 +238,7 @@ pub struct Session {
     turns: BTreeMap<u32, (Turn, u64)>,
     received_tick: u32,
     online_setup: Option<MatchSetup>,
+    online_players: u8,
     submitted_tick: u32,
     recording: Option<Replay>,
     last_replay: Option<Replay>,
@@ -130,22 +270,29 @@ impl Session {
         player: PlayerId,
         now: f64,
     ) -> Result<Match, String> {
-        self.archive();
         let sim = setup
             .simulation()
             .map_err(|error| format!("Cannot start this map: {error}"))?;
-        self.recording =
-            Some(Replay::new(setup).map_err(|error| format!("Cannot record match: {error}"))?);
+        let recording =
+            Replay::new(setup).map_err(|error| format!("Cannot record match: {error}"))?;
+        self.archive();
+        self.recording = Some(recording);
         self.mode = mode;
         self.last_step = now;
         Ok(Match::new(sim, player, true))
     }
 
+    /// Continues a saved solo match from `sim`, its verified state after the recorded turns.
+    fn resume(&mut self, saved: Replay, sim: Sim, now: f64) -> Match {
+        self.archive();
+        self.recording = Some(saved);
+        self.mode = Mode::Offline;
+        self.last_step = now;
+        Match::new(sim, PlayerId(0), true)
+    }
+
+    /// Watches a replay that is known to be valid: recorded here or verified by the library.
     fn begin_replay(&mut self, replay: Replay, now: f64) -> Result<Match, String> {
-        // Validate imported files before replacing the current session.
-        replay
-            .playback()
-            .map_err(|error| format!("Cannot play replay: {error}"))?;
         let sim = replay
             .setup
             .simulation()
@@ -207,7 +354,8 @@ impl Connection {
     }
 
     fn send(&mut self, message: &ClientMessage) -> Result<(), String> {
-        let text = encode_client(message).map_err(|error| format!("Cannot send input: {error}"))?;
+        let text = encode_client(message)
+            .map_err(|error| format!("Cannot send to the server: {error}"))?;
         self.sender.send(WsMessage::Text(text));
         Ok(())
     }
@@ -217,6 +365,15 @@ impl Connection {
 struct Network(Option<Connection>);
 
 impl Network {
+    /// Sends on the open connection.
+    fn send(&mut self, message: &ClientMessage) -> Result<(), String> {
+        self.0
+            .as_mut()
+            .filter(|connection| connection.opened)
+            .ok_or("Not connected to a server.")?
+            .send(message)
+    }
+
     fn leave(&mut self) {
         if let Some(mut connection) = self.0.take() {
             if connection.opened {
@@ -226,6 +383,10 @@ impl Network {
         }
     }
 }
+
+/// Applies [`SessionAction`]s. Interfaces that send actions run before it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionActions;
 
 pub struct SessionPlugin;
 
@@ -237,7 +398,12 @@ impl Plugin for SessionPlugin {
             .insert_non_send(Network::default())
             .add_message::<SessionAction>()
             .add_systems(PreUpdate, poll_network)
-            .add_systems(Update, (handle_actions, finish_replay_load).chain())
+            .add_systems(
+                Update,
+                (handle_actions, finish_replay_import)
+                    .chain()
+                    .in_set(SessionActions),
+            )
             .add_systems(
                 FixedUpdate,
                 advance_session.run_if(in_state(AppState::InGame)),
@@ -246,10 +412,22 @@ impl Plugin for SessionPlugin {
     }
 }
 
+impl SessionAction {
+    /// Actions that work while a match is on screen. Everything else needs the menu.
+    const fn allowed_in_match(&self) -> bool {
+        matches!(self, Self::Leave | Self::SaveReplay | Self::SaveGame)
+    }
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one match over every session action keeps the transitions in one place"
+)]
 fn handle_actions(
     mut actions: MessageReader<SessionAction>,
     mut commands: Commands,
-    data: Option<Res<MatchData>>,
+    catalog: Option<Res<MapCatalog>>,
+    mut library: ResMut<Library>,
     mut session: ResMut<Session>,
     mut status: ResMut<SessionStatus>,
     mut network: NonSendMut<Network>,
@@ -259,98 +437,201 @@ fn handle_actions(
     state: Res<State<AppState>>,
 ) {
     for action in actions.read() {
-        if (*state.get() != AppState::Menu || status.running)
-            && !matches!(action, SessionAction::Leave | SessionAction::SaveReplay)
-        {
-            status.message = "Leave the current match before starting another.".into();
+        if (*state.get() != AppState::Menu || status.running) && !action.allowed_in_match() {
+            status.fail("Leave the current match first.");
             continue;
         }
-        let Some(data) = &data else {
-            continue;
-        };
         let now = time.elapsed_secs_f64();
+        let mut play = |game: Result<Match, String>,
+                        kind: MatchKind,
+                        message: &str,
+                        status: &mut SessionStatus,
+                        network: &mut Network|
+         -> Result<(), String> {
+            let game = game?;
+            // Local matches do not keep a server connection.
+            network.leave();
+            status.disconnect(Server::Offline);
+            commands.insert_resource(game);
+            next.set(AppState::InGame);
+            status.start_match(kind, message);
+            Ok(())
+        };
         let result = match action {
-            SessionAction::Solo => {
-                network.leave();
-                session
-                    .begin(data.0.clone(), Mode::Offline, PlayerId(0), now)
-                    .map(|game| {
-                        commands.insert_resource(game);
-                        next.set(AppState::InGame);
-                        *status = SessionStatus::playing("Solo match", false);
-                    })
-            }
-            SessionAction::Host { url } | SessionAction::Join { url, .. } => {
-                let hello = if let SessionAction::Join { code, .. } = action {
-                    ClientMessage::Join {
-                        version: PROTOCOL_VERSION,
-                        code: code.trim().to_ascii_uppercase(),
-                    }
-                } else {
-                    ClientMessage::Create {
-                        version: PROTOCOL_VERSION,
-                    }
-                };
-                network.leave();
-                session.online_setup = None;
-                Connection::connect(url, hello, now).map(|connection| {
-                    network.0 = Some(connection);
-                    *status = SessionStatus {
-                        message: "Connecting to server…".into(),
-                        busy: true,
-                        has_replay: session.replay().is_some(),
-                        ..default()
-                    };
+            SessionAction::NewGame { map } => catalog
+                .as_ref()
+                .and_then(|catalog| catalog.0.get(*map))
+                .ok_or_else(|| "This map is not available.".to_owned())
+                .and_then(|map| {
+                    let game = session.begin(map.setup.clone(), Mode::Offline, PlayerId(0), now);
+                    play(
+                        game,
+                        MatchKind::Solo,
+                        "Select units, then give orders.",
+                        &mut status,
+                        &mut network,
+                    )
+                }),
+            SessionAction::LoadGame { id } => {
+                library.load(Shelf::Saves, id).and_then(|(saved, sim)| {
+                    let game = Ok(session.resume(saved, sim, now));
+                    play(
+                        game,
+                        MatchKind::Solo,
+                        "Saved game loaded.",
+                        &mut status,
+                        &mut network,
+                    )
                 })
             }
+            SessionAction::SaveGame => {
+                if status.can_save_game() {
+                    session
+                        .recording
+                        .as_ref()
+                        .ok_or_else(|| "There is nothing to save.".to_owned())
+                        .and_then(|replay| library.add(Shelf::Saves, replay))
+                        .map(|record| status.info(format!("Saved as {}.", record.meta.name)))
+                } else {
+                    Err("Only a running solo match can be saved.".into())
+                }
+            }
+            SessionAction::Connect { url } => {
+                network.leave();
+                Connection::connect(
+                    url,
+                    ClientMessage::Rooms {
+                        version: PROTOCOL_VERSION,
+                    },
+                    now,
+                )
+                .map(|connection| {
+                    network.0 = Some(connection);
+                    status.disconnect(Server::Connecting {
+                        url: url.trim().into(),
+                    });
+                    status.info("");
+                })
+                .inspect_err(|reason| {
+                    status.disconnect(Server::Failed {
+                        url: url.trim().into(),
+                        reason: reason.clone(),
+                    });
+                })
+            }
+            SessionAction::Disconnect => {
+                network.leave();
+                session.online_setup = None;
+                status.disconnect(Server::Offline);
+                status.info("");
+                Ok(())
+            }
+            SessionAction::RefreshRooms => network.send(&ClientMessage::Rooms {
+                version: PROTOCOL_VERSION,
+            }),
+            SessionAction::CreateRoom { name, public } => {
+                session.online_setup = None;
+                network
+                    .send(&ClientMessage::Create {
+                        version: PROTOCOL_VERSION,
+                        name: name.clone(),
+                        public: *public,
+                    })
+                    .map(|()| status.joining = true)
+            }
+            SessionAction::JoinRoom { name, code } => {
+                session.online_setup = None;
+                network
+                    .send(&ClientMessage::Join {
+                        version: PROTOCOL_VERSION,
+                        code: code.trim().to_ascii_uppercase(),
+                        name: name.clone(),
+                    })
+                    .map(|()| status.joining = true)
+            }
+            SessionAction::SetReady(ready) => network.send(&ClientMessage::Ready { ready: *ready }),
             SessionAction::Start => {
-                if status.can_start {
-                    network
-                        .0
-                        .as_mut()
-                        .ok_or_else(|| "Connection is closed.".to_owned())
-                        .and_then(|connection| connection.send(&ClientMessage::Start))
+                if status.lobby.as_ref().is_some_and(Lobby::can_start) {
+                    network.send(&ClientMessage::Start)
+                } else {
+                    Ok(())
+                }
+            }
+            SessionAction::LeaveRoom => {
+                if status.lobby.take().is_some() {
+                    session.online_setup = None;
+                    network.send(&ClientMessage::Leave).and_then(|()| {
+                        network.send(&ClientMessage::Rooms {
+                            version: PROTOCOL_VERSION,
+                        })
+                    })
                 } else {
                     Ok(())
                 }
             }
             SessionAction::Leave => {
-                network.leave();
+                if session.mode == Mode::Online {
+                    // Ends the room on the server; the connection stays for the room list.
+                    let _ = network.send(&ClientMessage::Leave);
+                }
+                if status.kind == MatchKind::Online && status.connected() {
+                    let _ = network.send(&ClientMessage::Rooms {
+                        version: PROTOCOL_VERSION,
+                    });
+                }
                 session.archive();
                 session.mode = Mode::Idle;
                 next.set(AppState::Menu);
-                *status = SessionStatus {
-                    has_replay: session.replay().is_some(),
-                    ..default()
-                };
+                status.leave_match();
+                status.lobby = None;
+                status.has_replay = session.replay().is_some();
                 Ok(())
             }
-            SessionAction::ReplayLast => session.replay().cloned().map_or_else(
-                || Err("There is no recorded match yet.".into()),
-                |replay| {
-                    network.leave();
-                    session.begin_replay(replay, now).map(|game| {
-                        commands.insert_resource(game);
-                        next.set(AppState::InGame);
-                        *status = SessionStatus::playing("Replay playback", true);
-                    })
-                },
-            ),
+            SessionAction::WatchReplay { id } => {
+                library.load(Shelf::Replays, id).and_then(|(replay, _)| {
+                    let game = session.begin_replay(replay, now);
+                    play(
+                        game,
+                        MatchKind::Playback,
+                        "Orders are disabled while watching.",
+                        &mut status,
+                        &mut network,
+                    )
+                })
+            }
+            SessionAction::WatchLast => session
+                .replay()
+                .cloned()
+                .ok_or_else(|| "There is no recorded match yet.".to_owned())
+                .and_then(|replay| {
+                    let game = session.begin_replay(replay, now);
+                    play(
+                        game,
+                        MatchKind::Playback,
+                        "Orders are disabled while watching.",
+                        &mut status,
+                        &mut network,
+                    )
+                }),
             SessionAction::SaveReplay => session
                 .replay()
                 .ok_or_else(|| "There is no recorded match yet.".to_owned())
-                .and_then(|replay| {
-                    replay
-                        .to_ron()
-                        .map_err(|error| format!("Cannot save replay: {error}"))
-                })
+                .and_then(|replay| library.add(Shelf::Replays, replay))
+                .map(|record| status.info(format!("Replay saved as {}.", record.meta.name))),
+            SessionAction::Delete { shelf, id } => {
+                library.delete(*shelf, id).map(|()| status.info("Deleted."))
+            }
+            SessionAction::ImportReplay => io.load().map(|message| {
+                status.importing = true;
+                status.info(message);
+            }),
+            SessionAction::ExportReplay { id } => library
+                .load_text(Shelf::Replays, id)
                 .and_then(|text| ReplayIo::save(&text))
-                .map(|message| status.message = message),
-            SessionAction::LoadReplay => io.load().map(|message| status.message = message),
+                .map(|message| status.info(message)),
         };
         if let Err(error) = result {
-            status.message = error;
-            status.busy = false;
+            status.fail(error);
         }
     }
 }
@@ -394,6 +675,7 @@ fn poll_network(
                     message,
                     &mut session,
                     &mut status,
+                    game.as_deref_mut(),
                     &mut commands,
                     &mut next,
                     now,
@@ -413,17 +695,31 @@ fn poll_network(
     }
     if let Some(reason) = failure {
         network.leave();
-        session.mode = Mode::Stopped;
-        if let Some(game) = game.as_mut() {
-            game.accepts_orders = false;
-            game.pending.clear();
+        session.online_setup = None;
+        if session.mode == Mode::Online {
+            stop_match(&mut session, &mut status, game.as_deref_mut());
         }
-        status.message = reason;
-        status.busy = false;
-        if !status.running {
-            status.room_code = None;
-        }
-        status.can_start = false;
+        let url = match &status.server {
+            Server::Connecting { url } | Server::Connected { url } | Server::Failed { url, .. } => {
+                url.clone()
+            }
+            Server::Offline => String::new(),
+        };
+        status.disconnect(Server::Failed {
+            url,
+            reason: reason.clone(),
+        });
+        status.fail(reason);
+    }
+}
+
+/// Freezes an online match that can no longer continue. The player can still save its replay.
+fn stop_match(session: &mut Session, status: &mut SessionStatus, game: Option<&mut Match>) {
+    session.mode = Mode::Stopped;
+    status.stopped = true;
+    if let Some(game) = game {
+        game.accepts_orders = false;
+        game.pending.clear();
     }
 }
 
@@ -442,6 +738,7 @@ fn receive_message(
     message: ServerMessage,
     session: &mut Session,
     status: &mut SessionStatus,
+    game: Option<&mut Match>,
     commands: &mut Commands,
     next: &mut NextState<AppState>,
     now: f64,
@@ -456,25 +753,34 @@ fn receive_message(
                 .map_err(|error| format!("Invalid server configuration: {error}"))?;
             let checksum = setup.checksum();
             session.online_setup = Some(setup);
-            return Ok(Some(ClientMessage::Ready { checksum }));
+            return Ok(Some(ClientMessage::Loaded { checksum }));
+        }
+        ServerMessage::Rooms { rooms } => {
+            if let Server::Connecting { url } = &status.server {
+                status.server = Server::Connected { url: url.clone() };
+            }
+            status.rooms = rooms;
         }
         ServerMessage::Lobby {
             code,
             player,
-            players,
-            capacity,
-            ready,
+            public,
+            slots,
         } => {
             if status.running {
                 return Err("Unexpected lobby update during a match.".into());
             }
-            status.message = format!("Room {code}: {players}/{capacity} players, {ready} ready");
-            status.room_code = Some(code);
-            status.player = player.0;
-            status.joined = players;
-            status.capacity = capacity;
-            status.can_start = player.0 == 0 && players == capacity && ready == capacity;
-            status.busy = false;
+            if status.lobby.is_none() && !status.joining {
+                // An update for a room this client already left.
+                return Ok(None);
+            }
+            status.joining = false;
+            status.lobby = Some(Lobby {
+                code,
+                player: player.0,
+                public,
+                slots,
+            });
         }
         ServerMessage::Started {
             players,
@@ -484,38 +790,65 @@ fn receive_message(
                 .online_setup
                 .take()
                 .ok_or("Server configuration is not loaded.")?;
-            if status.running
-                || status.room_code.is_none()
-                || players != setup.players
-                || input_delay != INPUT_DELAY_TICKS
-            {
+            let lobby = status
+                .lobby
+                .take()
+                .ok_or("Server started a match outside a room.")?;
+            if status.running || players != setup.players || input_delay != INPUT_DELAY_TICKS {
                 return Err("Server started an incompatible match.".into());
             }
-            let game = session.begin(setup, Mode::Online, PlayerId(status.player), now)?;
+            let game = session.begin(setup, Mode::Online, PlayerId(lobby.player), now)?;
+            session.online_players = players;
             commands.insert_resource(game);
             next.set(AppState::InGame);
-            status.message = format!("Online match (player {})", status.player + 1);
-            status.running = true;
-            status.can_start = false;
-            status.has_replay = true;
+            status.start_match(
+                MatchKind::Online,
+                &format!("You are player {}.", lobby.player + 1),
+            );
         }
         ServerMessage::Turn { turn, hash } => {
             if session.mode != Mode::Online || session.turns.len() >= 128 {
                 return Err("Unexpected or excessive turn data.".into());
             }
-            turn.validate(session.received_tick + 1, status.capacity)
+            turn.validate(session.received_tick + 1, session.online_players)
                 .map_err(|error| format!("Invalid turn: {error}"))?;
             session.received_tick = turn.tick;
             session.turns.insert(turn.tick, (turn, hash));
         }
-        ServerMessage::Ended { reason } => return Err(reason),
+        ServerMessage::Ended { reason } => {
+            if session.mode == Mode::Online {
+                stop_match(session, status, game);
+                status.fail(format!("The match ended: {reason}."));
+            } else if status.lobby.take().is_some() {
+                session.online_setup = None;
+                status.fail(format!("The room closed: {reason}."));
+                return Ok(Some(ClientMessage::Rooms {
+                    version: PROTOCOL_VERSION,
+                }));
+            }
+        }
         ServerMessage::Error { message } => {
+            if status.connecting() {
+                // The server refused this client before listing rooms, e.g. a version mismatch.
+                return Err(format!("The server refused the connection: {message}."));
+            }
             // Request rejection (for example, late input) does not end the server match.
-            status.message = message;
-            status.busy = false;
+            status.joining = false;
+            status.fail(capitalize(&message));
         }
     }
     Ok(None)
+}
+
+fn capitalize(message: &str) -> String {
+    let mut chars = message.chars();
+    chars.next().map_or_else(String::new, |first| {
+        let mut text: String = first.to_uppercase().chain(chars).collect();
+        if !text.ends_with('.') {
+            text.push('.');
+        }
+        text
+    })
 }
 
 fn advance_session(
@@ -534,12 +867,13 @@ fn advance_session(
         &mut network,
         time.elapsed_secs_f64(),
     ) {
-        network.leave();
-        session.mode = Mode::Stopped;
-        game.accepts_orders = false;
-        game.pending.clear();
+        if session.mode == Mode::Online {
+            network.leave();
+            status.disconnect(Server::Offline);
+        }
+        stop_match(&mut session, &mut status, Some(&mut game));
         previous.0.clear();
-        status.message = reason;
+        status.fail(reason);
     }
 }
 
@@ -614,7 +948,7 @@ fn advance(
                         return Err("The server stopped responding. Play has stopped.".into());
                     }
                     if now - session.last_step > 0.25 {
-                        status.message = "Waiting for the server…".into();
+                        status.info("Waiting for the server…");
                     }
                     return Ok(());
                 };
@@ -641,8 +975,9 @@ fn advance(
                         return Err("Replay ended with a different match state.".into());
                     }
                     session.mode = Mode::Stopped;
+                    status.stopped = true;
                     previous.0.clear();
-                    status.message = "Replay finished and verified.".into();
+                    status.info("Replay finished and verified.");
                     return Ok(());
                 };
                 turn.clone()
@@ -666,7 +1001,7 @@ fn advance(
             );
         }
         if status.message.starts_with("Waiting for") {
-            status.message = format!("Online match (player {})", game.local_player.0 + 1);
+            status.info(format!("You are player {}.", game.local_player.0 + 1));
         }
     }
     if let Some(recording) = &mut session.recording {
@@ -678,35 +1013,23 @@ fn advance(
     Ok(())
 }
 
-fn finish_replay_load(
-    mut commands: Commands,
+fn finish_replay_import(
     mut io: ResMut<ReplayIo>,
-    mut session: ResMut<Session>,
+    mut library: ResMut<Library>,
     mut status: ResMut<SessionStatus>,
-    mut network: NonSendMut<Network>,
-    mut next: ResMut<NextState<AppState>>,
-    time: Res<Time>,
-    state: Res<State<AppState>>,
 ) {
-    if let Some(result) = io.take_loaded() {
-        if *state.get() != AppState::Menu || status.running {
-            status.message = "Leave the current match before loading a replay.".into();
-            return;
-        }
-        let result = result
-            .and_then(|text| {
-                Replay::from_ron(&text).map_err(|error| format!("Cannot load replay: {error}"))
-            })
-            .and_then(|replay| session.begin_replay(replay, time.elapsed_secs_f64()));
-        match result {
-            Ok(game) => {
-                network.leave();
-                commands.insert_resource(game);
-                next.set(AppState::InGame);
-                *status = SessionStatus::playing("Replay playback", true);
-            }
-            Err(error) => status.message = error,
-        }
+    let Some(result) = io.take_loaded() else {
+        return;
+    };
+    status.importing = false;
+    let result = result
+        .and_then(|text| {
+            Replay::from_ron(&text).map_err(|error| format!("Cannot import replay: {error}"))
+        })
+        .and_then(|replay| library.add(Shelf::Replays, &replay));
+    match result {
+        Ok(record) => status.info(format!("Imported as {}.", record.meta.name)),
+        Err(error) => status.fail(error),
     }
 }
 

@@ -2,7 +2,7 @@ Graphics format
 ===============
 
 ``assets/data/client.graphics.ron`` configures local presentation. It is
-loaded and validated by ``rts_assets::Graphics`` before the lobby opens,
+loaded and validated by ``rts_assets::Graphics`` before the main menu opens,
 then kept across solo, online, and replay sessions. It does not travel in
 match setup or replays and does not affect simulation hashes.
 

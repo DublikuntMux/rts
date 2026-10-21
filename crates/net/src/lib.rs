@@ -13,7 +13,10 @@ pub use replay::{MAX_REPLAY_BYTES, MAX_REPLAY_TURNS, Replay};
 pub use rts_base::INPUT_DELAY_TICKS;
 pub use setup::{MAX_SETUP_BYTES, MatchSetup};
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
+pub const MAX_NAME_CHARS: usize = 24;
+pub const MAX_MAP_NAME_CHARS: usize = 64;
+pub const MAX_LISTED_ROOMS: usize = 64;
 /// Maximum client message and small server message size.
 pub const MAX_MESSAGE_BYTES: usize = 65_536;
 /// One bounded input per player, plus turn framing and authoritative hash overhead.
@@ -115,12 +118,48 @@ impl Turn {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ClientMessage {
-    Create { version: u32 },
-    Join { version: u32, code: String },
-    Ready { checksum: u64 },
+    Rooms {
+        version: u32,
+    },
+    Create {
+        version: u32,
+        name: String,
+        public: bool,
+    },
+    Join {
+        version: u32,
+        code: String,
+        name: String,
+    },
+    Loaded {
+        checksum: u64,
+    },
+    Ready {
+        ready: bool,
+    },
     Start,
-    Input { tick: u32, commands: Vec<Command> },
+    Input {
+        tick: u32,
+        commands: Vec<Command>,
+    },
     Leave,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomInfo {
+    pub code: String,
+    pub host: String,
+    pub map: String,
+    pub players: u8,
+    pub capacity: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LobbySlot {
+    pub name: String,
+    pub ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,12 +167,14 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     #[serde(skip)]
     Setup(MatchSetup),
+    Rooms {
+        rooms: Vec<RoomInfo>,
+    },
     Lobby {
         code: String,
         player: PlayerId,
-        players: u8,
-        capacity: u8,
-        ready: u8,
+        public: bool,
+        slots: Vec<Option<LobbySlot>>,
     },
     Started {
         players: u8,
@@ -205,7 +246,7 @@ pub(crate) fn validate_players(players: u8) -> Result<(), NetError> {
 
 pub(crate) fn validate_version(version: u32) -> Result<(), NetError> {
     if version != PROTOCOL_VERSION {
-        return Err(NetError::invalid("unsupported protocol version"));
+        return Err(NetError::invalid("protocol version does not match"));
     }
     Ok(())
 }
@@ -223,6 +264,22 @@ fn validate_code(code: &str) -> Result<(), NetError> {
     Ok(())
 }
 
+/// Validates a display name without normalizing or changing it.
+///
+/// # Errors
+/// Returns an error for empty names, more than 24 characters, control characters,
+/// or leading or trailing whitespace.
+pub fn validate_name(name: &str) -> Result<(), NetError> {
+    if name.is_empty()
+        || name.chars().count() > MAX_NAME_CHARS
+        || name.chars().any(char::is_control)
+        || name.trim() != name
+    {
+        return Err(NetError::invalid("invalid player display name"));
+    }
+    Ok(())
+}
+
 fn validate_tick(tick: u32) -> Result<(), NetError> {
     if tick == 0 {
         return Err(NetError::invalid("turn tick must be positive"));
@@ -233,16 +290,25 @@ fn validate_tick(tick: u32) -> Result<(), NetError> {
 impl ClientMessage {
     fn validate(&self) -> Result<(), NetError> {
         match self {
-            Self::Create { version } => validate_version(*version),
-            Self::Join { version, code, .. } => {
+            Self::Rooms { version } => validate_version(*version),
+            Self::Create { version, name, .. } => {
                 validate_version(*version)?;
-                validate_code(code)
+                validate_name(name)
+            }
+            Self::Join {
+                version,
+                code,
+                name,
+            } => {
+                validate_version(*version)?;
+                validate_code(code)?;
+                validate_name(name)
             }
             Self::Input { tick, commands } => {
                 validate_tick(*tick)?;
                 validate_commands(commands)
             }
-            Self::Ready { .. } | Self::Start | Self::Leave => Ok(()),
+            Self::Loaded { .. } | Self::Ready { .. } | Self::Start | Self::Leave => Ok(()),
         }
     }
 }
@@ -259,18 +325,42 @@ impl ServerMessage {
     fn validate(&self) -> Result<(), NetError> {
         match self {
             Self::Setup(setup) => setup.simulation().map(|_| ()),
+            Self::Rooms { rooms } => {
+                if rooms.len() > MAX_LISTED_ROOMS {
+                    return Err(NetError::invalid("too many listed rooms"));
+                }
+                for room in rooms {
+                    validate_code(&room.code)?;
+                    validate_name(&room.host)?;
+                    validate_players(room.capacity)?;
+                    if room.players == 0 || room.players > room.capacity {
+                        return Err(NetError::invalid("invalid listed room players"));
+                    }
+                    if room.map.chars().count() > MAX_MAP_NAME_CHARS
+                        || room.map.chars().any(char::is_control)
+                    {
+                        return Err(NetError::invalid("invalid map name"));
+                    }
+                }
+                Ok(())
+            }
             Self::Lobby {
                 code,
                 player,
-                players,
-                capacity,
-                ready,
+                slots,
+                ..
             } => {
                 validate_code(code)?;
-                validate_players(*players)?;
-                validate_players(*capacity)?;
-                if players > capacity || player.0 >= *capacity || ready > players {
+                if slots.is_empty()
+                    || slots.len() > MAX_PLAYERS
+                    || usize::from(player.0) >= slots.len()
+                    || slots[0].is_none()
+                    || slots[usize::from(player.0)].is_none()
+                {
                     return Err(NetError::invalid("invalid lobby slots"));
+                }
+                for slot in slots.iter().flatten() {
+                    validate_name(&slot.name)?;
                 }
                 Ok(())
             }

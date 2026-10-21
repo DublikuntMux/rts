@@ -36,14 +36,22 @@ Targets
      - ``ewebsock`` native, ``ws://``
      - Browser WebSocket, ``ws://`` and ``wss://``
      - ``ewebsock`` native, ``ws://``
-   * - Replay save
-     - ``latest.replay.ron`` in the data directory
-     - Download ``match.replay.ron``
+   * - Saves, replay library, settings
+     - Documents in the platform data directory
+     - Compressed documents in ``localStorage``
      - Internal app storage
-   * - Replay load
-     - Read the saved file
-     - File picker
-     - Read the saved file
+   * - Replay import/export buttons
+     - Hidden; records live in the data folder
+     - File picker / download ``match.replay.ron``
+     - Hidden
+   * - Copy invite code
+     - System clipboard
+     - System clipboard
+     - Hidden; no system clipboard backend
+   * - Fullscreen setting / Quit
+     - Both available
+     - Both hidden
+     - Fullscreen hidden; Quit available
    * - Server
      - ``rts-server`` binary
      - Stub only
@@ -62,11 +70,13 @@ Where platform code lives
      - How ``assets.pack`` is opened.
    * - ``session.rs`` ``Connection::connect``
      - Native builds refuse ``wss://``.
+   * - ``storage.rs``
+     - Native data paths, Android internal storage, and browser
+       ``localStorage`` through ``web-sys``.
    * - ``replay_io.rs``
-     - Native file paths, Android internal storage, and browser ``Blob``
-       download and file input via ``web-sys``.
-   * - ``lobby.rs``
-     - The replay load button label.
+     - Browser ``Blob`` downloads and file input through ``web-sys``.
+   * - ``menu/pages.rs`` and ``settings.rs``
+     - Platform visibility for import, export, clipboard, fullscreen, and Quit.
    * - ``rts_server`` ``lib.rs`` and ``main.rs``
      - Runtime and binary compiled only for non-``wasm32`` targets.
    * - ``crates/android``

@@ -7,7 +7,7 @@ drawn feeds back into it. Code lives in ``crates/client/src/map.rs`` and
 ``units.rs`` (including ``units/layout.rs``).
 
 Local presentation settings live in ``assets/data/client.graphics.ron`` and
-are installed as the ``Graphics`` resource before the lobby opens. Player
+are installed as the ``Graphics`` resource before the main menu opens. Player
 colors, selection and order markers, and terrain detail thresholds come from
 this file. See :doc:`../reference/graphics-format` for fields and validation.
 

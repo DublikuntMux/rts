@@ -82,6 +82,8 @@ async fn create(host: &mut Client) -> (String, MatchSetup) {
         host,
         &ClientMessage::Create {
             version: PROTOCOL_VERSION,
+            name: "Host".to_owned(),
+            public: true,
         },
     )
     .await;
@@ -91,13 +93,14 @@ async fn create(host: &mut Client) -> (String, MatchSetup) {
     let ServerMessage::Lobby {
         code,
         player: PlayerId(0),
-        players: 1,
-        ready: 0,
+        slots,
         ..
     } = receive(host).await
     else {
         panic!("expected host lobby")
     };
+    assert_eq!(slots.iter().flatten().count(), 1);
+    assert!(!slots[0].as_ref().unwrap().ready);
     (code, setup)
 }
 
@@ -107,6 +110,7 @@ async fn join(host: &mut Client, guest: &mut Client, code: &str) -> MatchSetup {
         &ClientMessage::Join {
             version: PROTOCOL_VERSION,
             code: code.to_owned(),
+            name: "Guest".to_owned(),
         },
     )
     .await;
@@ -117,35 +121,37 @@ async fn join(host: &mut Client, guest: &mut Client, code: &str) -> MatchSetup {
         receive(host).await,
         ServerMessage::Lobby {
             player: PlayerId(0),
-            players: 2,
-            ..
-        }
+            ref slots, ..
+        } if slots.iter().flatten().count() == 2
     ));
     assert!(matches!(
         receive(guest).await,
         ServerMessage::Lobby {
             player: PlayerId(1),
-            players: 2,
-            ..
-        }
+            ref slots, ..
+        } if slots.iter().flatten().count() == 2
     ));
     setup
 }
 
 async fn ready(host: &mut Client, guest: &mut Client, checksum: u64) {
-    send(host, &ClientMessage::Ready { checksum }).await;
-    for client in [&mut *host, &mut *guest] {
-        assert!(matches!(
-            receive(client).await,
-            ServerMessage::Lobby { ready: 1, .. }
-        ));
-    }
-    send(guest, &ClientMessage::Ready { checksum }).await;
-    for client in [&mut *host, &mut *guest] {
-        assert!(matches!(
-            receive(client).await,
-            ServerMessage::Lobby { ready: 2, .. }
-        ));
+    for host_turn in [true, false] {
+        let sender = if host_turn { &mut *host } else { &mut *guest };
+        send(sender, &ClientMessage::Loaded { checksum }).await;
+        for client in [&mut *host, &mut *guest] {
+            assert!(matches!(receive(client).await, ServerMessage::Lobby { .. }));
+        }
+        let sender = if host_turn { &mut *host } else { &mut *guest };
+        send(sender, &ClientMessage::Ready { ready: true }).await;
+        for client in [&mut *host, &mut *guest] {
+            let ServerMessage::Lobby { slots, .. } = receive(client).await else {
+                panic!("expected lobby")
+            };
+            assert_eq!(
+                slots.iter().flatten().filter(|s| s.ready).count(),
+                if host_turn { 1 } else { 2 }
+            );
+        }
     }
 }
 
@@ -254,6 +260,7 @@ async fn readiness_is_required_and_invalid_joins_or_starts_remain_retryable() {
         &ClientMessage::Join {
             version: PROTOCOL_VERSION,
             code,
+            name: "Guest".to_owned(),
         },
     )
     .await;
@@ -262,7 +269,7 @@ async fn readiness_is_required_and_invalid_joins_or_starts_remain_retryable() {
     expect_error(&mut host).await;
     send(
         &mut guest,
-        &ClientMessage::Ready {
+        &ClientMessage::Loaded {
             checksum: setup.checksum() ^ 1,
         },
     )
@@ -287,11 +294,8 @@ async fn runtime_clock_has_no_initial_turn_and_runs_without_input_even_with_slow
     ready(&mut host, &mut guest, setup.checksum()).await;
     let started = Instant::now();
     start(&mut host, &mut guest).await;
-    assert!(
-        timeout(Duration::from_millis(20), receive(&mut host))
-            .await
-            .is_err()
-    );
+    // Reading Started from both sockets can itself take a tick. Measure turn
+    // timing from the request instead; coordinator tests cover the exact boundary.
     for tick in 1..=6 {
         let message = receive(&mut host).await;
         assert_eq!(message, receive(&mut guest).await);
@@ -399,10 +403,8 @@ async fn guest_disconnect_updates_lobby_and_oversized_client_input_ends_match() 
     assert!(matches!(
         receive(&mut host).await,
         ServerMessage::Lobby {
-            players: 1,
-            ready: 0,
-            ..
-        }
+            ref slots, ..
+        } if slots.iter().flatten().count() == 1 && !slots[0].as_ref().unwrap().ready
     ));
     let mut guest = server.connect().await;
     join(&mut host, &mut guest, &code).await;
@@ -458,4 +460,104 @@ async fn invalid_setup_and_resource_limits_fail_before_accepting_connections() {
         let error = serve_with_config(listener, config).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
+}
+
+#[tokio::test]
+async fn room_browsing_and_leaving_reuse_the_same_websocket_connections() {
+    let server = Server::new(Config::default()).await;
+    let (mut host, mut guest) = (server.connect().await, server.connect().await);
+    guest
+        .send(Message::Text("Rooms(version:4)".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        receive(&mut guest).await,
+        ServerMessage::Error {
+            message: "protocol version does not match".into()
+        }
+    );
+    send(
+        &mut guest,
+        &ClientMessage::Rooms {
+            version: PROTOCOL_VERSION,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut guest).await,
+        ServerMessage::Rooms { rooms: vec![] }
+    );
+    let (code, _) = create(&mut host).await;
+    send(
+        &mut guest,
+        &ClientMessage::Rooms {
+            version: PROTOCOL_VERSION,
+        },
+    )
+    .await;
+    let ServerMessage::Rooms { rooms } = receive(&mut guest).await else {
+        panic!("expected rooms")
+    };
+    assert_eq!(rooms.len(), 1);
+    assert_eq!(rooms[0].code, code);
+    assert_eq!(rooms[0].host, "Host");
+    join(&mut host, &mut guest, &code).await;
+    send(
+        &mut guest,
+        &ClientMessage::Rooms {
+            version: PROTOCOL_VERSION,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut guest).await,
+        ServerMessage::Error {
+            message: "connection is already in a room".into()
+        }
+    );
+    send(&mut guest, &ClientMessage::Ready { ready: true }).await;
+    assert_eq!(
+        receive(&mut guest).await,
+        ServerMessage::Error {
+            message: "load the match setup first".into()
+        }
+    );
+    send(&mut guest, &ClientMessage::Leave).await;
+    assert_eq!(
+        receive(&mut guest).await,
+        ServerMessage::Ended {
+            reason: "left the room".into()
+        }
+    );
+    assert!(
+        matches!(receive(&mut host).await, ServerMessage::Lobby { slots, .. } if slots[1].is_none())
+    );
+    send(
+        &mut guest,
+        &ClientMessage::Rooms {
+            version: PROTOCOL_VERSION,
+        },
+    )
+    .await;
+    assert!(
+        matches!(receive(&mut guest).await, ServerMessage::Rooms { rooms } if rooms.len() == 1)
+    );
+    join(&mut host, &mut guest, &code).await;
+    send(&mut host, &ClientMessage::Leave).await;
+    for client in [&mut host, &mut guest] {
+        assert!(matches!(receive(client).await, ServerMessage::Ended { .. }));
+        send(
+            client,
+            &ClientMessage::Rooms {
+                version: PROTOCOL_VERSION,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(client).await,
+            ServerMessage::Rooms { rooms: vec![] }
+        );
+    }
+    let (code, _) = create(&mut guest).await;
+    join(&mut guest, &mut host, &code).await;
 }

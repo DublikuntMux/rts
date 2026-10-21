@@ -1,70 +1,91 @@
-Record and watch replays
-========================
+Save games and watch replays
+=============================
 
-Every match is recorded automatically. A replay stores the match setup (map,
-rules, seed, and player count) and every turn applied, so playback
-re-simulates the whole match rather than storing positions. Playback checks
-that it reaches the same final state hash as the original match.
+Every solo and online match records its setup and turns automatically.
+Playback re-simulates those turns and verifies the final state hash. Online
+recordings include only turns whose hash matches the server's.
 
-Record a match
---------------
+Save and load a game
+---------------------
 
-Recording starts when a solo or online match starts. Each applied turn is
-appended together with the resulting state hash. Online clients record only
-turns whose hash matched the server's.
-
-Leaving a match keeps the recording in memory as the *last replay* until
-another match starts. Starting a new match replaces it.
+Choose **Save** in the top bar of a running solo match. Each save adds
+a record such as **Save 01**. From the menu, choose **Singleplayer → Load
+game**, select a record, and choose **Load save**. Loading verifies the
+recorded turns and continues from their final state. The recording keeps
+growing. Online games cannot be saved for continuation.
 
 Save a replay
--------------
+--------------
 
-Choose **Save replay** in the session bar during a match, or in the lobby
-afterwards. The game re-simulates the recording to verify it before writing.
+Choose **Save replay** in the session bar to add the current recording to
+the replay library. After leaving, open **Replays**, select **Last match**,
+and choose **Save to library**. Automatic names such as **Replay 01** use
+one more than the highest number in use.
+
+**Last match** holds the current or last recording in memory. It is not a
+persistent library entry. Save it before closing the app or recording another
+match.
+
+Browse and watch
+-----------------
+
+**Replays** lists saved recordings. **All maps** can filter by map;
+**Most recent** and **Oldest first** change the order. **Last match** appears
+when a recording exists and no map filter is active. Select a row and choose
+**Watch replay**. Stored records show a map preview and duration;
+**Delete…** asks for confirmation.
+
+Loading a record checks its version, setup, turn sequence, limits, and final
+hash before starting playback. Playback runs at 20 ticks per second. The
+session bar shows *Watching replay*, and order buttons stay disabled. At the
+end it shows *Replay finished and verified.* **Leave** returns at once.
+
+Storage
+--------
+
+Saves and replays use separate ``saves/`` and ``replays/`` shelves. Each
+record has two documents: ``<id>.meta.ron`` for listing and previews, and
+``<id>.data.ron`` for replay data. IDs are 13-digit millisecond stamps. Each
+save creates a record; it does not replace the previous save.
 
 .. list-table::
    :header-rows: 1
    :widths: 25 75
 
    * - Platform
-     - Saved file
+     - Storage root
    * - Linux
-     - ``$XDG_DATA_HOME/rts/replays/latest.replay.ron``, falling back to
-       ``~/.local/share/rts/replays/latest.replay.ron``.
+     - ``$XDG_DATA_HOME/rts``, falling back to ``~/.local/share/rts``.
    * - Windows
-     - ``%LOCALAPPDATA%/rts/replays/latest.replay.ron``, unless
-       ``XDG_DATA_HOME`` is set.
+     - ``%LOCALAPPDATA%/rts``, unless ``XDG_DATA_HOME`` is set.
    * - Android
-     - ``replays/latest.replay.ron`` inside the app's internal data
-       directory.
+     - The app's internal data directory.
    * - Other native platforms
      - ``$XDG_DATA_HOME``, then ``LOCALAPPDATA``, then ``~/.local/share``,
-       followed by ``rts/replays/latest.replay.ron``.
+       followed by ``rts/``.
    * - Browser
-     - A download named ``match.replay.ron``.
+     - This site's ``localStorage``, with keys prefixed by ``rts/``.
 
-Native saves write a temporary ``latest.replay.ron.tmp`` file and rename it
-over the previous replay, so a failed write never leaves a truncated file.
-Each save replaces the previous one; copy the file elsewhere to keep it.
+Native writes use a temporary ``<file>.tmp`` and rename it to finish.
+Browser documents use deflate compression. Storage refuses documents over
+32 MiB and reports unavailable or full storage. Browser storage belongs to
+the site and browser profile; clearing site data removes saves, replays,
+and settings.
 
-Watch a replay
---------------
+Import and export
+------------------
 
-From the lobby:
+In browsers, **Import replay file** opens a picker and adds a verified RON
+recording to the library. Select a stored replay and choose **Export** to
+download ``match.replay.ron``. **Save replay** stores locally; use **Export**
+to keep a separate file.
 
-* **Replay last** plays the in-memory recording.
-* **Load saved replay** (native) opens ``latest.replay.ron``.
-* **Load replay** (browser) opens a file picker for a ``.ron`` file.
-
-The game validates a loaded file completely before it replaces the current
-session: it checks the format version, setup, turn sequence, and limits, then
-re-simulates every turn and compares the final hash. Playback then runs at 20
-ticks per second. The session bar shows *Watching replay*, and order buttons
-stay disabled. When the last turn is applied, the bar shows
-*Replay finished and verified.*
+Native and Android builds have no import or export buttons. Native records
+are in the storage folder above. Keep both metadata and data documents when
+copying a library record. The data document is plain replay RON.
 
 Errors
-------
+-------
 
 .. list-table::
    :header-rows: 1
@@ -74,18 +95,18 @@ Errors
      - Meaning
    * - *There is no recorded match yet.*
      - Play a match first.
-   * - *Cannot load replay: final replay hash mismatch*
-     - The file was edited or recorded by an incompatible simulation.
-   * - *Cannot load replay: unsupported protocol version*
-     - The replay comes from an older or newer protocol version. Replays are
-       tied to the protocol version (currently 4).
+   * - *Cannot load: final replay hash mismatch*
+     - The recording is edited or uses an incompatible simulation.
+   * - *Cannot load: unsupported protocol version*
+     - The recording uses a different protocol version. The current version
+       is 5.
    * - *Replay file is too large.*
-     - The file exceeds 32 MiB.
+     - The imported file exceeds 32 MiB.
 
 Inspect a replay
-----------------
+-----------------
 
-Replays are plain RON text. Online replays contain the server's minified map
-and rules as strings, so you can see exactly what was played. Terrain textures
-are not included; they are local presentation assets.
-:doc:`../reference/replay-format` documents the file layout.
+Replay data is plain RON text. Online replays embed the server's minified map
+and rules as strings. Textures stay local. See
+:doc:`../reference/replay-format` for the format and
+:doc:`../architecture/sessions` for library storage details.
