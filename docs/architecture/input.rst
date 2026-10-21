@@ -137,9 +137,9 @@ Finishing a press
      if (Shift held?) then (no)
        :clear selection;
      endif
-     :add own units whose displayed\ncenter is inside the box;
+     :add own units whose displayed center\nis inside, or custom bounds intersect the box;
    else (no)
-     :find the nearest own unit within\nmax(radius, 8 px mouse / 24 px touch);
+     :find the nearest own unit hit by its displayed\ncircle or custom bounds (with minimum hit area);
      if (unit hit?) then (yes)
        if (Shift held and already selected?) then (yes)
          :remove it;
@@ -158,9 +158,13 @@ Finishing a press
    stop
    @enduml
 
-Hit tests use displayed (interpolated) positions. The touch minimum of
-24 pixels radius gives a 48-pixel target. Ties go to the nearer unit, then the
-lower ``UnitId``.
+Hit tests use displayed (interpolated) positions, visual scale, and bounds
+offsets. Custom ``visual_bounds`` use rectangular click targets and box
+intersection; default circle visuals retain radius tests and selection by
+center. Minimum half-extents are 8 screen pixels for the mouse and 24 for
+touch, so the touch target is at least 48 pixels across. Ties go to the
+nearer bounds center, then the lower ``UnitId``. See :doc:`rendering` and
+:doc:`../reference/rules-format`.
 
 Issuing orders
 --------------

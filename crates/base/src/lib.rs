@@ -23,7 +23,7 @@ pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
-pub use rules::{Rules, SPEED_SCALE, TerrainDef, TerrainId, UnitDef, UnitKind};
+pub use rules::{Rules, SPEED_SCALE, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds};
 
 use crate::hash::StateHasher;
 use crate::movement::MoveOrder;

@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 
 use crate::{
-    LoadError,
-    coords::{de_speed_modifier, de_tiles},
+    IVec2, LoadError,
+    coords::{de_speed_modifier, de_tile_pos, de_tiles},
 };
 
 /// Fixed-point terrain speed multiplier representing normal speed.
@@ -56,12 +56,27 @@ pub struct UnitDef {
     /// Tile capacity consumed by this unit.
     pub size: u16,
     pub max_health: i32,
-    /// Collision radius in world units (written in tiles).
+    /// Nominal drawing radius in world units (written in tiles).
     #[serde(deserialize_with = "de_tiles")]
     pub radius: i32,
+    /// Optional drawing bounds. When absent, the client uses a centered diameter from `radius`.
+    #[serde(default)]
+    pub visual_bounds: Option<VisualBounds>,
     /// Movement speed in world units per second (written in tiles per second).
     #[serde(deserialize_with = "de_tiles")]
     pub speed: i32,
+}
+
+/// Drawing bounds in world units, independent of simulation movement and tile capacity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisualBounds {
+    /// Center offset from the unit position (written as a decimal tile pair).
+    #[serde(deserialize_with = "de_tile_pos")]
+    pub offset: IVec2,
+    /// Positive width and height (written as a decimal tile pair).
+    #[serde(deserialize_with = "de_tile_pos")]
+    pub size: IVec2,
 }
 
 /// Index of a terrain type in [`Rules`].
@@ -132,6 +147,14 @@ impl Rules {
                     unit.id
                 )));
             }
+            if let Some(bounds) = unit.visual_bounds
+                && (bounds.size.x <= 0 || bounds.size.y <= 0)
+            {
+                return Err(LoadError::invalid(format!(
+                    "unit `{}` visual_bounds size dimensions must be positive",
+                    unit.id
+                )));
+            }
         }
         Ok(())
     }
@@ -180,6 +203,131 @@ mod tests {
     use super::*;
 
     const TERRAIN: &str = r##"(id: "grass", symbol: 'g', speed_modifier: 1.0, color: "#00ff00")"##;
+
+    fn rules_with_visual_bounds(field: &str) -> Result<Rules, LoadError> {
+        Rules::from_ron(&format!(
+            r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", size: 1, max_health: 40, radius: 0.25, speed: 1.25, {field})])"#
+        ))
+    }
+
+    #[test]
+    fn visual_bounds_default_to_none_and_accept_explicit_none() {
+        for field in ["", "visual_bounds: None"] {
+            let rules = rules_with_visual_bounds(field).unwrap();
+            assert_eq!(rules.unit(UnitKind(0)).visual_bounds, None);
+        }
+    }
+
+    #[test]
+    fn parses_visual_bounds_as_fixed_point_tile_pairs() {
+        for (offset, size, expected_offset, expected_size) in [
+            (
+                "(0.1, -0.2)",
+                "(0.75, 0.5)",
+                IVec2::new(102, -205),
+                IVec2::new(768, 512),
+            ),
+            ("(0, 0)", "(1, 2)", IVec2::ZERO, IVec2::new(1024, 2048)),
+            (
+                "(-0.0001, 5e-324)",
+                "(0.0009765625, 0.00048828125)",
+                IVec2::ZERO,
+                IVec2::ONE,
+            ),
+            (
+                "(-2097151.9990234375, 2097151.9990234375)",
+                "(2097151.9990234375, 0.0009765625)",
+                IVec2::new(-i32::MAX, i32::MAX),
+                IVec2::new(i32::MAX, 1),
+            ),
+        ] {
+            let rules = rules_with_visual_bounds(&format!(
+                "visual_bounds: Some((offset: {offset}, size: {size}))"
+            ))
+            .unwrap();
+            assert_eq!(
+                rules.unit(UnitKind(0)).visual_bounds,
+                Some(VisualBounds {
+                    offset: expected_offset,
+                    size: expected_size,
+                }),
+                "offset: {offset}, size: {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn visual_bounds_size_dimensions_must_be_positive_after_conversion() {
+        for value in ["0", "-1", "0.0001", "-0.0001", "5e-324"] {
+            for size in [format!("({value}, 1)"), format!("(1, {value})")] {
+                let error = rules_with_visual_bounds(&format!(
+                    "visual_bounds: Some((offset: (0, 0), size: {size}))"
+                ))
+                .unwrap_err();
+                assert!(matches!(error, LoadError::Invalid(_)), "{size}: {error}");
+                let message = error.to_string();
+                assert!(message.contains("worker"), "{message}");
+                assert!(message.contains("visual_bounds size"), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_nonfinite_visual_bounds_components() {
+        for value in [
+            "2097152.0",
+            "-2097152.0",
+            "1e20",
+            "-1e20",
+            "NaN",
+            "inf",
+            "-inf",
+        ] {
+            for pair in [format!("({value}, 1)"), format!("(1, {value})")] {
+                for (offset, size) in [(pair.as_str(), "(1, 1)"), ("(0, 0)", pair.as_str())] {
+                    let error = rules_with_visual_bounds(&format!(
+                        "visual_bounds: Some((offset: {offset}, size: {size}))"
+                    ))
+                    .unwrap_err();
+                    assert!(
+                        matches!(error, LoadError::Parse(_)),
+                        "offset: {offset}, size: {size}: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn visual_bounds_require_both_fields_and_reject_unknown_fields() {
+        for (fields, expected) in [
+            ("", "offset"),
+            ("offset: (0, 0)", "size"),
+            ("size: (1, 1)", "offset"),
+            ("offset: (0, 0), size: (1, 1), extra: 1", "extra"),
+        ] {
+            let error =
+                rules_with_visual_bounds(&format!("visual_bounds: Some(({fields}))")).unwrap_err();
+            assert!(matches!(error, LoadError::Parse(_)), "{error}");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_visual_bounds_pairs() {
+        for pair in ["()", "(1,)", "(1, 2, 3)", "(true, 1)"] {
+            for (offset, size) in [(pair, "(1, 1)"), ("(0, 0)", pair)] {
+                let error = rules_with_visual_bounds(&format!(
+                    "visual_bounds: Some((offset: {offset}, size: {size}))"
+                ))
+                .unwrap_err();
+                assert!(
+                    matches!(error, LoadError::Parse(_)),
+                    "offset: {offset}, size: {size}: {error}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn parses_terrain_speed_modifiers_as_q10() {

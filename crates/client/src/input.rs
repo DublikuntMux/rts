@@ -14,8 +14,8 @@ use crate::{
     game::{AppState, Match},
     hud::HUD_HEIGHT,
     lobby::SESSION_BAR_HEIGHT,
-    map::{TILE_PX, to_world_distance},
-    units::{SyncUnits, UnitVisual},
+    map::TILE_PX,
+    units::{SyncUnits, UnitBounds, UnitVisual},
 };
 
 const SELECTION_COLOR: Color = Color::srgb(0.95, 0.83, 0.45);
@@ -308,8 +308,16 @@ fn finish_press(
                 game.sim
                     .unit(visual.0)
                     .filter(|unit| {
-                        unit.owner == game.local_player
-                            && rect.contains(transform.translation.truncate())
+                        if unit.owner != game.local_player {
+                            return false;
+                        }
+                        let definition = game.sim.rules().unit(unit.kind);
+                        let bounds = UnitBounds::from_definition(definition).world_rect(transform);
+                        if definition.visual_bounds.is_some() {
+                            rect.min.cmple(bounds.max).all() && rect.max.cmpge(bounds.min).all()
+                        } else {
+                            rect.contains(bounds.center())
+                        }
                     })
                     .map(|_| visual.0)
             }));
@@ -321,10 +329,21 @@ fn finish_press(
                 if unit.owner != game.local_player {
                     return None;
                 }
-                let distance = position.distance_squared(transform.translation.truncate());
-                let radius = to_world_distance(game.sim.rules().unit(unit.kind).radius)
-                    .max(if touch { 24.0 } else { 8.0 } * view.scale);
-                (distance <= radius * radius).then_some((visual.0, distance))
+                let definition = game.sim.rules().unit(unit.kind);
+                let bounds = UnitBounds::from_definition(definition).world_rect(transform);
+                let distance = position.distance_squared(bounds.center());
+                let minimum = if touch { 24.0 } else { 8.0 } * view.scale;
+                let hit = if definition.visual_bounds.is_some() {
+                    Rect::from_center_half_size(
+                        bounds.center(),
+                        bounds.half_size().max(Vec2::splat(minimum)),
+                    )
+                    .contains(position)
+                } else {
+                    let radius = (bounds.width() / 2.0).max(minimum);
+                    distance <= radius * radius
+                };
+                hit.then_some((visual.0, distance))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
             .map(|hit| hit.0);
@@ -391,14 +410,21 @@ fn draw_selection(
         if selection.units.contains(&visual.0)
             && let Some(unit) = game.sim.unit(visual.0)
         {
-            gizmos.circle_2d(
-                transform.translation.truncate(),
-                4.0_f32.mul_add(
-                    projection.scale,
-                    to_world_distance(game.sim.rules().unit(unit.kind).radius),
-                ),
-                SELECTION_COLOR,
-            );
+            let definition = game.sim.rules().unit(unit.kind);
+            let bounds = UnitBounds::from_definition(definition).world_rect(transform);
+            if definition.visual_bounds.is_some() {
+                gizmos.rect_2d(
+                    Isometry2d::from_translation(bounds.center()),
+                    bounds.size() + Vec2::splat(8.0 * projection.scale),
+                    SELECTION_COLOR,
+                );
+            } else {
+                gizmos.circle_2d(
+                    bounds.center(),
+                    4.0_f32.mul_add(projection.scale, bounds.width() / 2.0),
+                    SELECTION_COLOR,
+                );
+            }
         }
     }
     let view = ScreenView {
@@ -583,6 +609,76 @@ mod tests {
         );
         click(&mut app, Vec2::new(464.0, 236.0));
         assert!(app.world().resource::<Selection>().units.is_empty());
+    }
+
+    #[test]
+    fn selection_uses_displayed_offset_and_scaled_radius() {
+        let mut app = test_app();
+        let hash = app.world().resource::<Match>().sim.state_hash();
+        for (visual, mut transform) in app
+            .world_mut()
+            .query::<(&UnitVisual, &mut Transform)>()
+            .iter_mut(app.world_mut())
+        {
+            if visual.0 == UnitId(0) {
+                transform.translation = Vec3::new(128.0, -128.0, 1.0);
+                transform.scale = Vec3::new(0.5, 0.5, 1.0);
+            }
+        }
+        // The displayed center is (272, 172); the original radius must no longer hit.
+        click(&mut app, Vec2::new(302.0, 172.0));
+        assert!(app.world().resource::<Selection>().units.is_empty());
+        click(&mut app, Vec2::new(280.0, 172.0));
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            BTreeSet::from([UnitId(0)])
+        );
+        // Its simulation center is no longer clickable or included by a drag there.
+        mouse_event(&mut app, Vec2::new(320.0, 220.0), MouseButton::Left, true);
+        mouse_event(&mut app, Vec2::new(350.0, 250.0), MouseButton::Left, false);
+        assert!(app.world().resource::<Selection>().units.is_empty());
+        mouse_event(&mut app, Vec2::new(255.0, 155.0), MouseButton::Left, true);
+        mouse_event(&mut app, Vec2::new(290.0, 190.0), MouseButton::Left, false);
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            BTreeSet::from([UnitId(0)])
+        );
+        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    }
+
+    #[test]
+    fn custom_bounds_use_offset_and_rectangle_for_click_and_box_selection() {
+        let mut app = test_app();
+        let rules = Rules::from_ron(
+            &include_str!("../../../assets/data/core.rules.ron").replace(
+                "radius: 0.3,",
+                "radius: 0.3, visual_bounds: Some((offset: (0.25, -0.125), size: (0.75, 0.125))),",
+            ),
+        )
+        .unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "bounds", players: [(start: (0.5,0.5))], tiles: ["....","...."],
+            units: [(kind:"worker",owner:0,pos:(1.5,1.5))])"#,
+        )
+        .unwrap();
+        app.world_mut().resource_mut::<Match>().sim = Sim::new(rules, &map).unwrap();
+        let hash = app.world().resource::<Match>().sim.state_hash();
+        // Root: (336,236), footprint center: (368,220), half-size: (48,8).
+        click(&mut app, Vec2::new(411.0, 220.0));
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            BTreeSet::from([UnitId(0)])
+        );
+        click(&mut app, Vec2::new(350.0, 240.0));
+        assert!(app.world().resource::<Selection>().units.is_empty());
+        // A box intersecting only the footprint edge still selects this sprite.
+        mouse_event(&mut app, Vec2::new(410.0, 210.0), MouseButton::Left, true);
+        mouse_event(&mut app, Vec2::new(425.0, 230.0), MouseButton::Left, false);
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            BTreeSet::from([UnitId(0)])
+        );
+        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
     }
 
     #[test]

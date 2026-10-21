@@ -1,11 +1,16 @@
 //! Unit rendering from simulation state.
 
+mod layout;
+
 use bevy::{platform::collections::HashMap, prelude::*};
-use rts_base::{IVec2 as SimPos, PlayerId, UnitId, UnitKind};
+use rts_base::{PlayerId, UnitId, UnitKind};
+
+pub use self::layout::UnitBounds;
+use self::layout::{Placement, layout_units};
 
 use crate::{
     game::{AppState, Match, PreviousPositions},
-    map::{to_world, to_world_distance},
+    map::to_world_distance,
 };
 
 /// Player colors by slot.
@@ -56,10 +61,10 @@ fn unit_scene(
     id: UnitId,
     mesh: Handle<Mesh>,
     material: Handle<ColorMaterial>,
-    translation: Vec3,
+    placement: Placement,
 ) -> impl Scene {
     let visual = UnitVisual(id);
-    let transform = Transform::from_translation(translation);
+    let transform = placement_transform(placement);
     bsn! {
         DespawnOnExit<AppState>(AppState::InGame)
         visual
@@ -80,21 +85,35 @@ fn sync_units(
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut transforms: Query<&mut Transform>,
 ) {
+    let current_layout = layout_units(game.sim.units().map(|(id, unit)| {
+        (
+            id,
+            unit.pos,
+            UnitBounds::from_definition(game.sim.rules().unit(unit.kind)),
+        )
+    }));
+    let previous_layout = layout_units(game.sim.units().map(|(id, unit)| {
+        (
+            id,
+            previous.0.get(&id).copied().unwrap_or(unit.pos),
+            UnitBounds::from_definition(game.sim.rules().unit(unit.kind)),
+        )
+    }));
     let UnitVisuals {
         entities,
         meshes: mesh_cache,
         materials: material_cache,
     } = &mut *visuals;
     for (id, unit) in game.sim.units() {
-        let translation = interpolated_position(
-            previous.0.get(&id).copied(),
-            unit.pos,
-            fixed.overstep_fraction(),
-        )
-        .extend(UNIT_Z);
+        let current = current_layout[&id];
+        let placement = if previous.0.contains_key(&id) {
+            previous_layout[&id].interpolate(current, fixed.overstep_fraction())
+        } else {
+            current
+        };
         if let Some(&entity) = entities.get(&id) {
             if let Ok(mut transform) = transforms.get_mut(entity) {
-                transform.translation = translation;
+                *transform = placement_transform(placement);
             }
             continue;
         }
@@ -106,7 +125,7 @@ fn sync_units(
             materials.add(PLAYER_COLORS[usize::from(unit.owner.0) % PLAYER_COLORS.len()])
         });
         let entity = commands
-            .spawn_scene(unit_scene(id, mesh.clone(), material.clone(), translation))
+            .spawn_scene(unit_scene(id, mesh.clone(), material.clone(), placement))
             .id();
         entities.insert(id, entity);
     }
@@ -123,29 +142,24 @@ fn clear_units(mut visuals: ResMut<UnitVisuals>) {
     *visuals = UnitVisuals::default();
 }
 
-fn interpolated_position(previous: Option<SimPos>, current: SimPos, alpha: f32) -> Vec2 {
-    to_world(previous.unwrap_or(current)).lerp(to_world(current), alpha.clamp(0.0, 1.0))
+const fn placement_transform(placement: Placement) -> Transform {
+    Transform::from_translation(placement.position.extend(UNIT_Z)).with_scale(Vec3::new(
+        placement.scale,
+        placement.scale,
+        1.0,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use bevy::{scene::ScenePlugin, state::app::StatesPlugin};
-    use rts_base::{Command, MapData, Rules, Sim, TILE};
+    use rts_base::{Command, IVec2 as SimPos, MapData, Rules, Sim, TILE};
+
+    use crate::map::to_world;
 
     use super::*;
 
-    #[test]
-    fn scene_visuals_follow_unit_and_match_lifetimes() {
-        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
-        let map = MapData::from_ron(
-            r#"(name: "scenes", players: [(start: (0.5,0.5))],
-            tiles: [".."], units: [
-                (kind:"worker",owner:0,pos:(0.5,0.5)),
-                (kind:"worker",owner:0,pos:(1.5,0.5))])"#,
-        )
-        .unwrap();
-        let sim = Sim::new(rules, &map).unwrap();
-        let hash = sim.state_hash();
+    fn scene_app(sim: Sim) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -159,6 +173,22 @@ mod tests {
         .insert_resource(Match::new(sim, PlayerId(0), true))
         .init_resource::<PreviousPositions>()
         .add_plugins(UnitsPlugin);
+        app
+    }
+
+    #[test]
+    fn scene_visuals_follow_unit_and_match_lifetimes() {
+        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "scenes", players: [(start: (0.5,0.5))],
+            tiles: [".."], units: [
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:0,pos:(1.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let hash = sim.state_hash();
+        let mut app = scene_app(sim);
         app.update();
 
         let entities = app.world().resource::<UnitVisuals>().entities.clone();
@@ -200,6 +230,92 @@ mod tests {
     }
 
     #[test]
+    fn grouped_visuals_use_offsets_and_scale_without_changing_occupancy() {
+        let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "group", players: [(start: (0.5,0.5)), (start: (1.5,0.5))],
+            tiles: [".."], units: [
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:1,pos:(0.5,0.5)),
+                (kind:"soldier",owner:0,pos:(0.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let hash = sim.state_hash();
+        let mut app = scene_app(sim);
+        app.update();
+        let entities = app.world().resource::<UnitVisuals>().entities.clone();
+        let transforms: Vec<_> = entities
+            .values()
+            .map(|&entity| *app.world().get::<Transform>(entity).unwrap())
+            .collect();
+        assert!(transforms.iter().all(|transform| transform.scale.x < 1.0));
+        for (index, transform) in transforms.iter().enumerate() {
+            assert!(
+                transforms[index + 1..]
+                    .iter()
+                    .all(|other| other.translation != transform.translation)
+            );
+        }
+        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+
+        for id in [UnitId(1), UnitId(2)] {
+            app.world_mut().resource_mut::<Match>().sim.remove_unit(id);
+        }
+        // A cleared snapshot (including a stalled session) draws the current layout directly.
+        app.update();
+        let transform = app.world().get::<Transform>(entities[&UnitId(0)]).unwrap();
+        assert_eq!(transform.scale, Vec3::ONE);
+        assert_eq!(
+            transform.translation,
+            to_world(SimPos::splat(TILE / 2)).extend(UNIT_Z)
+        );
+    }
+
+    #[test]
+    fn configured_bounds_drive_scene_placement_and_scale() {
+        let rules = Rules::from_ron(&include_str!("../../../assets/data/core.rules.ron").replace(
+            "radius: 0.3,",
+            "radius: 0.125, visual_bounds: Some((offset: (0.125, -0.25), size: (0.875, 0.25))),",
+        )).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "configured bounds", players: [(start: (0.5,0.5))], tiles: ["."],
+            units: [(kind:"worker",owner:0,pos:(0.5,0.5)),
+                    (kind:"worker",owner:0,pos:(0.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let hash = sim.state_hash();
+        let bounds = UnitBounds::from_definition(sim.rules().unit(UnitKind(0)));
+        assert_eq!(bounds.offset, Vec2::new(16.0, 32.0));
+        assert_eq!(bounds.size, Vec2::new(112.0, 32.0));
+        let mut app = scene_app(sim);
+        app.update();
+        let entities = &app.world().resource::<UnitVisuals>().entities;
+        let rectangles: Vec<_> = entities
+            .values()
+            .map(|&entity| {
+                let transform = app.world().get::<Transform>(entity).unwrap();
+                assert_eq!(transform.scale, Vec3::ONE);
+                let rect = bounds.world_rect(transform);
+                assert_eq!(
+                    rect.center(),
+                    transform.translation.truncate() + bounds.offset
+                );
+                assert!(rect.min.cmpge(Vec2::new(0.0, -128.0)).all());
+                assert!(rect.max.cmple(Vec2::new(128.0, 0.0)).all());
+                rect
+            })
+            .collect();
+        assert_eq!(rectangles[0].center().x, rectangles[1].center().x);
+        assert!(
+            rectangles[0].max.y <= rectangles[1].min.y
+                || rectangles[1].max.y <= rectangles[0].min.y
+        );
+        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    }
+
+    #[test]
     fn interpolates_tick_snapshots_without_changing_simulation() {
         let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
         let map = MapData::from_ron(
@@ -222,16 +338,24 @@ mod tests {
         let end = sim.unit(id).unwrap().pos;
         assert_ne!(start, end);
         let hash = sim.state_hash();
+        let previous = Placement {
+            position: to_world(start),
+            scale: 1.0,
+        };
+        let current = Placement {
+            position: to_world(end),
+            scale: 0.75,
+        };
+        assert_eq!(previous.interpolate(current, 0.0).position, to_world(start));
+        let middle = previous.interpolate(current, 0.5);
+        assert_eq!(middle.position, (to_world(start) + to_world(end)) / 2.0);
+        assert_eq!(middle.scale, 0.875);
+        assert_eq!(previous.interpolate(current, 1.0).position, to_world(end));
         assert_eq!(
-            interpolated_position(Some(start), end, 0.0),
+            previous.interpolate(current, -1.0).position,
             to_world(start)
         );
-        assert_eq!(
-            interpolated_position(Some(start), end, 0.5),
-            (to_world(start) + to_world(end)) / 2.0
-        );
-        assert_eq!(interpolated_position(Some(start), end, 1.0), to_world(end));
-        assert_eq!(interpolated_position(None, end, 0.0), to_world(end));
+        assert_eq!(previous.interpolate(current, 2.0).position, to_world(end));
         assert_eq!(sim.state_hash(), hash);
     }
 }

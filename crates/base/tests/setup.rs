@@ -1,4 +1,4 @@
-use rts_base::{IVec2, LoadError, MapData, Rules, Sim, TILE};
+use rts_base::{Command, IVec2, LoadError, MapData, PlayerId, Rules, Sim, TILE, UnitId, UnitKind};
 
 const RULES: &str = include_str!("../../../assets/data/core.rules.ron");
 const PROVING_GROUNDS: &str = include_str!("../../../assets/maps/proving_grounds.map.ron");
@@ -106,4 +106,74 @@ fn identical_setups_hash_identically() {
     assert_ne!(a.state_hash(), b.state_hash());
     b.step();
     assert_eq!(a.state_hash(), b.state_hash());
+}
+
+#[test]
+fn visual_bounds_do_not_change_hashes_or_movement() {
+    let map = MapData::from_ron(&map(
+        PLAYER,
+        TILES,
+        r#"(kind: "worker", owner: 0, pos: (0.5, 0.5))"#,
+    ))
+    .unwrap();
+    let mut sims: Vec<_> = [
+        "",
+        "visual_bounds: None,",
+        "visual_bounds: Some((offset: (0.1, -0.2), size: (0.75, 0.5))),",
+        "visual_bounds: Some((offset: (-2, 3), size: (4, 6))),",
+    ]
+    .into_iter()
+    .map(|bounds| {
+        let rules = Rules::from_ron(&format!(
+            r##"(
+                tile_capacity: 4,
+                terrain: [
+                    (id: "grass", symbol: '.', speed_modifier: 1, color: "#00ff00"),
+                    (id: "water", symbol: '~', speed_modifier: 0, color: "#0000ff"),
+                ],
+                units: [(id: "worker", size: 1, max_health: 40, radius: 0.25,
+                         speed: 1.25, {bounds})],
+            )"##
+        ))
+        .unwrap();
+        Sim::new(rules, &map).unwrap()
+    })
+    .collect();
+    assert_eq!(sims[0].rules().unit(UnitKind(0)).visual_bounds, None);
+    assert_ne!(
+        sims[2].rules().unit(UnitKind(0)).visual_bounds,
+        sims[3].rules().unit(UnitKind(0)).visual_bounds
+    );
+    let unit = UnitId(0);
+    let start = sims[0].unit(unit).unwrap().pos;
+    let target = IVec2::new(TILE * 5 / 2, TILE * 3 / 2);
+    for sim in &mut sims {
+        sim.queue_command(
+            PlayerId(0),
+            Command::Move {
+                units: vec![unit],
+                target,
+            },
+        );
+    }
+    for tick in 0..=80 {
+        let reference = &sims[0];
+        for sim in &sims[1..] {
+            assert_eq!(sim.state_hash(), reference.state_hash(), "tick {tick}");
+            assert_eq!(
+                sim.unit(unit).unwrap().pos,
+                reference.unit(unit).unwrap().pos,
+                "tick {tick}"
+            );
+            assert_eq!(sim.move_target(unit), reference.move_target(unit));
+        }
+        if tick < 80 {
+            for sim in &mut sims {
+                sim.step();
+            }
+        }
+    }
+    assert_ne!(start, target);
+    assert_eq!(sims[0].unit(unit).unwrap().pos, target);
+    assert_eq!(sims[0].move_target(unit), None);
 }

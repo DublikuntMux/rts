@@ -19,7 +19,7 @@ What you can change
      - ``tile_capacity`` in the rules file.
    * - Terrain types: symbol, speed, color, texture
      - ``terrain`` in the rules file.
-   * - Unit types: size, health, radius, speed
+   * - Unit types: size, health, radius, speed, visual bounds
      - ``units`` in the rules file.
    * - Map name, size, and terrain layout
      - ``name`` and ``tiles`` in the map file.

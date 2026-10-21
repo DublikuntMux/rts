@@ -82,7 +82,10 @@ M2 — Commands, selection, movement
    validation, and hashing. Deterministic travel-time A* with terrain speed
    modifiers and integer movement. Tile capacity with live replanning.
    Click, tap, and box selection, two-finger pan, selection rings, the touch
-   command bar, and render interpolation between ticks.
+   command bar, and render interpolation between ticks. Units sharing a tile
+   use configurable rectangular visual bounds (or radius-derived defaults)
+   and stable grid slots, scaling crowded
+   groups to fit while keeping movement smooth and simulation state unchanged.
 
 M3 — Multiplayer
    The authoritative WebSocket server with create/join by code, server-owned

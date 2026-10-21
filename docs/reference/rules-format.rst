@@ -112,7 +112,14 @@ Unit types
      - Positive starting health. Combat arrives in M4.
    * - ``radius``
      - decimal tiles
-     - Positive collision and drawing radius.
+     - Positive nominal drawing radius. Crowded visual groups scale to fit
+       their tile; see :doc:`../architecture/rendering`.
+   * - ``visual_bounds``
+     - optional bounds
+     - ``Some((offset: (x, y), size: (width, height)))`` in tiles. Used for
+       visual packing, hit tests, box selection, and selection outlines.
+       Omitted or ``None`` uses a centered square of diameter ``2 × radius``
+       for packing and preserves circular selection.
    * - ``speed``
      - decimal tiles/second
      - Positive speed on terrain with modifier 1.0.
@@ -120,6 +127,35 @@ Unit types
 ``radius`` and ``speed`` are converted to world units (1024 per tile) when the
 file loads: ``speed: 2.5`` becomes 2560 world units per second. Values that
 round to zero or exceed the 32-bit range are rejected.
+
+Custom sprite bounds
+--------------------
+
+For a sprite whose visible body is wider than it is tall and centered above
+its root, add this field to its unit entry:
+
+.. code-block:: text
+
+   visual_bounds: Some((
+       offset: (0.0, -0.125),
+       size: (0.75, 0.5),
+   )),
+
+``offset`` is the center of the bounding box relative to the unit's visual
+root. Positive x is right and positive y is down, matching map coordinates.
+``size`` is the full width and height, not half-extents. Both pairs use tiles
+and are converted to integer world units at load time. An offset may be signed;
+each size component must round to a positive world-unit value. Both fields
+are required when bounds are supplied, and unknown nested fields are errors.
+
+Bounds describe the sprite footprint; they do not crop or reshape artwork.
+The current placeholder circle still uses ``radius`` to build its mesh.
+The client scales the footprint and its offset with the sprite, placing the
+bounds center in its assigned tile slot. Rectangular groups choose the grid
+orientation that best fits the tile. See :doc:`../architecture/rendering`.
+These fields affect presentation only: paths, tile capacity, unit positions,
+and simulation hashes are unchanged. They travel with the rules text through
+server setup and replays.
 
 Validation
 ----------
@@ -132,6 +168,8 @@ Validation
 * Duplicate terrain IDs, terrain symbols, or unit IDs.
 * A unit with ``size`` of 0 or larger than ``tile_capacity``.
 * A unit with nonpositive ``max_health``, ``radius``, or ``speed``.
+* Nonfinite or out-of-range ``visual_bounds`` components, or a size component
+  that rounds to zero or is negative.
 * An invalid ``speed_modifier`` as described above.
 
 The legacy ``walkable`` field is no longer accepted; use ``speed_modifier``.

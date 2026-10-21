@@ -72,7 +72,7 @@ Data files are written in human units, so the loaders convert them once:
    * - Field
      - File unit
      - Stored as
-   * - Positions, ``radius``
+   * - Positions, ``radius``, visual bounds
      - tiles
      - ``i32`` world units: ``round(tiles × 1024)``.
    * - Unit ``speed``

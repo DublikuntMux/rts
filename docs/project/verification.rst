@@ -9,6 +9,29 @@ device.
 Client scenes
 -------------
 
+**Configurable unit visual bounds.** 173 workspace tests, strict workspace
+Clippy, formatting, full-workspace ``wasm32`` and Android arm64 checks, and
+the strict Sphinx build. Rules tests cover
+optional and explicit bounds, signed offsets, fixed-point conversion,
+positive dimensions, malformed or missing fields, nonfinite and out-of-range
+values, and unchanged movement and hashes over 80 ticks. Client tests cover
+rectangular footprints with different offsets at tile edges, grid orientation,
+root-to-bounds conversion, actual scene placement and scale, rectangular click
+and box selection, and server-provided bounds through a real match and replay.
+Rendered browser and physical device sessions were not rerun for this
+follow-up.
+
+**Tile-local unit groups.** 161 workspace tests, strict workspace Clippy,
+formatting, the client ``wasm32`` check, and the strict Sphinx build. Tests
+cover crowded and mixed radius groups at tile centers and edges, stable ID
+ordering, independent tiles, oversized custom units, interpolation of unchanged groups, actual
+scene offsets and scale, removal and scale restoration, scaled selection,
+and unchanged simulation hashes. Smooth transitions may briefly overlap;
+settled layouts keep unit bodies separate and inside their tile. A rendered
+Chromium session using software WebGL box-selected four workers, moved them
+to one tile, and selected one worker at its displayed offset. Android builds
+and physical device sessions were not rerun.
+
 **Unit visuals as Bevy scenes.** 153 workspace tests, strict workspace
 Clippy, formatting, and full-workspace ``wasm32`` and Android arm64 checks.
 The headless scene lifecycle test covers spawning, stable IDs and transforms,

@@ -4,7 +4,7 @@ Rendering
 The client draws two layers: a terrain tilemap and unit visuals, plus gizmos
 for selection. Everything is derived from the simulation each frame; nothing
 drawn feeds back into it. Code lives in ``crates/client/src/map.rs`` and
-``units.rs``.
+``units.rs`` (including ``units/layout.rs``).
 
 Terrain
 -------
@@ -86,8 +86,9 @@ per living unit:
    @startuml
    skinparam backgroundColor transparent
    start
+   :pack previous and current tile groups;
    while (for each living unit in ID order)
-     :position = lerp(previous, current,\nfixed overstep fraction);
+     :interpolate packed position and scale\nusing fixed overstep fraction;
      if (visual exists for UnitId?) then (yes)
        :update its Transform;
      else (no)
@@ -100,8 +101,8 @@ per living unit:
    stop
    @enduml
 
-* Units are circles with their rules ``radius``, drawn at z = 1 above the
-  terrain.
+* Units are circles based on their rules ``radius``, drawn at z = 1 above
+  the terrain. Crowded tile groups scale their visuals to fit.
 * Meshes are cached per ``UnitKind`` and materials per ``PlayerId``, so all
   units of a kind share one mesh and all units of a player share one material.
   Player colors by slot: blue, red, yellow, green, purple, orange, cyan, and
@@ -117,9 +118,9 @@ The unit scene
 .. code-block:: rust
 
    fn unit_scene(id: UnitId, mesh: Handle<Mesh>,
-                 material: Handle<ColorMaterial>, translation: Vec3) -> impl Scene {
+                 material: Handle<ColorMaterial>, placement: Placement) -> impl Scene {
        let visual = UnitVisual(id);
-       let transform = Transform::from_translation(translation);
+       let transform = placement_transform(placement);
        bsn! {
            DespawnOnExit<AppState>(AppState::InGame)
            visual
@@ -132,33 +133,68 @@ The unit scene
 Health bars (M4) will be children of this root. See :ref:`client-scenes` for
 the scene rules.
 
+Tile groups
+-----------
+
+``units/layout.rs`` uses a unit type's optional ``visual_bounds`` from the
+rules: a bounding-box center offset and full width and height. When omitted,
+it derives a centered square from the unit's diameter. See
+:doc:`../reference/rules-format` for the RON syntax. For each tick
+snapshot, units sharing a tile, including different owners, occupy a compact
+grid in ``UnitId`` order. Cells use the group's maximum width and height;
+the grid orientation minimizes its longest side so wide sprites can stack
+vertically without unnecessary shrinking. Cells have a nominal four-world-pixel
+gap (scaled with the group) and four world pixels of tile padding. The last
+row is centered.
+
+The group is anchored at its members' mean bounds center, clamped so its whole
+bounding box fits inside the tile. If the grid is too large, a common visual
+scale fits it to the available space, preserving relative unit sizes. An
+isolated unit keeps its original size unless even that visual exceeds the
+tile bounds. Meshes remain shared; offsets and scale live in the visual
+``Transform``. The root is placed at the slot center minus the scaled bounds
+offset; selection adds that offset back exactly once. Tile capacity, paths,
+simulation positions, and state hashes are unaffected.
+
 Interpolation
 -------------
 
 The simulation moves in 50 ms steps, but frames arrive more often. Before each
 tick, the session copies every unit's position into ``PreviousPositions``.
-Each frame, ``sync_units`` draws:
+Each frame, ``sync_units`` packs both snapshots and interpolates their visual
+positions and scales:
 
 .. math::
 
    \text{drawn} = \text{previous} + (\text{current} - \text{previous}) \times \alpha
 
 where α is ``Time<Fixed>::overstep_fraction()``, clamped to 0..1. Units
-without a previous position (new units) are drawn at their current position.
+without a previous position (new units) use their current packed placement.
 When a session stalls—no server turn, playback finished, or stopped—the
 snapshot is cleared so units do not slide backwards toward an old position
 on repeated frames.
 
+Packed snapshots keep unit bodies separated and inside their tile. Smooth
+movement takes priority during transitions: crossing tile edges or changing
+group membership can briefly overlap visuals or straddle an edge while they
+interpolate into the next layout. Unchanged groups retain separation while
+interpolating.
+
 Selection hit tests, box selection, and selection rings all use the drawn
-positions, so what the player sees is what they click. Interpolation never
-changes the simulation or its hash.
+positions and scaled bounds. Custom bounds use rectangular click targets
+and selection outlines; a drag selects any custom bounds intersecting the
+box. Units without custom bounds retain circle hit tests, rings, and selection
+by center. Minimum mouse and touch hit areas remain in effect. Interpolation
+never changes the simulation or its hash.
 
 Gizmos
 ------
 
 ``draw_selection`` in ``PostUpdate`` draws, with Bevy gizmos:
 
-* A yellow ring around each selected unit, 4 screen pixels outside its radius.
+* A yellow ring for a default circle or a rectangle for custom bounds,
+  four screen pixels outside the displayed footprint. Outlines may overlap;
+  they do not participate in packing.
 * The drag box while box-selecting.
 * An order marker for 0.6 seconds after a move: a green circle and cross for
   an accepted target, red for blocked terrain.

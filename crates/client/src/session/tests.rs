@@ -165,7 +165,11 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
         rules: setup()
             .rules
             .replace("worker", "mod_worker")
-            .replace("speed: 2.5", "speed: 3.5"),
+            .replace("speed: 2.5", "speed: 3.5")
+            .replace(
+                "radius: 0.3,",
+                "radius: 0.3, visual_bounds: Some((offset: (0.125, -0.25), size: (0.75, 0.5))),",
+            ),
         map: setup()
             .map
             .replace("worker", "mod_worker")
