@@ -4,13 +4,13 @@
     tile_capacity: 4,
     terrain: [
         (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#4a7a3e", texture: Some("textures/terrain/grass.png")),
-        (id: "dirt", symbol: ',', speed_modifier: 1.0, color: "#8a7350", texture: Some("textures/terrain/dirt.png")),
-        (id: "sand", symbol: ':', speed_modifier: 1.0, color: "#c9b27a", texture: Some("textures/terrain/sand.png")),
+        (id: "dirt", symbol: ',', speed_modifier: 1.1, color: "#8a7350", texture: Some("textures/terrain/dirt.png")),
+        (id: "sand", symbol: ':', speed_modifier: 0.9, color: "#c9b27a", texture: Some("textures/terrain/sand.png")),
         (id: "water", symbol: '~', speed_modifier: 0.0, color: "#2e5d8c", texture: Some("textures/terrain/water.png")),
         (id: "rock", symbol: '#', speed_modifier: 0.0, color: "#5a5852", texture: Some("textures/terrain/rock.png")),
     ],
     units: [
-        (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: 2.5),
-        (id: "soldier", sprite: "textures/units/soldier.png", size: 2, max_health: 80, radius: 0.4, speed: 3.0),
+        (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: 3.0),
+        (id: "soldier", sprite: "textures/units/soldier.png", size: 2, max_health: 80, radius: 0.4, speed: 2.5),
     ],
 )
