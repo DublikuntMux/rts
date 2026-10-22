@@ -110,8 +110,8 @@ Menu controls
 -------------
 
 The menu shares the desktop pages and uses a compact rail on narrow screens.
-Tapping the server address, invite code, or player name opens the in-game
-keypad. **Done** commits edits and **Cancel** discards them. **Settings**
+Tapping the server address, invite code, or player name focuses the field and
+opens the system keyboard. **Settings**
 offers interface scale and edge scrolling; fullscreen is controlled by the
 activity. **Copy code** is hidden because Android has no system clipboard
 backend. Replay import and export buttons are browser-only.

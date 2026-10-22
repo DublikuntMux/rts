@@ -5,7 +5,6 @@
 //! Smaller changes, such as messages, availability, and selection highlights, update in place.
 //! The menu only reads [`SessionStatus`] and sends [`SessionAction`]s; the session does the work.
 
-mod keypad;
 mod pages;
 mod previews;
 pub mod widgets;
@@ -60,12 +59,11 @@ impl Plugin for MenuPlugin {
             .init_resource::<PauseMenu>()
             .init_resource::<Rendered>()
             .init_resource::<Clipboard>()
-            .init_resource::<keypad::TouchKeypad>()
             .init_resource::<previews::PreviewCache>()
             .add_message::<Action>()
             .add_systems(OnEnter(AppState::Menu), close_dialogs)
             .add_systems(OnEnter(AppState::InGame), close_dialogs)
-            .add_systems(OnExit(AppState::Menu), (keypad::reset, forget_render))
+            .add_systems(OnExit(AppState::Menu), forget_render)
             .add_systems(
                 Update,
                 (
@@ -77,7 +75,7 @@ impl Plugin for MenuPlugin {
                         .in_set(MenuActions)
                         .run_if(not(in_state(AppState::Loading)))
                         .before(SessionActions),
-                    (follow_session, render, restore_focus, keypad::sync)
+                    (follow_session, render, restore_focus)
                         .chain()
                         .run_if(in_state(AppState::Menu))
                         .run_if(staying)
@@ -795,12 +793,8 @@ fn select_first(browse: &mut Browse, records: &[Record], has_last: bool) {
     }
 }
 
-fn back_on_escape(
-    keys: Res<ButtonInput<KeyCode>>,
-    keypad: Res<keypad::TouchKeypad>,
-    mut actions: MessageWriter<Action>,
-) {
-    if keys.just_pressed(KeyCode::Escape) && keypad.open.is_none() {
+fn back_on_escape(keys: Res<ButtonInput<KeyCode>>, mut actions: MessageWriter<Action>) {
+    if keys.just_pressed(KeyCode::Escape) {
         actions.write(Action::Back);
     }
 }

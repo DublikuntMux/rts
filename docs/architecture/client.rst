@@ -54,7 +54,7 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
        desktop fullscreen.
    * - ``MenuPlugin``
      - ``menu/``
-     - Main menu pages, dialogs, bindings, navigation, and touch keypad.
+     - Main menu pages, dialogs, bindings, navigation, and text fields.
    * - ``PauseMenuPlugin``
      - ``pause_menu.rs``
      - Pause button and modal, save actions, and Leave.

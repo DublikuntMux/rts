@@ -126,9 +126,10 @@ native and the client on ``wasm32``, formatting, full-workspace ``wasm32``
 and Android arm64 checks, and the strict Sphinx build. Tests cover storage
 round trips and the browser codec; library numbering, reload, and corrupt
 records; settings repair; catalog loading with an invalid map skipped and
-no valid map staying in ``Loading``; map previews; and the keypad for all
-three fields. A headless menu smoke test spawns every page and dialog in
-wide and compact layouts and checks that no entities remain after cleanup.
+no valid map staying in ``Loading``; map previews; and character filtering
+for all three text fields. A headless menu smoke test spawns every page and
+dialog in wide and compact layouts and checks that no entities remain after
+cleanup.
 Menu tests cover action availability, Back, dialog closure, recent server,
 leave confirmation, browse filters, and selection.
 
@@ -232,13 +233,14 @@ reproduced it. Native used NVIDIA Vulkan; the browser was headless Chromium
 with software WebGPU through Playwright.
 
 **Touch lobby and replays.** A native GPU run at 320 logical pixels wide
-injected touch and window events through Bevy to type a room code, commit it,
-cancel address editing, start solo play, save, leave, replay the recording,
+injected touch and window events through Bevy to type a room code, edit the
+address field, start solo play, save, leave, replay the recording,
 and load the saved file. Both playback paths verified their final hash. The
-keypad, lobby, and session bars were inspected visually. Android permissions
-are configured, including Android 17 local network access, but the milestone
-did not run on an Android device. Browser file picker and download controls
-were reviewed and compiled but not exercised in the browser match.
+menu fields, lobby, and session bars were inspected visually. Android
+permissions are configured, including Android 17 local network access, but
+the milestone did not run on an Android device. Browser file picker and
+download controls were reviewed and compiled but not exercised in the browser
+match.
 
 M2 — Commands, selection, movement
 ----------------------------------

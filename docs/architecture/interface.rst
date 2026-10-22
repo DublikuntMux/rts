@@ -1,5 +1,5 @@
-Interface: menus, HUD, and keypad
-=================================
+Interface: menus and HUD
+========================
 
 The interface uses Bevy UI widgets and observers. It reads ``SessionStatus``
 and sends ``SessionAction`` messages. Gameplay controls read ``Selection``
@@ -194,39 +194,16 @@ and touch drags scroll content. Escape or **Back** follows this order:
 4. From Connecting or Rooms, disconnect.
 5. From a lobby, open the leave-room confirmation.
 
-Touch keypad
--------------
+Touch text input
+----------------
 
-A completed touch tap on a text field opens the in-game keypad. Mouse and
-physical keyboards use the field directly. Opening after the finger lifts
-prevents the same touch from pressing a key. Opening clears text-field focus.
-
-.. kroki::
-   :type: plantuml
-   :caption: Keypad edits stay in a draft until Done.
-   :align: center
-
-   @startuml
-   skinparam backgroundColor transparent
-   [*] --> Closed
-   Closed --> Open : touch tap on a text field
-   Open : overlay blocks the menu
-   Open : KeypadDraft holds field, value, shift, page
-   Open --> Open : character, Delete, Clear, Shift, page
-   Open --> Closed : Done: commit to field and MenuForm\nupdate settings for a valid name
-   Open --> Closed : Cancel: discard draft
-   Open --> Closed : field disappears or menu exits
-   @enduml
-
-* **Invite code** shows uppercase letters and digits, up to six characters.
-* **Server address** has letters and symbols pages. It includes digits,
-  Shift, and URL punctuation (``: / . - _ ? & = % + [ ] #``), up to 256
-  characters.
-* **Player name** has letters, digits, space, ``- _ . '`` and Shift, up to
-  the protocol's name limit.
-
-Keys use six columns. A preview shows the draft or a placeholder and a
-character count. **Done** commits; **Cancel** discards.
+Text fields always use the platform keyboard. Tapping or clicking a field
+focuses it, and Bevy enables the window's input method while a field has
+focus; on Android and iOS that shows the system on-screen keyboard. Edits
+apply directly to the field and the menu model, so there is no Done step.
+Pressing Enter in the address field connects, and Enter in the invite field
+joins. The code field accepts letters and digits and uppercases them as they
+are typed.
 
 RTS console
 -----------

@@ -12,7 +12,7 @@ use bevy::{
     },
     picking::hover::Hovered,
     prelude::*,
-    text::{EditableText, FontSize, FontWeight, LineHeight, TextCursorStyle},
+    text::{EditableText, EditableTextFilter, FontSize, FontWeight, LineHeight, TextCursorStyle},
     ui::{InteractionDisabled, Pressed},
     ui_widgets::{Button, ScrollArea, TextInput},
 };
@@ -75,6 +75,22 @@ pub enum Field {
     Url,
     Code,
     Name,
+}
+
+impl Field {
+    /// Whether this field accepts `c` from the platform keyboard.
+    pub const fn accepts(self, c: char) -> bool {
+        match self {
+            Self::Url => !c.is_whitespace() && !c.is_control(),
+            Self::Code => c.is_ascii_alphanumeric(),
+            Self::Name => !c.is_control(),
+        }
+    }
+
+    /// Characters this field accepts from the platform keyboard.
+    pub fn filter(self) -> EditableTextFilter {
+        EditableTextFilter::new(move |c| self.accepts(c))
+    }
 }
 
 /// Text that follows the menu model. Recomputed when the model changes.
@@ -384,13 +400,13 @@ pub fn badge(label: impl Into<String>, color: Color) -> impl Scene {
     }
 }
 
-/// A labeled single-line text input. Touch taps open the keypad instead of a platform keyboard.
+/// A labeled single-line text input. Touch taps focus it and open the platform keyboard.
 pub fn text_field(field: Field, value: &str, max_characters: usize) -> impl Scene {
     let editable = EditableText {
         max_characters: Some(max_characters),
         ..EditableText::new(value)
     };
-    let filter = super::keypad::filter(field);
+    let filter = field.filter();
     bsn! {
         field
         TextInput
@@ -421,7 +437,6 @@ pub fn text_field(field: Field, value: &str, max_characters: usize) -> impl Scen
         Outline { width: px(2), offset: px(2), color: Color::NONE }
         on(super::on_field_edit)
         on(super::submit_on_enter)
-        on(super::keypad::open_on_touch)
     }
 }
 
@@ -697,5 +712,26 @@ pub fn update_availability(
         } else if !disable && disabled {
             commands.entity(entity).remove::<InteractionDisabled>();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Field;
+
+    #[test]
+    fn fields_accept_their_typed_characters() {
+        assert!(Field::Url.accepts('a'));
+        assert!(Field::Url.accepts(':'));
+        assert!(!Field::Url.accepts(' '));
+        assert!(!Field::Url.accepts('\n'));
+
+        assert!(Field::Code.accepts('A'));
+        assert!(Field::Code.accepts('7'));
+        assert!(!Field::Code.accepts('/'));
+
+        assert!(Field::Name.accepts(' '));
+        assert!(Field::Name.accepts('\''));
+        assert!(!Field::Name.accepts('\t'));
     }
 }

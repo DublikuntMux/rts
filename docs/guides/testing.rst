@@ -77,7 +77,8 @@ What the tests cover
        transfer, oversized input, disconnects.
    * - ``crates/client/src/*`` unit tests
      - Camera math, touch gestures, selection and order input, terrain
-       texture arrays, menu pages and dialogs, keypad, unit scene lifecycle.
+       texture arrays, menu pages, dialogs, and text fields, and unit scene
+       lifecycle.
    * - ``crates/client/src/session/tests.rs``
      - Session modes, input delay, stalls, divergent hashes, backlog
        catch-up, and headless Bevy clients playing a modded match against

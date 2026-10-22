@@ -30,7 +30,7 @@ uses short labels and a **Back** button appears when needed. Interface scale
 also affects this threshold. Escape goes back or closes a dialog or dropdown.
 
 On touch screens, tapping **Server address**, **Invite code**, or
-**Player name** opens the in-game keypad with **Done** and **Cancel**.
+**Player name** focuses the field and opens the platform keyboard.
 
 The match screen
 ----------------

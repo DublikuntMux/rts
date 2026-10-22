@@ -93,8 +93,8 @@ M3 — Multiplayer
    map and rules delivery as a compressed binary setup, readiness handshake,
    fixed-rate simulation, input delay, input validation, per-turn hashes, and
    disconnect handling. Replay recording, playback, native persistence, and
-   browser import and export. The touch keypad for menu fields. Unit visuals
-   as Bevy scenes.
+   browser import and export. Menu text fields use the platform keyboard. Unit
+   visuals as Bevy scenes.
 
 Unit movement and sprites
    Linear simulation-position interpolation keeps travel speed steady through

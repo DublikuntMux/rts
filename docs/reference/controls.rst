@@ -157,8 +157,8 @@ code field joins. Escape and the compact layout's **Back** button close a
 dropdown first, then a dialog. They return New game or Load game to
 Singleplayer, disconnect from Connecting or Rooms, or ask to leave a lobby.
 
-Touch taps on **Server address**, **Invite code**, and **Player name** open
-the in-game keypad. **Done** commits and **Cancel** discards edits. Mouse
+Touch taps on **Server address**, **Invite code**, and **Player name** focus
+the field and open the platform keyboard; edits apply immediately. Mouse
 wheels and touch drags scroll pages. In-game pause and command buttons stay outside the
 tab order.
 
