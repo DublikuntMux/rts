@@ -8,19 +8,25 @@ documentation does not compile the Rust workspace.
 Install the documentation tools
 -------------------------------
 
-Use Python 3.11 or newer. From the repository root:
+Use Python 3.13 or newer (required by Sphinx 9.2). From the repository root:
 
 .. code-block:: sh
 
-   python3 -m venv docs/.venv
-   docs/.venv/bin/python -m pip install -r docs/requirements.txt
+   python3.13 -m venv --clear docs/.venv
+   docs/.venv/bin/python -m pip install --upgrade -r docs/requirements.txt
 
 If you use uv, the equivalent setup is:
 
 .. code-block:: sh
 
-   uv venv docs/.venv --python 3.12
-   uv pip install --python docs/.venv/bin/python -r docs/requirements.txt
+   uv venv --clear docs/.venv --python 3.13
+   uv pip install --upgrade --python docs/.venv/bin/python -r docs/requirements.txt
+
+These commands recreate the generated virtual environment so an older Python
+installation is replaced. The requirements pin the documentation tools to tested
+versions. ``sphinxcontrib-kroki`` 1.3.0 still imports ``pkg_resources``, which
+`setuptools 82 removed <https://setuptools.pypa.io/en/latest/history.html#v82-0-0>`_.
+Setuptools therefore uses 81.0.0, the latest compatible stable release.
 
 Build and browse
 ----------------

@@ -11,7 +11,7 @@ Install the tools
 
 You need:
 
-* The Android SDK with platform 37 and build tools 37.0.0, and NDK
+* The Android SDK with platform 37.2 and build tools 37.0.0, and NDK
   30.0.16248370. Android Studio installs them, or use ``sdkmanager``.
 * A JDK 17 or newer for Gradle.
 * The Rust Android targets and cargo-ndk:
