@@ -130,18 +130,20 @@ orientation minimizes its longest side. Cells have a nominal four-world-pixel
 gap (scaled with the group) and four world pixels of border padding. The last
 row is centered.
 
-A packed group may fill one and a half tiles, centered on its tile. Crowded
-sprites therefore grow past the tile edge instead of shrinking into it: a full
-tile of workers keeps its unshared size, and two soldiers still draw over 85%
-of theirs. The group is anchored at its members' mean bounds center, clamped so
-the whole bounding box stays inside that group area. If the grid is larger
-still, a common visual scale fits it to the area, preserving relative unit
-sizes. An isolated unit keeps its original size unless its footprint exceeds
-the group area. Overlap with a neighbouring tile's group is a presentation
-detail; tile capacity never changes. Offsets and scale live in the root
-``Transform``. The root is placed at the slot center minus the scaled bounds
-offset; the sprite anchor and selection add that offset back exactly once.
-Tile capacity, paths, simulation positions, and state hashes are unaffected.
+A packed group may fill one and a half tiles across. Crowded sprites therefore
+grow past the tile edge instead of shrinking into it: a full tile of workers
+keeps its unshared size, and two soldiers still draw over 85% of theirs. The
+group is anchored at its members' mean bounds center — the point the group was
+ordered to — and is never pulled toward the tile center, so units stop where
+the player clicked even at a tile edge, and a lone unit stands exactly on its
+ordered point. A group near an edge may overlap a neighbouring tile's group;
+that overlap is a presentation detail. If the grid is larger still, a common
+visual scale fits it to the area, preserving relative unit sizes. An isolated
+unit keeps its original size unless its footprint exceeds the group area.
+Offsets and scale live in the root ``Transform``. The root is placed at the
+slot center minus the scaled bounds offset; the sprite anchor and selection add
+that offset back exactly once. Tile capacity, paths, simulation positions, and
+state hashes are unaffected.
 
 Movement smoothing
 ------------------
@@ -155,17 +157,16 @@ network stall, visuals finish the last segment and hold there; continuing fixed
 clock ticks cannot rewind the segment.
 
 Units with active move orders form their own tile groups. Their grid uses the
-same slots and fit scale as stopped groups, but its anchor follows the members'
-mean position without clamping to tile interiors. Moving sprites can straddle
-tile edges. Clamping a moving group would hold it near a tile center and cause
-repeated acceleration and deceleration when the tile changes.
+same slots, fit scale, and mean-position anchor as stopped groups, so a group
+that arrives where it was sent has no layout shift to undo. Moving sprites can
+straddle tile edges.
 
 Only the packing offset relative to the simulation position and the fit scale
 use exponential easing, with ``alpha = 1 - exp(-delta_seconds / 0.1)``. Stable
-travelling groups keep constant offsets across tiles. Joining, leaving, arriving,
-and Stop ease toward the new layout; stopped groups settle exactly within the
-tile. These layout transitions can briefly overlap sprites. New units appear at
-their initial placement. Despawn and match exit remove the movement state.
+groups keep constant offsets across tiles. Joining, leaving, and Stop ease
+toward the new layout; stopped groups settle exactly on their members' mean
+position. These layout transitions can briefly overlap sprites. New units appear
+at their initial placement. Despawn and match exit remove the movement state.
 Simulation positions, occupancy, and hashes are unaffected.
 
 Selection hit tests, box selection, and selection outlines use the drawn

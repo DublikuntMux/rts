@@ -36,6 +36,18 @@ Client scenes
 -------------
 
 
+**Groups stop on the ordered point.** The tile-center clamp is gone from unit
+packing. A stopped group is anchored at its members' mean bounds center — the
+point it was sent to — so arriving no longer slides it up to 0.4 tile toward
+the tile center over 0.1 s, and a lone unit stands exactly on its ordered point
+instead of drifting off it near a tile edge. Moving and stopped groups now use
+one layout function. Regressions cover lone units at and across tile edges,
+groups ordered near a tile edge, a real simulation-to-visual arrival that stays
+on the ordered point, slot stability across boundaries, and unchanged
+simulation hashes. All 241 workspace tests, strict all-target Clippy,
+formatting, the client WebAssembly check, and the strict Sphinx build passed.
+A rendered browser session and an Android build were not rerun.
+
 **Larger crowded unit groups.** Packed tile groups may now fill one and a half
 tiles instead of the tile interior, so a tile of four workers keeps its
 unshared size and two soldiers draw over 85 percent of theirs. Regressions
@@ -187,7 +199,7 @@ cover crowded and mixed radius groups at tile centers and edges, stable ID
 ordering, independent tiles, oversized custom units, interpolation of unchanged groups, actual
 scene offsets and scale, removal and scale restoration, scaled selection,
 and unchanged simulation hashes. Smooth transitions may briefly overlap;
-settled layouts keep unit bodies separate and inside their tile. A rendered
+settled layouts keep unit bodies separate. A rendered
 Chromium session using software WebGL box-selected four workers, moved them
 to one tile, and selected one worker at its displayed offset. Android builds
 and physical device sessions were not rerun.

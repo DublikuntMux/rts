@@ -9,7 +9,7 @@ use rts_base::{UnitId, UnitKind};
 
 pub use self::layout::UnitBounds;
 use self::{
-    layout::{Placement, layout_travelling, layout_units},
+    layout::{Placement, layout_units},
     motion::UnitMotion,
 };
 
@@ -80,6 +80,8 @@ fn sync_units(
     detail: Res<ZoomDetail>,
     mut sprites: Query<(&mut Transform, &mut Sprite)>,
 ) {
+    // Moving and stopped units share one layout rule. They stay separate sets so a
+    // unit walking through a tile does not re-pack the group standing there.
     let mut current_layout = layout_units(
         game.sim
             .units()
@@ -92,7 +94,7 @@ fn sync_units(
                 )
             }),
     );
-    current_layout.extend(layout_travelling(
+    current_layout.extend(layout_units(
         game.sim
             .units()
             .filter(|(id, _)| game.sim.move_target(*id).is_some())
@@ -548,6 +550,67 @@ mod tests {
                 || rectangles[1].max.y <= rectangles[0].min.y
         );
         assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    }
+
+    #[test]
+    fn a_moved_group_settles_on_the_ordered_point_without_a_layout_shift() {
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "arrival", players: [(start: (0.5,0.5))],
+            tiles: [".."], units: [
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:0,pos:(0.5,0.5)),
+                (kind:"worker",owner:0,pos:(0.5,0.5))])"#,
+        )
+        .unwrap();
+        let mut sim = Sim::new(rules, &map).unwrap();
+        // Near the right edge of the second tile, far from its center.
+        let target = SimPos::new(2 * TILE - 1, TILE / 2);
+        sim.queue_command(
+            PlayerId(0),
+            Command::Move {
+                units: (0..4).map(UnitId).collect(),
+                target,
+            },
+        );
+        let mut app = scene_app(sim);
+        app.insert_resource(Time::<Fixed>::from_hz(f64::from(rts_base::TICK_RATE)))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / 60.0),
+            ))
+            .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.sim.step());
+        for _ in 0..180 {
+            app.update();
+        }
+        let game = app.world().resource::<Match>();
+        for id in (0..4).map(UnitId) {
+            assert_eq!(game.sim.unit(id).unwrap().pos, target);
+            assert_eq!(game.sim.move_target(id), None);
+        }
+        let entities: Vec<_> = app
+            .world()
+            .resource::<UnitVisuals>()
+            .entities
+            .values()
+            .copied()
+            .collect();
+        let center = entities
+            .iter()
+            .map(|&entity| {
+                app.world()
+                    .get::<Transform>(entity)
+                    .unwrap()
+                    .translation
+                    .truncate()
+            })
+            .sum::<Vec2>()
+            / 4.0;
+        // The group stays on the point it was sent to instead of sliding to the
+        // middle of its tile when the move orders finish.
+        assert_eq!(center, to_world(target));
+        assert!(center.distance(to_world(SimPos::splat(TILE + TILE / 2))) > 60.0);
     }
 
     #[test]

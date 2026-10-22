@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use rts_base::{IVec2 as SimPos, TILE, UnitDef, UnitId, tile_of};
+use rts_base::{IVec2 as SimPos, UnitDef, UnitId, tile_of};
 
 use crate::map::{TILE_PX, to_world, to_world_distance};
 
@@ -109,27 +109,16 @@ pub(super) fn group_area() -> f32 {
 
 /// Pack sprite bounds in ID order, retaining relative unit sizes.
 /// A common fit scale keeps the grid inside the group area, which may exceed the
-/// tile so even a full tile of units stays close to its unshared size.
-pub(super) fn layout_units(
-    units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
-) -> HashMap<UnitId, Placement> {
-    layout(units, true)
-}
-
-/// Travelling groups retain their slots without pinning the group to its tile area.
-pub(super) fn layout_travelling(
-    units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
-) -> HashMap<UnitId, Placement> {
-    layout(units, false)
-}
-
+/// tile so even a full tile of units stays close to its unshared size. The grid is
+/// centered on the members' mean bounds center, which is the point a group was sent
+/// to; it is never pulled toward the tile center, so arriving never shifts the group
+/// and a lone unit stands exactly on the ordered point.
 #[expect(
     clippy::cast_precision_loss,
     reason = "tile capacity bounds each group to at most u16::MAX units"
 )]
-fn layout(
+pub(super) fn layout_units(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
-    constrain_to_group: bool,
 ) -> HashMap<UnitId, Placement> {
     let mut tiles = BTreeMap::<(i32, i32), Vec<_>>::new();
     for (id, position, bounds) in units {
@@ -140,7 +129,7 @@ fn layout(
             .push((id, to_world(position), bounds));
     }
     let mut placements = HashMap::default();
-    for ((x, y), mut group) in tiles {
+    for (_, mut group) in tiles {
         group.sort_unstable_by_key(|&(id, _, _)| id);
         let count = group.len();
         let mut columns = count.isqrt() + usize::from(count.isqrt().pow(2) < count);
@@ -164,19 +153,11 @@ fn layout(
         let rows = count.div_ceil(columns);
         let available = group_area();
         let scale = (available / bounds.max_element()).min(1.0);
-        let half_bounds = bounds * scale / 2.0;
-        let tile_center = to_world(SimPos::new(x, y) * TILE + SimPos::splat(TILE / 2));
-        let slack = (Vec2::splat(available / 2.0) - half_bounds).max(Vec2::ZERO);
-        let desired = group
+        let center = group
             .iter()
             .map(|unit| unit.1 + unit.2.offset * scale)
             .sum::<Vec2>()
             / count as f32;
-        let center = if constrain_to_group {
-            desired.clamp(tile_center - slack, tile_center + slack)
-        } else {
-            desired
-        };
         let stride = (cell + Vec2::splat(UNIT_GAP)) * scale;
         for (index, (id, _, unit_bounds)) in group.into_iter().enumerate() {
             let row = index / columns;
@@ -201,6 +182,8 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    use rts_base::TILE;
+
     use super::*;
 
     fn circle(radius: f32) -> UnitBounds {
@@ -212,20 +195,9 @@ mod tests {
 
     fn assert_packed(units: &[(UnitId, SimPos, UnitBounds)]) {
         let layout = layout_units(units.iter().copied());
-        let available = group_area();
-        for &(id, pos, footprint) in units {
+        for &(id, _, footprint) in units {
             let placement = layout[&id];
             let bounds = footprint.world_rect(&crate::units::placement_transform(placement));
-            let center = to_world(tile_of(pos) * TILE + SimPos::splat(TILE / 2));
-            let area = Rect::from_center_size(center, Vec2::splat(available + 0.05));
-            assert!(
-                area.contains(bounds.min),
-                "{id:?} spills out of the group area"
-            );
-            assert!(
-                area.contains(bounds.max),
-                "{id:?} spills out of the group area"
-            );
             assert!(placement.scale > 0.0 && placement.scale <= 1.0);
             for &(other, _, other_footprint) in units.iter().filter(|unit| unit.0 > id) {
                 let other =
@@ -333,17 +305,19 @@ mod tests {
 
     #[test]
     fn oversized_singleton_fits_custom_rules() {
-        assert_packed(&[(UnitId(0), SimPos::ZERO, circle(256.0))]);
+        let units = [(UnitId(0), SimPos::ZERO, circle(256.0))];
+        assert_packed(&units);
+        assert!(layout_units(units.into_iter())[&UnitId(0)].scale < 1.0);
     }
 
     #[test]
-    fn travelling_group_offsets_stay_constant_across_centers_and_boundaries() {
+    fn group_offsets_stay_constant_across_centers_and_boundaries() {
         let group = |position| (0..4).map(move |id| (UnitId(id), position, circle(38.375)));
         let start = SimPos::splat(TILE / 2);
-        let reference = layout_travelling(group(start));
+        let reference = layout_units(group(start));
         for step in 0..=80 {
             let position = SimPos::new(step * TILE / 20, TILE / 2);
-            let placements = layout_travelling(group(position));
+            let placements = layout_units(group(position));
             for id in reference.keys() {
                 let expected_offset = reference[id].position - to_world(start);
                 let actual_offset = placements[id].position - to_world(position);
@@ -354,29 +328,40 @@ mod tests {
     }
 
     #[test]
-    fn tile_crossing_moves_continuously_without_fixed_clock_rewinds() {
-        let id = UnitId(0);
-        let before =
-            layout_units([(id, SimPos::new(TILE - 1, TILE / 2), circle(38.375))].into_iter())[&id];
-        let after =
-            layout_units([(id, SimPos::new(TILE + 1, TILE / 2), circle(38.375))].into_iter())[&id];
-        // A tiny simulation move produces a larger clamped-layout change.
-        let crossing_distance = after.position.x - before.position.x;
-        assert!(crossing_distance > 15.0);
-        let mut motion = PlacementMotion::new(before);
-        assert_eq!(motion.advance(after, 0.0).position, before.position);
-        let mut last = before;
-        for _ in 0..24 {
-            let drawn = motion.advance(after, 1.0 / 120.0);
-            assert!(drawn.position.x > last.position.x);
-            assert!(drawn.position.x < after.position.x);
-            assert!(drawn.position.x - last.position.x < crossing_distance / 10.0);
-            assert_eq!(drawn.position.y, before.position.y);
-            last = drawn;
+    fn a_lone_unit_stands_exactly_on_the_ordered_point_across_tile_edges() {
+        for position in [
+            SimPos::ZERO,
+            SimPos::new(1, TILE - 1),
+            SimPos::new(TILE - 1, TILE / 2),
+            SimPos::new(TILE + 1, TILE / 2),
+            SimPos::new(3 * TILE - 1, 2 * TILE),
+        ] {
+            let placement =
+                layout_units([(UnitId(0), position, circle(51.125))].into_iter())[&UnitId(0)];
+            assert_eq!(placement.position, to_world(position));
+            assert_eq!(placement.scale, 1.0);
         }
-        // Holding the latest layout during a stalled turn keeps moving forward;
-        // no overstep reset can send the visual back to the previous snapshot.
-        assert!(last.position.x > crossing_distance.mul_add(0.8, before.position.x));
+    }
+
+    #[test]
+    fn stopped_groups_stay_on_the_ordered_point_near_tile_edges() {
+        // Four workers ordered to a point near the right edge of their tile.
+        let target = SimPos::new(TILE - 1, TILE / 2);
+        let units: Vec<_> = (0..4)
+            .map(|id| (UnitId(id), target, circle(38.375)))
+            .collect();
+        let layout = layout_units(units.iter().copied());
+        let center = layout
+            .values()
+            .map(|placement| placement.position)
+            .sum::<Vec2>()
+            / 4.0;
+        assert_eq!(center, to_world(target));
+        assert!(
+            center.distance(to_world(SimPos::splat(TILE / 2))) > 60.0,
+            "the group slid toward the tile center"
+        );
+        assert_packed(&units);
     }
 
     #[test]

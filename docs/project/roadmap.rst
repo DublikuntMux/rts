@@ -98,8 +98,10 @@ M3 — Multiplayer
 
 Unit movement and sprites
    Linear simulation-position interpolation keeps travel speed steady through
-   tile centers and boundaries. Travelling groups keep unclamped slots; packing
-   offsets and scale ease independently when groups change or units stop. Unit rules require sprite
+   tile centers and boundaries. Packed groups are anchored at the point they
+   were ordered to, never at the tile center, so arriving never shifts them and
+   a lone unit stands exactly on its ordered point. Packing offsets and scale
+   ease independently when groups change or units stop. Unit rules require sprite
    paths; bundled worker and soldier sprites use transparent backgrounds and
    player-color tinting. Distant units switch to their solid bounding
    rectangles at the same zoom as terrain colors, sharing the map's configurable
