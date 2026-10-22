@@ -6,6 +6,21 @@ first within each milestone. Add an entry when you finish one. State plainly
 what was *not* run, such as rendered browser sessions or a physical Android
 device.
 
+Tooling
+-------
+
+**CI and release workflows.** Added continuous integration and a manual
+release pipeline. `actionlint` 1.7.12 with ShellCheck 0.11.0 accepted both
+workflows, and the extracted run blocks passed `bash -n`. The changelog script
+was exercised against an empty
+tag history, a later release, and a re-run of the latest tag, and the release
+asset checks and download table were generated locally. Gradle configuration
+with `-PversionName` and `-PversionCode` succeeded. Formatting, all workspace
+tests, strict all-target Clippy, the full-workspace ``wasm32`` check, and the
+strict Sphinx build passed. The workflows have not yet run on GitHub-hosted
+runners, and the Windows, macOS, Linux, Android, and Pages packaging and
+deployment steps were not executed end to end here.
+
 Client scenes
 -------------
 

@@ -35,7 +35,9 @@ With a device connected through ``adb`` or an emulator running:
    ./gradlew installDebug
 
 Use ``./gradlew assembleRelease`` for an optimized APK. The release build is
-signed with the debug key for now.
+signed with the debug key for now. The release workflow overrides the version
+with ``-PversionName`` and ``-PversionCode``; without them Gradle uses the
+defaults in ``app/build.gradle.kts``.
 
 How the build works
 -------------------

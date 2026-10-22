@@ -8,7 +8,9 @@ platforms is the most expensive kind of bug in this project.
 Required checks
 ---------------
 
-From the repository root:
+The ``CI`` workflow runs the required checks on every push and pull request;
+see :doc:`releasing` for the jobs and their caches. To run them locally, from
+the repository root:
 
 .. code-block:: sh
 

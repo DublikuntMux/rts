@@ -20,8 +20,9 @@ android {
         applicationId = "cudzinec.rts"
         minSdk = minSdkVersion
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        // The release workflow passes these from the version input and run number.
+        versionCode = project.findProperty("versionCode")?.toString()?.toInt() ?: 1
+        versionName = project.findProperty("versionName")?.toString() ?: "0.1.0"
         ndk {
             abiFilters += abis
         }

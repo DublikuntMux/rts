@@ -48,6 +48,7 @@ Find what you need
    guides/web
    guides/android
    guides/testing
+   guides/releasing
 
 .. toctree::
    :maxdepth: 1
