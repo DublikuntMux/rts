@@ -29,7 +29,7 @@ Targets
      - WebGL2
      - Vulkan or GLES via wgpu
    * - Asset pack
-     - File next to the executable
+     - File next to the executable; ``Contents/Resources`` in macOS app bundles
      - Fetched, then range requests
      - Mapped from the APK
    * - WebSocket

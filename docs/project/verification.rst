@@ -9,6 +9,17 @@ device.
 Tooling
 -------
 
+**macOS release signing.** Release run ``39764031811`` compiled every target,
+but macOS packaging failed because ``assets.pack`` was placed in
+``Contents/MacOS``, where code signing expects code. The pack now lives in
+``Contents/Resources`` and the macOS loader resolves that location for app
+bundles. Regressions cover moved and renamed apps, standalone Cargo builds,
+and directories that are not app bundles. Workspace tests, strict all-target
+Clippy, formatting, the full-workspace WebAssembly check, workflow lint with
+ShellCheck, and the strict Sphinx build passed. The workflow now verifies
+both macOS signatures before creating the archive. Actual macOS signing and
+an end-to-end release were not rerun from this Linux workspace.
+
 **CI and release workflows.** Added continuous integration and a manual
 release pipeline. `actionlint` 1.7.12 with ShellCheck 0.11.0 accepted both
 workflows, and the extracted run blocks passed `bash -n`. The changelog script

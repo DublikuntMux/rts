@@ -58,7 +58,9 @@ reruns whenever ``assets/`` changes, so editing a map and running
      - How the pack is opened
    * - Desktop
      - ``AssetBundle::from_file`` on ``assets.pack`` next to the running
-       executable.
+       executable. macOS app bundles use ``Contents/Resources/assets.pack``
+       relative to the app, keeping data out of the signed code directory
+       ``Contents/MacOS``. Standalone macOS Cargo builds use the adjacent pack.
    * - Web
      - ``AssetBundle::from_url("assets.pack")``, awaited in
        ``wasm_bindgen_futures::spawn_local`` before the Bevy app starts. Later

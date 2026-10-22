@@ -105,7 +105,7 @@ jobs:
               printf 'The web build is also published to GitHub Pages.\n\n'
             fi
             printf '## Notes\n\n'
-            printf -- '- Keep assets.pack next to rts in the desktop and macOS builds; the game opens it beside the executable.\n'
+            printf -- '- Keep assets.pack next to rts on Linux and Windows. On macOS it is included inside RTS.app/Contents/Resources.\n'
             printf -- '- macOS builds are ad-hoc signed. On first launch, right-click **RTS.app** and choose **Open**.\n'
             printf -- '- Android APK file use the debug signing key.\n'
           } >> release-notes.md
@@ -271,12 +271,12 @@ jobs:
           intel=x86_64-apple-darwin
           stage="rts-macos-universal-${TAG}"
           app="$stage/RTS.app"
-          mkdir -p "$app/Contents/MacOS"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           lipo -create -output "$app/Contents/MacOS/rts" \
             "target/$arm/release/rts" "target/$intel/release/rts"
           lipo -create -output "$stage/rts-server" \
             "target/$arm/release/rts-server" "target/$intel/release/rts-server"
-          cp "target/$arm/release/assets.pack" "$app/Contents/MacOS/"
+          cp "target/$arm/release/assets.pack" "$app/Contents/Resources/"
           cat > "$app/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -307,6 +307,8 @@ jobs:
           PLIST
           codesign --force --sign - "$app"
           codesign --force --sign - "$stage/rts-server"
+          codesign --verify --strict --verbose=2 "$app"
+          codesign --verify --strict --verbose=2 "$stage/rts-server"
           ditto -c -k --sequesterRsrc --keepParent "$stage" "$stage.zip"
       - uses: actions/upload-artifact@v7
         with:

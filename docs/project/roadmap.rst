@@ -66,7 +66,8 @@ Completed
 
 M0 — Skeleton
    Bevy app for desktop, web, and Android; asset packing; RTS camera with
-   keyboard, edge, and drag pan, and wheel and pinch zoom.
+   keyboard, edge, and drag pan, and wheel and pinch zoom. macOS releases keep
+   the asset pack in the app bundle's Resources directory for code signing.
 
 M1 — Simulation core and map format
    ``rts_base`` with world units, validated rules and map RON formats, the
