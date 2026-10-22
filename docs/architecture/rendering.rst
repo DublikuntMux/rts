@@ -127,17 +127,21 @@ from the unit's diameter. The sprite is sized to this footprint. See
 Stopped units sharing a tile, including different owners, occupy a compact grid in
 ``UnitId`` order. Cells use the group's maximum width and height; the grid
 orientation minimizes its longest side. Cells have a nominal four-world-pixel
-gap (scaled with the group) and four world pixels of tile padding. The last
+gap (scaled with the group) and four world pixels of border padding. The last
 row is centered.
 
-The group is anchored at its members' mean bounds center, clamped so the whole
-bounding box fits inside the tile. If the grid is too large, a common visual
-scale fits it to the available space, preserving relative unit sizes. An
-isolated unit keeps its original size unless its footprint exceeds tile bounds.
-Offsets and scale live in the root ``Transform``. The root is placed at the
-slot center minus the scaled bounds offset; the sprite anchor and selection
-add that offset back exactly once. Tile capacity, paths, simulation positions,
-and state hashes are unaffected.
+A packed group may fill one and a half tiles, centered on its tile. Crowded
+sprites therefore grow past the tile edge instead of shrinking into it: a full
+tile of workers keeps its unshared size, and two soldiers still draw over 85%
+of theirs. The group is anchored at its members' mean bounds center, clamped so
+the whole bounding box stays inside that group area. If the grid is larger
+still, a common visual scale fits it to the area, preserving relative unit
+sizes. An isolated unit keeps its original size unless its footprint exceeds
+the group area. Overlap with a neighbouring tile's group is a presentation
+detail; tile capacity never changes. Offsets and scale live in the root
+``Transform``. The root is placed at the slot center minus the scaled bounds
+offset; the sprite anchor and selection add that offset back exactly once.
+Tile capacity, paths, simulation positions, and state hashes are unaffected.
 
 Movement smoothing
 ------------------

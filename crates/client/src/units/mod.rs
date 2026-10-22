@@ -179,7 +179,11 @@ mod tests {
     use bevy::{scene::ScenePlugin, state::app::StatesPlugin, time::TimeUpdateStrategy};
     use rts_base::{Command, IVec2 as SimPos, MapData, PlayerId, Rules, Sim, TILE};
 
-    use crate::{camera::RtsCamera, map::update_zoom_detail};
+    use crate::{
+        camera::RtsCamera,
+        map::{to_world_distance, update_zoom_detail},
+        units::layout::group_area,
+    };
 
     use super::*;
 
@@ -239,6 +243,7 @@ mod tests {
         for fps in [30_u16, 60, 120, 144] {
             let rules =
                 Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
+            let speed = to_world_distance(rules.unit(UnitKind(0)).speed);
             let map = MapData::from_ron(
                 r#"(name: "steady travel", players: [(start: (0.5,0.5))],
                 tiles: ["........."], units: [(kind:"worker",owner:0,pos:(0.5,0.5))])"#,
@@ -264,13 +269,20 @@ mod tests {
                 let entity = app.world().resource::<UnitVisuals>().entities[&UnitId(0)];
                 let position = app.world().get::<Transform>(entity).unwrap().translation;
                 let now = app.world().resource::<Time>().elapsed_secs();
+                // Stop before the destination so arrival deceleration is not measured.
+                if position.x > 880.0 {
+                    break;
+                }
                 if let Some(previous) = last
                     && now > 0.3
                 {
                     let step: Vec3 = position - previous;
-                    let expected = 320.0 / f32::from(fps);
+                    let expected = speed / f32::from(fps);
+                    // Simulation positions are integer world units, so a tick that does not
+                    // divide evenly still jitters by up to one world unit of travel.
+                    let tolerance = to_world_distance(1) + 0.02;
                     assert!(
-                        (step.x - expected).abs() < 0.02,
+                        (step.x - expected).abs() < tolerance,
                         "{fps} FPS at {now}s: step {} instead of {expected}",
                         step.x
                     );
@@ -506,6 +518,10 @@ mod tests {
         let bounds = UnitBounds::from_definition(sim.rules().unit(UnitKind(0)));
         assert_eq!(bounds.offset, Vec2::new(16.0, 32.0));
         assert_eq!(bounds.size, Vec2::new(112.0, 32.0));
+        let area = Rect::from_center_size(
+            to_world(SimPos::splat(TILE / 2)),
+            Vec2::splat(group_area() + 0.05),
+        );
         let mut app = scene_app(sim);
         app.update();
         let entities = &app.world().resource::<UnitVisuals>().entities;
@@ -519,8 +535,10 @@ mod tests {
                     rect.center(),
                     transform.translation.truncate() + bounds.offset
                 );
-                assert!(rect.min.cmpge(Vec2::new(0.0, -128.0)).all());
-                assert!(rect.max.cmple(Vec2::new(128.0, 0.0)).all());
+                assert!(
+                    area.contains(rect.min) && area.contains(rect.max),
+                    "{rect:?}"
+                );
                 rect
             })
             .collect();

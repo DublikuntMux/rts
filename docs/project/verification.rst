@@ -35,6 +35,17 @@ deployment steps were not executed end to end here.
 Client scenes
 -------------
 
+
+**Larger crowded unit groups.** Packed tile groups may now fill one and a half
+tiles instead of the tile interior, so a tile of four workers keeps its
+unshared size and two soldiers draw over 85 percent of theirs. Regressions
+cover crowded and mixed-size groups at tile centers and edges, stable ID
+ordering, independent tiles, oversized custom units, group-area containment
+without overlap, travelling slot stability, and unchanged simulation hashes.
+All 239 workspace tests, strict all-target Clippy, formatting, the client
+WebAssembly check, and the strict Sphinx build passed. A rendered browser
+session and an Android build were not rerun.
+
 **Phone HUD with floating controls.** All 241 workspace tests, strict
 all-target Clippy, formatting, the client WebAssembly check, a Trunk build,
 and the strict Sphinx build passed. Shared-geometry regressions cover phone

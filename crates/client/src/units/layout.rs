@@ -9,6 +9,9 @@ use crate::map::{TILE_PX, to_world, to_world_distance};
 
 const TILE_PADDING: f32 = 4.0;
 const UNIT_GAP: f32 = 4.0;
+/// Crowded groups may fill this multiple of a tile's width. Stacked units stay large
+/// and spill past the tile edge instead of shrinking into it.
+const GROUP_AREA: f32 = 1.5;
 // Ease only packing changes; simulation travel is interpolated separately.
 const MOTION_RESPONSE_SECONDS: f32 = 0.1;
 const POSITION_SETTLE_DISTANCE: f32 = 0.01;
@@ -95,15 +98,25 @@ impl PlacementMotion {
     }
 }
 
+/// Width of the area a packed tile group may fill, in world pixels.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "the tile size is a small power of two"
+)]
+pub(super) fn group_area() -> f32 {
+    (TILE_PX as f32).mul_add(GROUP_AREA, -2.0 * TILE_PADDING)
+}
+
 /// Pack sprite bounds in ID order, retaining relative unit sizes.
-/// A common fit scale allows even custom rules with oversized radii to fit.
+/// A common fit scale keeps the grid inside the group area, which may exceed the
+/// tile so even a full tile of units stays close to its unshared size.
 pub(super) fn layout_units(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
 ) -> HashMap<UnitId, Placement> {
     layout(units, true)
 }
 
-/// Travelling groups retain their slots without pinning the group to tile interiors.
+/// Travelling groups retain their slots without pinning the group to its tile area.
 pub(super) fn layout_travelling(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
 ) -> HashMap<UnitId, Placement> {
@@ -116,7 +129,7 @@ pub(super) fn layout_travelling(
 )]
 fn layout(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
-    constrain_to_tile: bool,
+    constrain_to_group: bool,
 ) -> HashMap<UnitId, Placement> {
     let mut tiles = BTreeMap::<(i32, i32), Vec<_>>::new();
     for (id, position, bounds) in units {
@@ -149,7 +162,7 @@ fn layout(
             }
         }
         let rows = count.div_ceil(columns);
-        let available = 2.0_f32.mul_add(-TILE_PADDING, TILE_PX as f32);
+        let available = group_area();
         let scale = (available / bounds.max_element()).min(1.0);
         let half_bounds = bounds * scale / 2.0;
         let tile_center = to_world(SimPos::new(x, y) * TILE + SimPos::splat(TILE / 2));
@@ -159,7 +172,7 @@ fn layout(
             .map(|unit| unit.1 + unit.2.offset * scale)
             .sum::<Vec2>()
             / count as f32;
-        let center = if constrain_to_tile {
+        let center = if constrain_to_group {
             desired.clamp(tile_center - slack, tile_center + slack)
         } else {
             desired
@@ -199,13 +212,20 @@ mod tests {
 
     fn assert_packed(units: &[(UnitId, SimPos, UnitBounds)]) {
         let layout = layout_units(units.iter().copied());
+        let available = group_area();
         for &(id, pos, footprint) in units {
             let placement = layout[&id];
             let bounds = footprint.world_rect(&crate::units::placement_transform(placement));
             let center = to_world(tile_of(pos) * TILE + SimPos::splat(TILE / 2));
-            let tile = Rect::from_center_size(center, Vec2::splat(to_world(SimPos::X * TILE).x));
-            assert!(tile.contains(bounds.min), "{id:?} spills out of tile");
-            assert!(tile.contains(bounds.max), "{id:?} spills out of tile");
+            let area = Rect::from_center_size(center, Vec2::splat(available + 0.05));
+            assert!(
+                area.contains(bounds.min),
+                "{id:?} spills out of the group area"
+            );
+            assert!(
+                area.contains(bounds.max),
+                "{id:?} spills out of the group area"
+            );
             assert!(placement.scale > 0.0 && placement.scale <= 1.0);
             for &(other, _, other_footprint) in units.iter().filter(|unit| unit.0 > id) {
                 let other =
@@ -240,6 +260,48 @@ mod tests {
                     .collect();
                 assert_packed(&units);
             }
+        }
+    }
+
+    #[test]
+    fn crowded_groups_keep_unshared_size_and_spill_past_the_tile() {
+        let pos = SimPos::splat(TILE / 2);
+        let workers: Vec<_> = (0..4).map(|id| (UnitId(id), pos, circle(38.375))).collect();
+        let layout = layout_units(workers.iter().copied());
+        let tile = Rect::from_center_size(to_world(pos), Vec2::splat(to_world(SimPos::X * TILE).x));
+        let rects: Vec<_> = workers
+            .iter()
+            .map(|&(id, _, footprint)| {
+                let placement = layout[&id];
+                assert_eq!(
+                    placement.scale, 1.0,
+                    "a full tile of workers stays full size"
+                );
+                footprint.world_rect(&crate::units::placement_transform(placement))
+            })
+            .collect();
+        let left = rects
+            .iter()
+            .fold(f32::INFINITY, |left, rect| left.min(rect.min.x));
+        let right = rects
+            .iter()
+            .fold(f32::NEG_INFINITY, |right, rect| right.max(rect.max.x));
+        assert!(
+            right - left > tile.width(),
+            "crowded sprites overlap tile edges"
+        );
+        assert_packed(&workers);
+
+        // Two soldiers at full size would cover more than the tile, so they shrink
+        // only slightly instead of down to the old packed size.
+        let soldiers: Vec<_> = (0..2).map(|id| (UnitId(id), pos, circle(51.125))).collect();
+        assert_packed(&soldiers);
+        for placement in layout_units(soldiers.iter().copied()).values() {
+            assert!(
+                placement.scale > 0.85,
+                "two soldiers shrink to {}",
+                placement.scale
+            );
         }
     }
 
@@ -298,9 +360,9 @@ mod tests {
             layout_units([(id, SimPos::new(TILE - 1, TILE / 2), circle(38.375))].into_iter())[&id];
         let after =
             layout_units([(id, SimPos::new(TILE + 1, TILE / 2), circle(38.375))].into_iter())[&id];
-        // A tiny simulation move produces a much larger clamped-layout change.
+        // A tiny simulation move produces a larger clamped-layout change.
         let crossing_distance = after.position.x - before.position.x;
-        assert!(crossing_distance > 80.0);
+        assert!(crossing_distance > 15.0);
         let mut motion = PlacementMotion::new(before);
         assert_eq!(motion.advance(after, 0.0).position, before.position);
         let mut last = before;

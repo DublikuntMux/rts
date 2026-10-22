@@ -118,8 +118,8 @@ Unit types
      - Positive starting health. Combat arrives in M4.
    * - ``radius``
      - decimal tiles
-     - Positive nominal drawing radius. Crowded visual groups scale to fit
-       their tile; see :doc:`../architecture/rendering`.
+     - Positive nominal drawing radius. Crowded visual groups stay near this
+       size and may spill past their tile; see :doc:`../architecture/rendering`.
    * - ``visual_bounds``
      - optional bounds
      - ``Some((offset: (x, y), size: (width, height)))`` in tiles. Used for
@@ -137,8 +137,10 @@ round to zero or exceed the 32-bit range are rejected.
 The client draws ``sprite`` at the size and offset given by ``visual_bounds``.
 When bounds are absent or ``None``, the image fills a centered square with
 width and height ``2 × radius``. Crowded visual groups scale the sprite and
-its bounds together. The simulation never reads ``sprite``; changing only
-its path does not affect movement or state hashes.
+its bounds together, but only as far as a group area of one and a half tiles
+requires, so stacked units keep most of their unshared size. The simulation
+never reads ``sprite``; changing only its path does not affect movement or
+state hashes.
 
 Custom sprite bounds
 --------------------
@@ -164,7 +166,7 @@ Bounds describe the sprite footprint and displayed dimensions; they do not
 crop artwork. Images are stretched to fill these dimensions.
 The client scales the footprint and its offset with the sprite, placing the
 bounds center in its assigned tile slot. Rectangular groups choose the grid
-orientation that best fits the tile. See :doc:`../architecture/rendering`.
+orientation that best fits the group area. See :doc:`../architecture/rendering`.
 These fields affect presentation only: paths, tile capacity, unit positions,
 and simulation hashes are unchanged. They travel with the rules text through
 server setup and replays.
