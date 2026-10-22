@@ -71,8 +71,8 @@ The workflow builds and publishes:
    * - ``rts-macos-universal-<tag>.zip``
      - Ad-hoc-signed ``RTS.app`` with a universal binary, ``rts-server``, and
        ``assets.pack``.
-   * - ``rts-android-<tag>.apk`` / ``.aab``
-     - Release APK and app bundle, signed with the debug key.
+   * - ``rts-android-<tag>.apk``
+     - Release APK, signed with the debug key.
    * - ``rts-web-<tag>.zip``
      - Trunk output for any static host.
    * - ``CHANGELOG.md`` and ``SHA256SUMS``
@@ -143,4 +143,4 @@ packaging locally with:
 
    cargo build --locked --release --workspace
    cargo ndk -t arm64-v8a -t x86_64 -P 31 build -p rts_android --release
-   cd android && ./gradlew assembleRelease bundleRelease
+   cd android && ./gradlew assembleRelease

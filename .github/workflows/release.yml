@@ -99,7 +99,7 @@ jobs:
             printf '| Linux (x86_64) | rts-linux-x86_64-%s.tar.gz |\n' "$TAG"
             printf '| Windows (x86_64) | rts-windows-x86_64-%s.zip |\n' "$TAG"
             printf '| macOS (universal) | rts-macos-universal-%s.zip |\n' "$TAG"
-            printf '| Android | rts-android-%s.apk, rts-android-%s.aab |\n' "$TAG" "$TAG"
+            printf '| Android | rts-android-%s.apk |\n' "$TAG"
             printf '| Web | rts-web-%s.zip |\n\n' "$TAG"
             if [ "$DEPLOY_WEB" = "true" ]; then
               printf 'The web build is also published to GitHub Pages.\n\n'
@@ -107,7 +107,7 @@ jobs:
             printf '## Notes\n\n'
             printf -- '- Keep assets.pack next to rts in the desktop and macOS builds; the game opens it beside the executable.\n'
             printf -- '- macOS builds are ad-hoc signed. On first launch, right-click **RTS.app** and choose **Open**.\n'
-            printf -- '- Android APK and AAB files currently use the debug signing key, so they are for testing rather than store submission.\n'
+            printf -- '- Android APK file use the debug signing key.\n'
           } >> release-notes.md
       - uses: actions/upload-artifact@v7
         with:
@@ -355,18 +355,17 @@ jobs:
         with:
           tool: cargo-ndk
       - uses: gradle/actions/setup-gradle@v6
-      - name: Build the APK and AAB
+      - name: Build the APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease bundleRelease \
+          ./gradlew --no-daemon --stacktrace assembleRelease \
             -PversionName="$VERSION" \
             -PversionCode="${{ github.run_number }}"
       - name: Package the Android builds
         run: |
           set -euo pipefail
           cp android/app/build/outputs/apk/release/app-release.apk "rts-android-${TAG}.apk"
-          cp android/app/build/outputs/bundle/release/app-release.aab "rts-android-${TAG}.aab"
       - uses: actions/upload-artifact@v7
         with:
           name: rts-android
@@ -402,7 +401,6 @@ jobs:
             "rts-windows-x86_64-${TAG}.zip" \
             "rts-macos-universal-${TAG}.zip" \
             "rts-android-${TAG}.apk" \
-            "rts-android-${TAG}.aab" \
             "rts-web-${TAG}.zip"; do
             if [ ! -s "release-assets/$asset" ]; then
               echo "::error::missing release asset: $asset"
