@@ -107,7 +107,8 @@ jobs:
             printf '## Notes\n\n'
             printf -- '- Keep assets.pack next to rts on Linux and Windows. On macOS it is included inside RTS.app/Contents/Resources.\n'
             printf -- '- macOS builds are ad-hoc signed. On first launch, right-click **RTS.app** and choose **Open**.\n'
-            printf -- '- Android APK file use the debug signing key.\n'
+            printf -- '- These are debug builds without release optimizations.\n'
+            printf -- '- The Android APK is signed with the debug key.\n'
           } >> release-notes.md
       - uses: actions/upload-artifact@v7
         with:
@@ -151,7 +152,7 @@ jobs:
           key: trunk-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: trunk-${{ runner.os }}-
       - name: Build the web bundle
-        run: trunk build --release --public-url "${{ steps.pages.outputs.public_url }}"
+        run: trunk build --public-url "${{ steps.pages.outputs.public_url }}"
       - name: Package the web bundle
         run: |
           set -euo pipefail
@@ -237,21 +238,21 @@ jobs:
       - name: Build (Linux and Windows)
         if: runner.os != 'macOS'
         shell: bash
-        run: cargo build --locked --release --workspace --target "$TARGET"
+        run: cargo build --locked --workspace --target "$TARGET"
       - name: Build (macOS universal)
         if: runner.os == 'macOS'
         run: |
-          cargo build --locked --release --workspace --target aarch64-apple-darwin
-          cargo build --locked --release --workspace --target x86_64-apple-darwin
+          cargo build --locked --workspace --target aarch64-apple-darwin
+          cargo build --locked --workspace --target x86_64-apple-darwin
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           stage="rts-linux-x86_64-${TAG}"
           mkdir -p "$stage"
-          cp "target/${TARGET}/release/rts" "$stage/"
-          cp "target/${TARGET}/release/rts-server" "$stage/"
-          cp "target/${TARGET}/release/assets.pack" "$stage/"
+          cp "target/${TARGET}/debug/rts" "$stage/"
+          cp "target/${TARGET}/debug/rts-server" "$stage/"
+          cp "target/${TARGET}/debug/assets.pack" "$stage/"
           tar -czf "$stage.tar.gz" "$stage"
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -259,9 +260,9 @@ jobs:
         run: |
           $stage = "rts-windows-x86_64-$env:TAG"
           New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item "target/$env:TARGET/release/rts.exe" $stage
-          Copy-Item "target/$env:TARGET/release/rts-server.exe" $stage
-          Copy-Item "target/$env:TARGET/release/assets.pack" $stage
+          Copy-Item "target/$env:TARGET/debug/rts.exe" $stage
+          Copy-Item "target/$env:TARGET/debug/rts-server.exe" $stage
+          Copy-Item "target/$env:TARGET/debug/assets.pack" $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip" -Force
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -273,10 +274,10 @@ jobs:
           app="$stage/RTS.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           lipo -create -output "$app/Contents/MacOS/rts" \
-            "target/$arm/release/rts" "target/$intel/release/rts"
+            "target/$arm/debug/rts" "target/$intel/debug/rts"
           lipo -create -output "$stage/rts-server" \
-            "target/$arm/release/rts-server" "target/$intel/release/rts-server"
-          cp "target/$arm/release/assets.pack" "$app/Contents/Resources/"
+            "target/$arm/debug/rts-server" "target/$intel/debug/rts-server"
+          cp "target/$arm/debug/assets.pack" "$app/Contents/Resources/"
           cat > "$app/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -361,13 +362,13 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease \
+          ./gradlew --no-daemon --stacktrace assembleDebug \
             -PversionName="$VERSION" \
             -PversionCode="${{ github.run_number }}"
       - name: Package the Android builds
         run: |
           set -euo pipefail
-          cp android/app/build/outputs/apk/release/app-release.apk "rts-android-${TAG}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "rts-android-${TAG}.apk"
       - uses: actions/upload-artifact@v7
         with:
           name: rts-android

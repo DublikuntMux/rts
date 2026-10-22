@@ -72,11 +72,16 @@ The workflow builds and publishes:
      - Ad-hoc-signed ``RTS.app`` with a universal binary and
        ``Contents/Resources/assets.pack``, plus the standalone ``rts-server``.
    * - ``rts-android-<tag>.apk``
-     - Release APK, signed with the debug key.
+     - Debug APK, signed with the debug key.
    * - ``rts-web-<tag>.zip``
      - Trunk output for any static host.
    * - ``CHANGELOG.md`` and ``SHA256SUMS``
      - Generated release notes and checksums for every other asset.
+
+Every asset is built in the debug profile: ``cargo build`` and ``trunk build``
+without ``--release``, and Gradle ``assembleDebug``. The artifacts are
+unoptimized test builds, so expect larger binaries and lower frame rates than a
+release build.
 
 On Linux and Windows, the game opens ``assets.pack`` from the directory
 containing the executable, so keep the files together. The macOS app opens
@@ -85,10 +90,10 @@ contains only the executable so code signing treats the pack as a resource.
 The workflow verifies the app and server signatures before archiving.
 macOS builds are ad-hoc signed
 because the project has no Apple developer certificate: the first launch needs
-right-click **Open**. Android release builds still use the debug signing key,
-so they install for testing but cannot be uploaded to Google Play. Replace the
-signing configuration in ``android/app/build.gradle.kts`` before a store
-release.
+right-click **Open**. Android debug builds use the auto-generated debug signing
+key, so they install for testing but cannot be uploaded to Google Play. Replace
+the signing configuration in ``android/app/build.gradle.kts`` and switch the
+workflow back to ``assembleRelease`` before a store release.
 
 Versioning and changelogs
 -------------------------
