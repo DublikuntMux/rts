@@ -51,10 +51,9 @@ struct UnitVisuals {
 }
 
 /// The sprite and distant rectangle share exactly the same size and anchor.
-fn unit_scene(id: UnitId, sprite: Sprite, bounds: UnitBounds, placement: Placement) -> impl Scene {
+fn unit_scene(id: UnitId, sprite: Sprite, anchor: Anchor, placement: Placement) -> impl Scene {
     let visual = UnitVisual(id);
     let transform = placement_transform(placement);
-    let anchor = Anchor(-bounds.offset / bounds.size);
     bsn! {
         DespawnOnExit<AppState>(AppState::InGame)
         visual
@@ -77,8 +76,9 @@ fn sync_units(
     fixed: Res<Time<Fixed>>,
     mut visuals: ResMut<UnitVisuals>,
     assets: Res<AssetServer>,
+    textures: Res<Assets<Image>>,
     detail: Res<ZoomDetail>,
-    mut sprites: Query<(&mut Transform, &mut Sprite)>,
+    mut sprites: Query<(&mut Transform, &mut Sprite, &mut Anchor)>,
 ) {
     // Moving and stopped units share one layout rule. They stay separate sets so a
     // unit walking through a tile does not re-pack the group standing there.
@@ -129,28 +129,35 @@ fn sync_units(
         let image = images
             .entry(unit.kind)
             .or_insert_with(|| assets.load(definition.sprite.clone()));
+        // Both detail modes draw the image's shape once it has loaded.
+        let size = bounds.sprite_size(textures.get(&*image).map(Image::size_f32));
+        let anchor = Anchor(-bounds.offset / size);
         let desired_image = if detail.0 {
             image.clone()
         } else {
             Handle::default()
         };
         if let Some(&entity) = entities.get(&id) {
-            if let Ok((mut transform, mut sprite)) = sprites.get_mut(entity) {
+            if let Ok((mut transform, mut sprite, mut current_anchor)) = sprites.get_mut(entity) {
                 *transform = placement_transform(placement);
                 if sprite.image != desired_image {
                     sprite.image = desired_image;
                 }
+                if sprite.custom_size != Some(size) {
+                    sprite.custom_size = Some(size);
+                }
+                current_anchor.set_if_neq(anchor);
             }
             continue;
         }
         let sprite = Sprite {
             image: desired_image,
             color: graphics.player_color(unit.owner.0),
-            custom_size: Some(bounds.size),
+            custom_size: Some(size),
             ..default()
         };
         let entity = commands
-            .spawn_scene(unit_scene(id, sprite, bounds, placement))
+            .spawn_scene(unit_scene(id, sprite, anchor, placement))
             .id();
         entities.insert(id, entity);
     }
@@ -451,6 +458,61 @@ mod tests {
             assert_eq!(sprite.custom_size, Some(bounds.size));
         }
         assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    }
+
+    #[test]
+    fn loaded_images_keep_their_aspect_ratio_inside_the_bounds() {
+        let rules = Rules::from_ron(
+            &include_str!("../../../../assets/data/core.rules.ron").replace(
+                "radius: 0.3,",
+                "radius: 0.3, visual_bounds: Some((offset: (0.125, -0.0625), size: (0.5, 0.5))),",
+            ),
+        )
+        .unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "aspect", players: [(start: (0.5,0.5))], tiles: ["."],
+            units: [(kind:"worker",owner:0,pos:(0.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let bounds = UnitBounds::from_definition(sim.rules().unit(UnitKind(0)));
+        let mut app = scene_app(sim);
+        app.update();
+        let entity = app.world().resource::<UnitVisuals>().entities[&UnitId(0)];
+        // Before the image loads, the sprite fills its bounds.
+        assert_eq!(
+            app.world().get::<Sprite>(entity).unwrap().custom_size,
+            Some(bounds.size)
+        );
+
+        let handle = app.world().resource::<UnitVisuals>().images[&UnitKind(0)].clone();
+        let wide = Image::new_fill(
+            bevy::render::render_resource::Extent3d {
+                width: 4,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            &[255; 4],
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::MAIN_WORLD,
+        );
+        app.world_mut()
+            .resource_mut::<Assets<Image>>()
+            .insert(handle.id(), wide)
+            .unwrap();
+        app.update();
+
+        let size = app
+            .world()
+            .get::<Sprite>(entity)
+            .unwrap()
+            .custom_size
+            .unwrap();
+        assert_eq!(size, Vec2::new(bounds.size.x, bounds.size.x / 2.0));
+        // The anchor keeps the narrower image centered on the bounds.
+        let anchor = app.world().get::<Anchor>(entity).unwrap();
+        assert_eq!(-anchor.0 * size, bounds.offset);
     }
 
     #[test]

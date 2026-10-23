@@ -107,8 +107,9 @@ Unit movement and sprites
    were ordered to, never at the tile center, so arriving never shifts them and
    a lone unit stands exactly on its ordered point. Packing offsets and scale
    ease independently when groups change or units stop. Unit rules require sprite
-   paths; bundled worker and soldier sprites use transparent backgrounds and
-   player-color tinting. Distant units switch to their solid bounding
+   paths; sprites of any aspect ratio fit their bounds and HUD portraits
+   without stretching. Bundled worker and soldier sprites use transparent
+   backgrounds and player-color tinting. Distant units switch to their solid bounding
    rectangles at the same zoom as terrain colors, sharing the map's configurable
    thresholds and hysteresis.
 

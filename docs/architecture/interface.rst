@@ -227,7 +227,8 @@ border; ocher marks selected minimap units and an armed Move command.
   to center the camera without issuing orders.
 * The center shows unit names, health totals, order status, and the current
   mouse or touch hint. A single unit has a sprite portrait; a group shows
-  up to twelve 48-pixel portraits. Activating a portrait narrows the selection
+  up to twelve 48-pixel portraits. Portrait images keep their aspect ratio,
+  centered in their square frames. Activating a portrait narrows the selection
   to that unit.
 * The command card uses fixed 48-pixel slots. **Move** (M) arms destination
   targeting, **Stop** (X) queues a Stop, and **Clear** empties the selection.

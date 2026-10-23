@@ -350,3 +350,44 @@ fn command_images_reference_decodable_transparent_assets() {
     }
     assert_eq!(count, 3);
 }
+
+#[test]
+fn unit_images_keep_their_aspect_ratio_in_square_frames() {
+    let mut app = app();
+    let id = app
+        .world()
+        .resource::<Match>()
+        .sim
+        .units()
+        .find(|(_, unit)| unit.owner == PlayerId(0))
+        .unwrap()
+        .0;
+    app.world_mut().resource_mut::<Selection>().units = [id].into();
+    app.update();
+    let mut portraits = app
+        .world_mut()
+        .query_filtered::<&ImageNode, With<PortraitImage>>();
+    let handle = portraits.single(app.world()).unwrap().image.clone();
+    let tall = Image::new_fill(
+        bevy::render::render_resource::Extent3d {
+            width: 1,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        &[255; 4],
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::MAIN_WORLD,
+    );
+    app.world_mut()
+        .resource_mut::<Assets<Image>>()
+        .insert(handle.id(), tall)
+        .unwrap();
+    app.update();
+    let mut images = app
+        .world_mut()
+        .query_filtered::<&Node, (With<UnitImage>, With<PortraitImage>)>();
+    let node = images.single(app.world()).unwrap();
+    assert_eq!(node.width, percent(25));
+    assert_eq!(node.height, percent(100));
+}

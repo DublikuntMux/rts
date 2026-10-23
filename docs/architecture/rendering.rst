@@ -112,7 +112,8 @@ size and crowded-group scaling do not affect the decision. All units, including
 new visuals, switch together; the shared hysteresis prevents flicker. Terrain
 textures still need to finish loading before they appear.
 
-Both unit modes share the same size, anchor, transform, and selection target.
+Both unit modes share the same size, anchor, transform, and selection target;
+a distant rectangle has the fitted image's shape.
 Rectangles use Bevy's white default sprite image; the required image handle
 remains cached for zooming back in. There are no separate unit detail settings.
 
@@ -121,7 +122,9 @@ Tile groups
 
 ``units/layout.rs`` uses the optional ``visual_bounds`` from the rules: a center
 offset and full width and height. When omitted, it derives a centered square
-from the unit's diameter. The sprite is sized to this footprint. See
+from the unit's diameter. Once the image has loaded, the sprite is scaled to
+fit inside this footprint at the image's own aspect ratio and centered on it,
+so non-square images are not stretched. Until then it fills the footprint. See
 :doc:`../reference/rules-format` for the RON syntax.
 
 Stopped units sharing a tile, including different owners, occupy a compact grid in

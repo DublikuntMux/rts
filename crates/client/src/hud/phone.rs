@@ -15,6 +15,8 @@ pub(super) struct DesktopOnly;
 #[derive(Component)]
 pub(super) struct SelectionButton;
 #[derive(Component)]
+pub(super) struct SelectionImage;
+#[derive(Component)]
 pub(super) struct SelectionCount;
 #[derive(Component)]
 pub(super) struct Backdrop;
@@ -40,14 +42,16 @@ pub(super) fn spawn_selection_button(parent: &mut ChildSpawnerCommands, font: &H
                 padding: UiRect::all(px(6)),
                 border: UiRect::all(px(1)),
                 display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
-            ImageNode::default(),
             BackgroundColor(FIELD),
             BorderColor::all(FIELD_EDGE),
             observe(open_details),
         ))
         .with_children(|button| {
+            button.spawn((SelectionImage, unit_image(Handle::default(), Color::WHITE)));
             button.spawn((
                 SelectionCount,
                 Pickable::IGNORE,
@@ -470,7 +474,6 @@ fn place_commands(node: &mut Node, layout: &HudLayout) {
 }
 
 type SelectionStyle<'a> = (
-    &'a mut ImageNode,
     &'a Hovered,
     Has<Pressed>,
     &'a mut BackgroundColor,
@@ -484,14 +487,17 @@ pub(super) fn update_controls(
     assets: Res<AssetServer>,
     graphics: Res<Graphics>,
     mut button: Query<SelectionStyle, With<SelectionButton>>,
+    mut image: Query<&mut ImageNode, With<SelectionImage>>,
     mut count: Query<&mut Text, (With<SelectionCount>, Without<PanelTitle>)>,
     mut title: Query<&mut Text, (With<PanelTitle>, Without<SelectionCount>)>,
 ) {
-    for (mut image, hovered, pressed, mut fill, mut edge) in &mut button {
-        if let Some(unit) = selection.units.first().and_then(|id| game.sim.unit(*id)) {
+    if let Some(unit) = selection.units.first().and_then(|id| game.sim.unit(*id)) {
+        for mut image in &mut image {
             image.image = assets.load(game.sim.rules().unit(unit.kind).sprite.clone());
             image.color = graphics.player_color(unit.owner.0);
         }
+    }
+    for (hovered, pressed, mut fill, mut edge) in &mut button {
         let look = button_look(Tone::Item, false, hovered.get(), pressed, false);
         fill.set_if_neq(BackgroundColor(look.fill));
         edge.set_if_neq(BorderColor::all(look.edge));

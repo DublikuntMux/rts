@@ -35,6 +35,14 @@ deployment steps were not executed end to end here.
 Client scenes
 -------------
 
+**Non-square unit images.** Unit sprites, distant unit rectangles, and HUD
+portraits now fit the loaded image inside their bounds or frame at its own
+aspect ratio instead of stretching it. Regressions load a wide image into a
+unit with offset bounds and a tall image into the selection portrait, checking
+the fitted size and that the image stays centered on the bounds. Workspace
+tests, strict all-target Clippy, the WebAssembly check, and the strict Sphinx
+build passed. The game was not run with a non-square sprite on screen.
+
 **Audit of local follow-ups.** Corrected dense-group anchor precision near the
 map edge, export settlement in app storage, failed log rotation, exact log-tail
 boundaries, and browser crash metadata and download lifetimes. Browser text

@@ -38,6 +38,15 @@ impl UnitBounds {
         )
     }
 
+    /// Largest size with the image's aspect ratio that fits the bounds, centered on
+    /// them. Images that have not loaded yet fill the bounds.
+    pub fn sprite_size(self, image: Option<Vec2>) -> Vec2 {
+        match image {
+            Some(image) if image.min_element() > 0.0 => image * (self.size / image).min_element(),
+            _ => self.size,
+        }
+    }
+
     pub fn world_rect(self, transform: &Transform) -> Rect {
         let scale = transform.scale.truncate();
         Rect::from_center_size(

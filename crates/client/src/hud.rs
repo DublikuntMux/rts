@@ -46,6 +46,7 @@ impl Plugin for HudPlugin {
                     phone::update_surfaces,
                     phone::update_controls,
                     update_selection,
+                    fit_unit_images,
                     update_button_availability,
                     update_button_looks,
                 )
@@ -71,6 +72,11 @@ struct Console;
 struct SelectionPanel;
 #[derive(Component)]
 struct Portrait;
+#[derive(Component)]
+struct PortraitImage;
+/// A unit image inside a square frame, resized to keep the image's aspect ratio.
+#[derive(Component)]
+struct UnitImage;
 #[derive(Component)]
 struct Roster;
 #[derive(Component)]
@@ -206,11 +212,13 @@ fn spawn_unit_details(row: &mut ChildSpawnerCommands, font: &Handle<Font>) {
             padding: UiRect::all(px(5)),
             flex_shrink: 0.0,
             border: UiRect::all(px(1)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
             ..default()
         },
-        ImageNode::default(),
         BackgroundColor(FIELD),
         BorderColor::all(EDGE),
+        children![(PortraitImage, unit_image(Handle::default(), Color::WHITE))],
     ));
     row.spawn(Node {
         flex_direction: FlexDirection::Column,
@@ -385,6 +393,43 @@ fn text_font(font: &Handle<Font>, size: f32) -> TextFont {
     }
 }
 
+fn unit_image(image: Handle<Image>, color: Color) -> impl Bundle {
+    (
+        UnitImage,
+        Pickable::IGNORE,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            ..default()
+        },
+        ImageNode {
+            image,
+            color,
+            ..default()
+        },
+    )
+}
+
+/// The longer side of a loaded unit image fills its centered frame.
+fn fit_unit_images(
+    textures: Res<Assets<Image>>,
+    mut images: Query<(&ImageNode, &mut Node), With<UnitImage>>,
+) {
+    for (image, mut node) in &mut images {
+        let Some(size) = textures.get(&image.image).map(Image::size_f32) else {
+            continue;
+        };
+        if size.min_element() <= 0.0 {
+            continue;
+        }
+        let fit = size / size.max_element() * 100.0;
+        if node.width != percent(fit.x) || node.height != percent(fit.y) {
+            node.width = percent(fit.x);
+            node.height = percent(fit.y);
+        }
+    }
+}
+
 type PortraitFilter = (With<Portrait>, Without<Roster>);
 type HealthFilter = (With<HealthFill>, Without<Portrait>, Without<Roster>);
 type RosterFilter = (With<Roster>, Without<Portrait>, Without<HealthFill>);
@@ -476,7 +521,8 @@ fn update_selection(
     assets: Res<AssetServer>,
     targeting: Res<MoveTargeting>,
     mut labels: Query<(&HudText, &mut Text)>,
-    mut portrait: Query<(&mut ImageNode, &mut Node), PortraitFilter>,
+    mut portrait: Query<&mut Node, PortraitFilter>,
+    mut portrait_image: Query<&mut ImageNode, With<PortraitImage>>,
     mut health: Query<&mut Node, HealthFilter>,
     mut roster: Single<(Entity, &mut Node), RosterFilter>,
     mut last_roster: Local<Vec<UnitId>>,
@@ -516,12 +562,14 @@ fn update_selection(
         };
         text.set_if_neq(Text::new(value));
     }
-    for (mut image, mut node) in &mut portrait {
+    for mut node in &mut portrait {
         node.display = if units.len() == 1 {
             Display::Flex
         } else {
             Display::None
         };
+    }
+    for mut image in &mut portrait_image {
         if let Some((_, unit)) = units.first() {
             image.image = assets.load(game.sim.rules().unit(unit.kind).sprite.clone());
             image.color = graphics.player_color(unit.owner.0);
@@ -576,16 +624,17 @@ fn spawn_roster(
                     flex_shrink: 0.0,
                     padding: UiRect::all(px(5)),
                     border: UiRect::all(px(1)),
-                    ..default()
-                },
-                ImageNode {
-                    image: assets.load(game.sim.rules().unit(unit.kind).sprite.clone()),
-                    color: graphics.player_color(unit.owner.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
                     ..default()
                 },
                 BackgroundColor(FIELD),
                 BorderColor::all(EDGE),
                 observe(select_portrait),
+                children![unit_image(
+                    assets.load(game.sim.rules().unit(unit.kind).sprite.clone()),
+                    graphics.player_color(unit.owner.0),
+                )],
             ));
         }
         if units.len() > 12 {

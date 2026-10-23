@@ -134,9 +134,11 @@ Unit types
 file loads: ``speed: 2.5`` becomes 2560 world units per second. Values that
 round to zero or exceed the 32-bit range are rejected.
 
-The client draws ``sprite`` at the size and offset given by ``visual_bounds``.
-When bounds are absent or ``None``, the image fills a centered square with
-width and height ``2 × radius``. Crowded visual groups scale the sprite and
+The client draws ``sprite`` inside the size and offset given by
+``visual_bounds``. When bounds are absent or ``None``, the bounds are a
+centered square with width and height ``2 × radius``. Images may have any
+width and height: they keep their aspect ratio, so the longer side fills the
+bounds and the image is centered on them. Crowded visual groups scale the sprite and
 its bounds together, but only as far as a group area of one and a half tiles
 requires, so stacked units keep most of their unshared size. The simulation
 never reads ``sprite``; changing only its path does not affect movement or
@@ -162,8 +164,9 @@ and are converted to integer world units at load time. An offset may be signed;
 each size component must round to a positive world-unit value. Both fields
 are required when bounds are supplied, and unknown nested fields are errors.
 
-Bounds describe the sprite footprint and displayed dimensions; they do not
-crop artwork. Images are stretched to fill these dimensions.
+Bounds describe the sprite footprint and the largest displayed dimensions;
+they do not crop artwork. Images are scaled to fit inside them without
+stretching.
 The client scales the footprint and its offset with the sprite, placing the
 bounds center in its assigned tile slot. Rectangular groups choose the grid
 orientation that best fits the group area. See :doc:`../architecture/rendering`.
