@@ -36,6 +36,24 @@ Client scenes
 -------------
 
 
+**Crash reports and logs.** A local-only crash handler records panics with
+recent log lines, a backtrace, and the version, platform, and UTC time, then
+offers the report for export on the next launch. The panic hook is installed
+after Bevy's own, so console output is unchanged. Native builds rotate
+``game.log`` at 512 KiB and keep the last 48 KiB in the report; the web build
+keeps a 500-line in-memory ring plus ``error`` and ``unhandledrejection``
+listeners and stores the report in ``localStorage``. Only a panic writes a
+report, so an ordinary quit never offers one, and a stored report is never
+removed at startup. Export copies the file to ``~/Downloads`` on desktop and
+downloads it in the browser; Android and iOS keep the app-private file and
+show its path because there is no share sheet. Regressions cover the report header, the UTC formatter, log tails and
+rotation, storing and exporting copies, and the menu dialog and its
+dismissal. A native binary panicked on purpose, wrote a report with a
+backtrace and log tail, offered it on the next launch, and kept it through a
+SIGTERM. All 250 workspace tests, strict all-target Clippy, formatting, the
+client WebAssembly check, and the strict Sphinx build passed. A rendered
+browser session and an Android build were not run.
+
 **Groups stop on the ordered point.** The tile-center clamp is gone from unit
 packing. A stopped group is anchored at its members' mean bounds center — the
 point it was sent to — so arriving no longer slides it up to 0.4 tile toward

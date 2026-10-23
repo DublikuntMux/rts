@@ -28,6 +28,7 @@ use rts_net::{MAX_NAME_CHARS, RoomInfo};
 
 use self::widgets::Field;
 use crate::{
+    crash::CrashReport,
     game::{AppState, MapCatalog},
     hud::MoveTargeting,
     library::{Library, Record, Shelf},
@@ -59,9 +60,13 @@ impl Plugin for MenuPlugin {
             .init_resource::<PauseMenu>()
             .init_resource::<Rendered>()
             .init_resource::<Clipboard>()
+            .init_resource::<CrashReport>()
             .init_resource::<previews::PreviewCache>()
             .add_message::<Action>()
-            .add_systems(OnEnter(AppState::Menu), close_dialogs)
+            .add_systems(
+                OnEnter(AppState::Menu),
+                (close_dialogs, open_crash_dialog).chain(),
+            )
             .add_systems(OnEnter(AppState::InGame), close_dialogs)
             .add_systems(OnExit(AppState::Menu), forget_render)
             .add_systems(
@@ -203,6 +208,8 @@ pub enum Dialog {
     JoinByCode,
     CreateRoom,
     Confirm(Confirm),
+    /// A report left by a previous run.
+    CrashReport,
 }
 
 /// Menu navigation and choices. Kept across visits to the menu.
@@ -315,6 +322,7 @@ pub struct View<'a> {
     pub settings: &'a Settings,
     pub library: &'a Library,
     pub catalog: &'a MapCatalog,
+    pub crash: &'a CrashReport,
 }
 
 impl View<'_> {
@@ -361,6 +369,7 @@ pub struct ViewParam<'w> {
     settings: Res<'w, Settings>,
     library: Res<'w, Library>,
     catalog: Res<'w, MapCatalog>,
+    crash: Res<'w, CrashReport>,
 }
 
 impl ViewParam<'_> {
@@ -372,6 +381,7 @@ impl ViewParam<'_> {
             settings: &self.settings,
             library: &self.library,
             catalog: &self.catalog,
+            crash: &self.crash,
         }
     }
 
@@ -425,6 +435,9 @@ pub enum Action {
     SetUiScale(u16),
     SetEdgeScroll(bool),
     SetFullscreen(bool),
+    /// Offers the crash report to the player, or forgets it.
+    ExportCrash,
+    DiscardCrash,
     Quit,
     CloseDialog,
     Confirm,
@@ -466,6 +479,7 @@ impl Action {
             Self::ToggleReady | Self::LeaveRoom | Self::CopyCode => status.lobby.is_some(),
             Self::StartMatch => status.lobby.as_ref().is_some_and(Lobby::can_start),
             Self::Game(SessionAction::SaveGame) => status.can_save_game(),
+            Self::ExportCrash | Self::DiscardCrash => view.crash.pending().is_some(),
             _ => true,
         }
     }
@@ -514,6 +528,7 @@ fn perform(
     status: Res<SessionStatus>,
     library: Res<Library>,
     catalog: Res<MapCatalog>,
+    mut crash: ResMut<CrashReport>,
     mut session: MessageWriter<SessionAction>,
     mut clipboard: ResMut<Clipboard>,
     mut exit: MessageWriter<AppExit>,
@@ -529,6 +544,7 @@ fn perform(
             settings: &settings,
             library: &library,
             catalog: &catalog,
+            crash: &crash,
         };
         if !action.enabled(&view) {
             continue;
@@ -673,6 +689,18 @@ fn perform(
             Action::SetUiScale(scale) => settings.ui_scale = scale,
             Action::SetEdgeScroll(on) => settings.edge_scroll = on,
             Action::SetFullscreen(on) => settings.fullscreen = on,
+            Action::ExportCrash => match crash.export() {
+                Ok(message) => {
+                    menu.dialog = None;
+                    menu.notice = Some((message, false));
+                }
+                Err(message) => menu.notice = Some((message, true)),
+            },
+            Action::DiscardCrash => {
+                crash.discard();
+                menu.dialog = None;
+                menu.notice = Some(("Crash report discarded.".into(), false));
+            }
             Action::Quit => {
                 if status.connected() || status.connecting() {
                     menu.dialog = Some(Dialog::Confirm(Confirm::Quit));
@@ -978,6 +1006,16 @@ fn staying(next: Res<NextState<AppState>>) -> bool {
 fn close_dialogs(mut menu: ResMut<Menu>) {
     menu.dialog = None;
     menu.dropdown = None;
+}
+
+/// Offers a report left by a previous run, once per launch.
+fn open_crash_dialog(report: Res<CrashReport>, mut menu: ResMut<Menu>, mut offered: Local<bool>) {
+    if *offered || menu.dialog.is_some() || report.pending().is_none() {
+        return;
+    }
+    info!("offering the crash report left by the previous run");
+    menu.dialog = Some(Dialog::CrashReport);
+    *offered = true;
 }
 
 fn forget_render(mut rendered: ResMut<Rendered>) {

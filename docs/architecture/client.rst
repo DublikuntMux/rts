@@ -61,7 +61,9 @@ titled *RTS* that fits its canvas to the browser page, and the game plugins:
 
 ``library.rs`` manages saved games and replays; ``storage.rs`` handles native
 files and browser storage. ``replay_io.rs`` imports and exports browser
-replays. ``preview.rs`` generates map images, and ``menu/previews.rs``
+replays, and ``download.rs`` starts the downloads they and crash reports use.
+``crash.rs`` captures panics and recent log lines and offers the report for
+manual export. ``preview.rs`` generates map images, and ``menu/previews.rs``
 caches previews for library records. ``font.rs`` holds ``GameFont`` for
 rendering outside the menu. The client uses ``serde`` and ``ron`` for
 persistent documents and ``miniz_oxide`` for browser storage compression.
@@ -169,7 +171,7 @@ enabled features are:
    * - ``bevy_scene``
      - Scene composition for unit visuals, menu widgets, pages, and dialogs.
    * - ``bevy_log``, ``bevy_state``
-     - Logging and ``AppState``.
+     - Logging, the file log layer that feeds crash reports, and ``AppState``.
    * - ``bevy_winit``, ``x11``, ``wayland``, ``webgl2``
      - Windows on desktop and the browser canvas.
    * - ``bevy_sprite_render``
@@ -186,7 +188,8 @@ enabled features are:
 ``crates/client`` enables ``system_clipboard`` on non-Android targets for
 system clipboard access, including **Copy code**. Android has no system
 backend, so that button is hidden there. Browser ``web-sys`` features include
-``Storage`` for ``localStorage``.
+``Storage`` for ``localStorage`` and ``ErrorEvent`` with
+``PromiseRejectionEvent`` for crash reports.
 
 ``crates/android`` adds ``android-game-activity``. Bevy's ``2d`` and ``ui``
 convenience presets are avoided because they enable unused modules. The

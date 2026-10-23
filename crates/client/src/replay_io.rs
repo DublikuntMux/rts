@@ -73,7 +73,7 @@ impl ReplayIo {
 
 #[cfg(target_arch = "wasm32")]
 mod browser {
-    use wasm_bindgen::{JsCast, JsValue, closure::Closure};
+    use wasm_bindgen::{JsCast, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
 
     use super::{MAX_REPLAY_BYTES, SyncSender};
@@ -85,23 +85,7 @@ mod browser {
     }
 
     pub fn save(text: &str) -> Result<String, String> {
-        let options = web_sys::BlobPropertyBag::new();
-        options.set_type("application/x-ron");
-        let parts = js_sys::Array::new();
-        parts.push(&JsValue::from_str(text));
-        let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options)
-            .map_err(|_| "Cannot prepare replay download.")?;
-        let url = web_sys::Url::create_object_url_with_blob(&blob)
-            .map_err(|_| "Cannot prepare replay download.")?;
-        let link = document()?
-            .create_element("a")
-            .map_err(|_| "Cannot prepare replay download.")?
-            .dyn_into::<web_sys::HtmlAnchorElement>()
-            .map_err(|_| "Cannot prepare replay download.")?;
-        link.set_href(&url);
-        link.set_download("match.replay.ron");
-        link.click();
-        web_sys::Url::revoke_object_url(&url).map_err(|_| "Cannot finish replay download.")?;
+        crate::download::save("match.replay.ron", "application/x-ron", text)?;
         Ok("Replay download started.".into())
     }
 

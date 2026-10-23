@@ -9,6 +9,7 @@ use rts_net::{LobbySlot, MatchSetup, Replay};
 
 use super::*;
 use crate::{
+    crash::CrashReport,
     game::{AppState, CatalogMap},
     storage::tests::temporary_store,
 };
@@ -44,6 +45,10 @@ fn catalog() -> MapCatalog {
 }
 
 fn app(width: u32) -> App {
+    app_with(width, None)
+}
+
+fn app_with(width: u32, crash: Option<CrashReport>) -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -56,6 +61,7 @@ fn app(width: u32) -> App {
     .insert_state(AppState::Menu)
     .insert_resource(catalog())
     .insert_resource(Library::new(temporary_store("menu")))
+    .insert_resource(crash.unwrap_or_default())
     .insert_resource(
         Graphics::from_ron(include_str!("../../../../assets/data/client.graphics.ron")).unwrap(),
     )
@@ -148,6 +154,30 @@ fn lobby(ready: bool) -> Lobby {
             }),
         ],
     }
+}
+
+#[test]
+fn a_stored_crash_report_is_offered_for_export() {
+    let report = "RTS crash report\n\
+                  \n\
+                  Time: 2026-10-13 00:00:00 UTC\n\
+                  Panic: index out of bounds\n\
+                  Location: src/game.rs:112:5\n";
+    let mut app = app_with(1280, Some(CrashReport::for_test(report)));
+    assert_shows(
+        &mut app,
+        &[
+            "The game closed unexpectedly",
+            "Time: 2026-10-13 00:00:00 UTC",
+            "Panic: index out of bounds",
+            "Export report",
+            "Discard",
+        ],
+    );
+    act(&mut app, Action::DiscardCrash);
+    assert!(app.world().resource::<Menu>().dialog.is_none());
+    assert!(app.world().resource::<CrashReport>().pending().is_none());
+    assert_shows(&mut app, &["Your next move"]);
 }
 
 #[test]

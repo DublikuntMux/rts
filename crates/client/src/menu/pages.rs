@@ -1048,6 +1048,7 @@ pub fn dialog(view: &View) -> impl Scene {
         Some(Dialog::JoinByCode) => boxed(join_by_code(view)),
         Some(Dialog::CreateRoom) => boxed(create_room()),
         Some(Dialog::Confirm(confirm)) => boxed(confirm_dialog(view, confirm)),
+        Some(Dialog::CrashReport) => boxed(crash_dialog(view)),
         None => Box::new(bsn_list! {}),
     };
     bsn! {
@@ -1115,6 +1116,45 @@ fn visibility_hint(view: &View) -> String {
     } else {
         "Hidden from the room browser; players join with the invite code.".into()
     }
+}
+
+/// A report left by a previous run, offered for export.
+fn crash_dialog(view: &View) -> impl Scene {
+    let summary = view.crash.pending().map_or_else(String::new, crash_summary);
+    dialog_frame(
+        "The game closed unexpectedly",
+        bsn_list! {
+            @hint("A crash report from your last session is waiting. Nothing is sent automatically.")
+            --
+            @hint(summary)
+            --
+            @bound_text(dialog_error, 13.0, DANGER)
+            --
+            @row(bsn_list! {
+                @wide_button("Export report", Action::ExportCrash, Tone::Primary)
+                --
+                @wide_button("Discard", Action::DiscardCrash, Tone::Secondary)
+            })
+            --
+            @hint("The report holds the version, platform, panic message, backtrace, and recent log lines. It stays on this device until you send it.")
+        },
+    )
+}
+
+/// When and why a stored report was written.
+fn crash_summary(report: &str) -> String {
+    let failures: Vec<&str> = report
+        .lines()
+        .filter(|line| line.starts_with("Time: ") || line.starts_with("Panic: "))
+        .collect();
+    if !failures.is_empty() {
+        return failures.join("\n");
+    }
+    report
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// The latest error, shown inside dialogs so a failed join keeps the typed code visible.

@@ -46,7 +46,7 @@ tokio = { version = "1.54.1", default-features = false, features = ["rt-multi-th
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
 js-sys = "0.3.106"
 wasm-bindgen = "0.2.129"
-web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Storage", "Blob", "BlobPropertyBag", "Url", "Event", "FileList", "File"] }
+web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Storage", "Blob", "BlobPropertyBag", "Url", "Event", "ErrorEvent", "PromiseRejectionEvent", "FileList", "File"] }
 
 rts_assets = { path = "crates/assets" }
 rts_base = { path = "crates/base" }

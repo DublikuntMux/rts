@@ -182,7 +182,12 @@ and **Cancel** / **Join room** buttons. **Create room** offers **Public**
 and **Private**, a visibility hint, inline errors, and confirmation buttons.
 Both dialogs close when a lobby arrives or the connection drops. Deleting a
 record, leaving a room, leaving a live match, and quitting while connected
-use confirmation dialogs. Dialogs dim the screen and use a modal tab group.
+use confirmation dialogs. When a previous run left a crash report, the menu
+opens one more dialog over the first screen: it shows when and why the run
+ended, and offers **Export report** and **Discard**. The dialog opens once per
+launch; a failed export shows its error inside the dialog, and a successful one
+closes it with the saved path in the message line. Dialogs dim the screen and
+use a modal tab group.
 
 Tab and Shift+Tab move focus. Focused controls scroll into view. Enter in
 the address field connects; Enter in the invite field joins. Mouse wheels

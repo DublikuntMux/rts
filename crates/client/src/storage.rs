@@ -93,6 +93,14 @@ impl Store {
     }
 }
 
+/// The platform data folder that stores documents, the log, and crash reports. Browsers keep
+/// documents in `localStorage` instead, so there is no folder.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn data_dir() -> Option<std::path::PathBuf> {
+    native::data_dir()
+}
+
 /// Milliseconds since the Unix epoch, for ordering saved documents.
 #[must_use]
 pub fn now_millis() -> u64 {

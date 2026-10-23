@@ -73,8 +73,11 @@ Where platform code lives
    * - ``storage.rs``
      - Native data paths, Android internal storage, and browser
        ``localStorage`` through ``web-sys``.
-   * - ``replay_io.rs``
+   * - ``replay_io.rs`` and ``download.rs``
      - Browser ``Blob`` downloads and file input through ``web-sys``.
+   * - ``crash.rs``
+     - Panic hook, the rotating log file, stored crash reports, and their
+       manual export.
    * - ``menu/pages.rs`` and ``settings.rs``
      - Platform visibility for import, export, clipboard, fullscreen, and Quit.
    * - ``rts_server`` ``lib.rs`` and ``main.rs``
@@ -86,6 +89,47 @@ Target-specific dependencies are declared in each crate's
 ``[target.'cfg(...)'.dependencies]``: ``wasm-bindgen``, ``web-sys``,
 ``js-sys``, and ``wasm-bindgen-futures`` for the browser; Tokio and
 ``tokio-tungstenite`` for the native server.
+
+Crash reports and logs
+----------------------
+
+Diagnostics stay on the player's machine; nothing is uploaded. ``crash.rs``
+installs a Rust panic hook after ``DefaultPlugins`` are built, so Bevy's own
+hook stays in the chain and still prints the panic. The hook writes
+``crash-report.txt`` holding the package version, platform, build profile, UTC
+time, panic message, location, backtrace, and the end of the log. The next
+launch reads that report, the menu offers it once, and **Export report** or
+**Discard** settles it. Nothing removes a stored report at startup, and a run
+that ends normally leaves none behind.
+
+``LogPlugin::custom_layer`` adds a tracing layer that appends every event to
+``game.log`` in the data folder. The file rotates to ``game.log.1`` once it
+passes 512 KiB, so it cannot grow without bound. Browser builds keep the last
+500 log lines in memory instead, store the report in ``localStorage``, and
+record ``error`` and ``unhandledrejection`` events, because a wasm trap ends
+the module without reaching the Rust panic hook.
+
+Export is a separate step, done while the game runs normally, so it can differ
+by platform:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Platform
+     - Export
+   * - Desktop
+     - A copy in the downloads folder, or the data folder when there is none.
+       The menu names the path.
+   * - Web
+     - A ``crash-report.txt`` download through a ``Blob``.
+   * - Android, iOS
+     - The report stays in app-private storage and the menu names the path.
+       A share sheet needs a platform channel and is not implemented.
+
+A panic hook sees only Rust panics. Segfaults, out-of-memory kills, and Android
+ANRs leave no report; the log still shows what the game was doing. Release
+builds keep ``debug = "line-tables-only"`` so backtraces can name source lines.
 
 Pure Rust
 ---------
