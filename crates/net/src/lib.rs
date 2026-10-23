@@ -399,11 +399,37 @@ pub(crate) fn decode<T: DeserializeOwned>(text: &str, limit: usize) -> Result<T,
 }
 
 pub(crate) fn encode<T: Serialize>(value: &T, limit: usize) -> Result<String, NetError> {
-    let text = ron::Options::default()
+    let mut output = BoundedText {
+        text: String::new(),
+        limit,
+        exceeded: false,
+    };
+    let result = ron::Options::default()
         .with_recursion_limit(RON_RECURSION_LIMIT)
-        .to_string(value)?;
-    check_size(text.len(), limit)?;
-    Ok(text)
+        .to_writer(&mut output, value);
+    if output.exceeded {
+        return Err(NetError::invalid(format!("data exceeds {limit} bytes")));
+    }
+    result?;
+    Ok(output.text)
+}
+
+/// Stop serialization before retaining an oversized message or replay in memory.
+struct BoundedText {
+    text: String,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl std::fmt::Write for BoundedText {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        if text.len() > self.limit.saturating_sub(self.text.len()) {
+            self.exceeded = true;
+            return Err(std::fmt::Error);
+        }
+        self.text.push_str(text);
+        Ok(())
+    }
 }
 
 /// # Errors
@@ -456,7 +482,39 @@ pub fn encode_server(message: &ServerMessage) -> Result<ServerFrame, NetError> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
+    use serde::ser::SerializeSeq;
+
     use super::*;
+
+    #[test]
+    fn encoder_stops_traversing_oversized_data_at_the_byte_limit() {
+        struct Counted<'a>(&'a Cell<usize>);
+
+        impl Serialize for Counted<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut sequence = serializer.serialize_seq(Some(1000))?;
+                for value in 0..1000 {
+                    self.0.set(self.0.get() + 1);
+                    sequence.serialize_element(&value)?;
+                }
+                sequence.end()
+            }
+        }
+
+        let visited = Cell::new(0);
+        assert!(matches!(
+            encode(&Counted(&visited), 16),
+            Err(NetError::Invalid(_))
+        ));
+        assert!(visited.get() < 1000);
+
+        let value = "界🚀";
+        let expected = ron::to_string(value).unwrap();
+        assert_eq!(encode(&value, expected.len()).unwrap(), expected);
+        assert!(encode(&value, expected.len() - 1).is_err());
+    }
 
     #[test]
     fn ron_decoder_bounds_nested_data() {

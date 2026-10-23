@@ -106,6 +106,7 @@ const CODE_LEN: usize = 6;
 pub struct Coordinator {
     config: Config,
     initial_sim: Option<Sim>,
+    setup_checksum: u64,
     map_name: String,
     peers: BTreeMap<ClientId, Peer>,
     rooms: BTreeMap<String, Room>,
@@ -119,6 +120,7 @@ impl Coordinator {
     #[must_use]
     pub fn new(config: Config, codes: StdRng) -> Self {
         let initial_sim = config.setup.simulation().ok();
+        let setup_checksum = config.setup.checksum();
         let map_name = MapData::from_ron(&config.setup.map).map_or_else(
             |_| String::new(),
             |map| {
@@ -132,6 +134,7 @@ impl Coordinator {
         Self {
             config,
             initial_sim,
+            setup_checksum,
             map_name,
             peers: BTreeMap::new(),
             rooms: BTreeMap::new(),
@@ -432,7 +435,7 @@ impl Coordinator {
             ClientMessage::Loaded { checksum } => {
                 if room.game.is_some() {
                     Err("match has already started")
-                } else if checksum != self.config.setup.checksum() {
+                } else if checksum != self.setup_checksum {
                     Err("setup checksum does not match")
                 } else {
                     room.slots[slot].as_mut().expect("room member").loaded = true;

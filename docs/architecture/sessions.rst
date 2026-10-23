@@ -20,7 +20,7 @@ Components
      - Interface messages for local games, connections, rooms, and the library.
    * - ``Session``
      - Mode, buffered turns, local input frames, pending online setup,
-       current recording, last replay, playback, and timing.
+       current recording, last replay (also used during playback), and timing.
    * - ``SessionStatus``
      - Interface view: ``message``, ``error``, ``server``, ``rooms``,
        ``lobby``, ``joining``, ``running``, ``stopped``, ``kind``,
@@ -115,6 +115,8 @@ play uses the server setup and the local slot from ``Lobby``.
 or recorded locally. It starts a fresh simulation in ``Playback`` with
 orders disabled. Starting any local match, save, or replay disconnects from
 the server.
+Playback reads the retained last replay directly instead of cloning a second
+copy of the recording.
 
 The fixed-step loop
 -------------------
@@ -197,7 +199,7 @@ Connection flow
 2048 bytes; native builds refuse ``wss://``) and opens an ``ewebsock``
 socket. Socket events enter a bounded channel of 128 events; if it fills,
 the socket stops reading. On open, the client sends
-``Rooms { version: 5 }``. The first ``Rooms`` reply marks the server
+``Rooms { version: 6 }``. The first ``Rooms`` reply marks the server
 ``Connected``. Create and join use this same connection.
 
 ``poll_network`` runs in ``PreUpdate`` and handles up to 128 events per frame:
@@ -264,7 +266,10 @@ one character in U+0100 through U+01FF.
 
 ``ReplayIo`` handles browser import and export only. Import reads a chosen
 file asynchronously through a one-slot channel. ``finish_replay_import``
-validates it and adds it to the replay shelf. Export downloads a stored
+validates it and adds it to the replay shelf. The session retains the file
+input and its callbacks until selection or cancellation, then releases both;
+canceling clears the import state so another file can be chosen. Duplicate
+import requests cannot replace an active picker. Export downloads a stored
 record as ``match.replay.ron``. Native builds expose neither button; their
 records live in the data folder. See :doc:`../guides/replays`.
 

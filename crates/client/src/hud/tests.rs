@@ -391,3 +391,40 @@ fn unit_images_keep_their_aspect_ratio_in_square_frames() {
     assert_eq!(node.width, percent(25));
     assert_eq!(node.height, percent(100));
 }
+
+#[test]
+fn minimap_markers_track_removal_and_recreated_hud_without_duplicates() {
+    let mut app = app();
+    let expected = app.world().resource::<Match>().sim.units().count();
+    let mut markers = app
+        .world_mut()
+        .query_filtered::<Entity, With<minimap::UnitMarker>>();
+    assert_eq!(markers.iter(app.world()).count(), expected);
+    let removed = app
+        .world()
+        .resource::<Match>()
+        .sim
+        .units()
+        .next()
+        .unwrap()
+        .0;
+    app.world_mut()
+        .resource_mut::<Match>()
+        .sim
+        .remove_unit(removed);
+    app.update();
+    assert_eq!(markers.iter(app.world()).count(), expected - 1);
+    app.update();
+    assert_eq!(markers.iter(app.world()).count(), expected - 1);
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::Menu);
+    app.update();
+    assert_eq!(markers.iter(app.world()).count(), 0);
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::InGame);
+    app.update();
+    app.update();
+    assert_eq!(markers.iter(app.world()).count(), expected - 1);
+}

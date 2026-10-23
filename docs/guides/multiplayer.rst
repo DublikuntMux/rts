@@ -114,7 +114,7 @@ received, so orders take effect about 100 ms later plus network latency.
 
 Clients can have different bundled content from the server. The server sends
 its own map and rules, and clients use them for the match. Clients only need
-compatible game code and the same protocol version (currently 5).
+compatible game code and the same protocol version (currently 6).
 
 Leaving and disconnects
 -----------------------

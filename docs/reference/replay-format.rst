@@ -11,7 +11,7 @@ Structure
 .. code-block:: rust
 
    struct Replay {
-       version: u32,          // protocol version, currently 5
+       version: u32,          // protocol version, currently 6
        setup: MatchSetup,     // rules and map text, seed, players
        turns: Vec<Turn>,      // tick 1, 2, 3, ... in order
        final_hash: u64,       // state hash after the last turn
@@ -24,7 +24,7 @@ wrapped for reading:
 
 .. code-block:: text
 
-   (version:5,
+   (version:6,
     setup:(rules:"(tile_capacity:4,terrain:[...],units:[...])",
            map:"(name:\"Proving Grounds\",players:[...],tiles:[...],units:[...])",
            seed:0,players:2),

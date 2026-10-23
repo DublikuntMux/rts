@@ -46,7 +46,7 @@ Layout
    * - 4
      - 4
      - ``u32`` version
-     - Protocol version, currently 5.
+     - Protocol version, currently 6.
    * - 8
      - 8
      - ``u64`` seed

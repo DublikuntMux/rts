@@ -9,7 +9,7 @@ use rts_base::{UnitId, UnitKind};
 
 pub use self::layout::UnitBounds;
 use self::{
-    layout::{Placement, layout_units},
+    layout::{Placement, UnitLayout},
     motion::UnitMotion,
 };
 
@@ -48,6 +48,7 @@ struct UnitVisuals {
     entities: HashMap<UnitId, Entity>,
     images: HashMap<UnitKind, Handle<Image>>,
     motion: HashMap<UnitId, UnitMotion>,
+    layout: UnitLayout,
 }
 
 /// The sprite and distant rectangle share exactly the same size and anchor.
@@ -80,42 +81,25 @@ fn sync_units(
     detail: Res<ZoomDetail>,
     mut sprites: Query<(&mut Transform, &mut Sprite, &mut Anchor)>,
 ) {
-    // Moving and stopped units share one layout rule. They stay separate sets so a
-    // unit walking through a tile does not re-pack the group standing there.
-    let mut current_layout = layout_units(
-        game.sim
-            .units()
-            .filter(|(id, _)| game.sim.move_target(*id).is_none())
-            .map(|(id, unit)| {
-                (
-                    id,
-                    unit.pos,
-                    UnitBounds::from_definition(game.sim.rules().unit(unit.kind)),
-                )
-            }),
-    );
-    current_layout.extend(layout_units(
-        game.sim
-            .units()
-            .filter(|(id, _)| game.sim.move_target(*id).is_some())
-            .map(|(id, unit)| {
-                (
-                    id,
-                    unit.pos,
-                    UnitBounds::from_definition(game.sim.rules().unit(unit.kind)),
-                )
-            }),
-    ));
     let UnitVisuals {
         entities,
         images,
         motion,
+        layout,
     } = &mut *visuals;
+    layout.update(game.sim.units().map(|(id, unit)| {
+        (
+            id,
+            unit.pos,
+            UnitBounds::from_definition(game.sim.rules().unit(unit.kind)),
+            game.sim.move_target(id).is_some(),
+        )
+    }));
     for (id, unit) in game.sim.units() {
         let definition = game.sim.rules().unit(unit.kind);
         let bounds = UnitBounds::from_definition(definition);
         let position = to_world(unit.pos);
-        let target = current_layout[&id];
+        let target = layout.placement(id);
         let motion = motion.entry(id).or_insert_with(|| {
             UnitMotion::new(position, target, game.sim.tick(), fixed.elapsed_secs_f64())
         });

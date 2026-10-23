@@ -557,12 +557,12 @@ fn pause_menu_escape_resume_and_leave_confirmation_preserve_selection() {
     ] {
         assert!(visible.iter().any(|text| text == label), "missing {label}");
     }
-    act(&mut app, Action::Game(SessionAction::SaveGame));
-    act(&mut app, Action::Game(SessionAction::SaveReplay));
-    assert_eq!(
-        sent(&mut app),
-        [SessionAction::SaveGame, SessionAction::SaveReplay]
-    );
+    // Read in the producing frame: messages can expire while later scenes settle.
+    for action in [SessionAction::SaveGame, SessionAction::SaveReplay] {
+        app.world_mut().write_message(Action::Game(action.clone()));
+        app.update();
+        assert_eq!(sent(&mut app), [action]);
+    }
     act(&mut app, Action::Game(SessionAction::Leave));
     assert!(app.world().resource::<Menu>().dialog.is_some());
     escape(&mut app);

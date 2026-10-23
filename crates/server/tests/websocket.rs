@@ -455,6 +455,14 @@ async fn invalid_setup_and_resource_limits_fail_before_accepting_connections() {
             poll_interval: Duration::ZERO,
             ..Config::default()
         },
+        Config {
+            event_queue_capacity: usize::MAX,
+            ..Config::default()
+        },
+        Config {
+            outbound_queue_capacity: usize::MAX,
+            ..Config::default()
+        },
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let error = serve_with_config(listener, config).await.unwrap_err();

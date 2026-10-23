@@ -61,11 +61,13 @@ The main task runs a ``select!`` loop over four sources:
    advance every match.
 
 Every coordinator call returns a list of ``Delivery { client, message }``.
-``dispatch`` encodes each one (binary for setup, text otherwise) and
+``dispatch`` reuses the binary setup frame prepared at startup and encodes
+other messages as text, then
 ``try_send``\ s it to the client's outbound queue. A full queue or an encoding
 failure disconnects that client immediately, and the resulting deliveries
 (such as *a player disconnected*) are dispatched in the same pass. A slow
 client therefore cannot make the server buffer without limit or block others.
+Connection tasks discard queued frames once their outbound sender closes.
 
 Connection tasks
 ----------------
@@ -209,8 +211,13 @@ Configuration
 resource limits; :doc:`../reference/server-cli` lists the defaults. The
 default setup is the bundled rules and map, compiled into the binary with
 ``include_str!``. ``serve_with_config`` refuses zero limits and an invalid
-setup before accepting connections; ``Coordinator::connect`` also refuses
+setup before accepting connections. Queue capacities above Tokio's semaphore
+limit return a configuration error instead of panicking.
+``Coordinator::connect`` also refuses
 clients if the setup cannot build a simulation.
 
 Each room clones one validated initial ``Sim`` when its match starts, so
-setup parsing happens once per server, not once per room.
+setup parsing happens during startup, not once per room. The runtime also
+validates and compresses its setup frame once at startup; deliveries share the
+encoded bytes. The coordinator caches the immutable setup checksum for
+``Loaded`` acknowledgments.

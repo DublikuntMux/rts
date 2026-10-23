@@ -44,6 +44,50 @@ fn local_input_delay_and_replay_share_the_same_turns() {
 }
 
 #[test]
+fn playback_keeps_the_original_recording_available_after_finishing_and_leaving() {
+    let replay = Replay::new(setup()).unwrap();
+    let mut session = Session::default();
+    let mut game = session.begin_replay(replay.clone(), 0.0).unwrap();
+    let mut status = SessionStatus::default();
+    advance(
+        &mut game,
+        &mut session,
+        &mut status,
+        &mut Network::default(),
+        0.05,
+    )
+    .unwrap();
+    assert!(status.stopped);
+    assert_eq!(session.replay(), Some(&replay));
+    session.archive();
+    assert_eq!(session.replay(), Some(&replay));
+    let _ = session
+        .begin(setup(), Mode::Offline, PlayerId(0), 0.1)
+        .unwrap();
+    assert_eq!(session.last_replay.as_ref(), Some(&replay));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn duplicate_import_actions_do_not_replace_an_in_progress_picker() {
+    let mut app = headless();
+    app.world_mut().resource_mut::<SessionStatus>().importing = true;
+    app.world_mut().write_message(SessionAction::ImportReplay);
+    app.update();
+    assert!(status(&app).importing);
+    assert_eq!(
+        status(&app).message,
+        "A replay import is already in progress."
+    );
+    app.world()
+        .non_send::<ReplayIo>()
+        .complete_for_test(Replay::new(setup()).unwrap().to_ron().unwrap());
+    app.update();
+    assert!(!status(&app).importing);
+    assert_eq!(status(&app).message, "Imported as Replay 01.");
+}
+
+#[test]
 fn absent_network_turn_stalls_without_consuming_input_or_changing_state() {
     let mut session = Session::default();
     let mut game = session
@@ -97,7 +141,7 @@ fn status(app: &App) -> &SessionStatus {
 fn imported_replay_joins_the_library_without_replacing_a_starting_match() {
     let mut app = headless();
     let text = Replay::new(setup()).unwrap().to_ron().unwrap();
-    app.world().resource::<ReplayIo>().complete_for_test(text);
+    app.world().non_send::<ReplayIo>().complete_for_test(text);
     app.world_mut()
         .write_message(SessionAction::NewGame { map: 0 });
     app.update();

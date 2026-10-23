@@ -9,6 +9,28 @@ device.
 Tooling
 -------
 
+**Project audit (2026-10-23).** Reviewed all six crates, shared build
+configuration, Android integration, and CI/release tooling. Fixes validate
+directly deserialized rules at simulation construction, cache A* terrain costs,
+reuse server setup frames and checksums, reject invalid queue capacities,
+discard queued frames after disconnect, and stop text encoding at its byte
+limit. Client fixes reuse unit-layout and minimap buffers, avoid duplicate
+playback recordings and local command copies, clip preview-marker scans, and
+release browser picker callbacks on completion or cancellation. Current
+protocol examples now consistently use version 6.
+
+Regressions cover invalid rule construction, the existing movement hash stream,
+serialization cutoff and UTF-8 limits, shared setup bytes, outbound overflow,
+stale frame discard, layout buffer reuse and separation, minimap lifecycle,
+playback retention, import completion, and pixel-identical preview markers.
+The menu action regression now reads messages in their producing frame instead
+of depending on their retention across several scene updates.
+All workspace tests, strict all-target Clippy, formatting, full-workspace
+WebAssembly and Android arm64 checks, and the strict Sphinx build passed.
+Browser file-picker interaction, rendered gameplay, and physical Android
+sessions were not run. Map-sized A* search allocations remain M10 scaling
+work; the server's shared inbound queue still has no per-client admission quota.
+
 **macOS release signing.** Release run ``39764031811`` compiled every target,
 but macOS packaging failed because ``assets.pack`` was placed in
 ``Contents/MacOS``, where code signing expects code. The pack now lives in

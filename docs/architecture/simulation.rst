@@ -103,8 +103,9 @@ Match state
 Setup
 -----
 
-``Sim::new(rules, &map)`` builds a match and validates the map against the
-rules:
+``Sim::new(rules, &map)`` builds a match and validates the rules even when they
+were deserialized directly instead of loaded through ``Rules::from_ron``.
+It then validates the map against those rules:
 
 1. Parse ``tiles`` into a ``Terrain`` (size 1 to 1024 per side, equal row
    lengths, known symbols).

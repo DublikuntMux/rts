@@ -112,6 +112,8 @@ their container's width in the previous layout, at most 300 pixels tall, so the
 actions below a preview stay in view without stretching the image. Generated
 map previews use nearest-neighbor sampling so terrain edges and player start
 markers remain crisp when enlarged.
+Start markers visit only their clipped pixel bounds rather than rescanning
+the full preview for each player, keeping marker work independent of map size.
 
 Pages and actions
 ------------------

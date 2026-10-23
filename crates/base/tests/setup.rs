@@ -98,6 +98,29 @@ fn rejects_invalid_maps() {
 }
 
 #[test]
+fn simulation_rejects_invalid_rules_deserialized_without_from_ron() {
+    let map = MapData::from_ron(&map(
+        PLAYER,
+        TILES,
+        r#"(kind: "worker", owner: 0, pos: (0.5, 0.5))"#,
+    ))
+    .unwrap();
+    for (original, replacement, expected) in [
+        ("size: 1", "size: 0", "size"),
+        ("tile_capacity: 4", "tile_capacity: 0", "tile_capacity"),
+        ("size: 1", "size: 5", "size"),
+        ("speed: 3.0", "speed: -1.0", "positive"),
+        ("max_health: 40", "max_health: 0", "positive"),
+        ("id: \"soldier\"", "id: \"worker\"", "duplicate unit"),
+    ] {
+        let rules: Rules = ron::from_str(&RULES.replace(original, replacement)).unwrap();
+        let error = Sim::new(rules, &map).unwrap_err();
+        assert!(matches!(error, LoadError::Invalid(_)), "{error}");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
 fn identical_setups_hash_identically() {
     let mut a = sim_from(PROVING_GROUNDS).unwrap();
     let mut b = sim_from(PROVING_GROUNDS).unwrap();

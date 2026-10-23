@@ -101,7 +101,7 @@ impl Rules {
         Ok(rules)
     }
 
-    fn validate(&self) -> Result<(), LoadError> {
+    pub(crate) fn validate(&self) -> Result<(), LoadError> {
         if self.tile_capacity == 0 {
             return Err(LoadError::invalid("tile_capacity must be positive"));
         }

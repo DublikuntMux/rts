@@ -157,7 +157,7 @@ version must match, and the simulation code must be the same.
    participant Client as C
    participant Server as S
    S -> S : startup: read files,\nbuild Sim, compute checksum K
-   C -> S : Join { version: 5, code, name }
+   C -> S : Join { version: 6, code, name }
    S --> C : Setup (minified + zlib)
    C -> C : inflate with bounds,\nparse, build Sim
    C -> C : k = checksum(setup)
@@ -172,7 +172,7 @@ version must match, and the simulation code must be the same.
 Room browsing and readiness
 ---------------------------
 
-A connection can request ``Rooms { version: 5 }`` before creating or joining
+A connection can request ``Rooms { version: 6 }`` before creating or joining
 a room. The response lists at most 64 public rooms with space that have not
 started, sorted by code. Private rooms require their code. Creating or
 joining supplies a display name. Lobby updates carry room visibility and

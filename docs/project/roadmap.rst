@@ -64,6 +64,17 @@ Status
 Completed
 ---------
 
+Project audit
+   Simulation construction validates rules even when callers bypass the RON
+   helper. A* reuses per-terrain travel costs within each search. Server setup
+   frames and checksums are cached at startup, queue
+   capacities are checked before creating channels, and disconnected sockets
+   discard pending frames. Protocol and replay text encoding enforces its byte
+   limit during serialization. Client unit layouts and minimap lookups reuse
+   frame buffers; playback retains one recording, and preview markers scan only
+   their clipped bounds. Browser replay import releases canceled pickers and
+   allows a new selection. Protocol examples now consistently show version 6.
+
 M0 — Skeleton
    Bevy app for desktop, web, and Android; asset packing; RTS camera with
    keyboard, edge, and drag pan, and wheel and pinch zoom. macOS releases keep

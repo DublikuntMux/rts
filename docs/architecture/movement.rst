@@ -103,6 +103,9 @@ minimizes travel *time*, not distance:
   beside it.
 
 The result is a list of tile centers from the start tile to the goal tile.
+Each search computes travel costs once per terrain type and reuses them for
+edge evaluation and the heuristic, avoiding repeated integer division for
+every expanded edge. Search ordering and returned routes are unchanged.
 
 Routes
 ------

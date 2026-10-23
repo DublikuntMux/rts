@@ -113,9 +113,12 @@ impl Sim {
     ///
     /// # Errors
     ///
-    /// Returns an error if the map does not fit the rules: unknown terrain or unit types, ragged
-    /// rows, a bad player count, starts/units outside traversable terrain, or over-capacity tiles.
+    /// Returns an error if the rules are invalid or the map does not fit them: unknown terrain
+    /// or unit types, ragged rows, a bad player count, starts/units outside traversable terrain,
+    /// or over-capacity tiles.
     pub fn new(rules: Rules, map: &MapData) -> Result<Self, LoadError> {
+        // Rules can also be deserialized directly, bypassing Rules::from_ron's validation.
+        rules.validate()?;
         let terrain = Terrain::parse(&map.tiles, &rules)?;
         if map.players.is_empty() || map.players.len() > MAX_PLAYERS {
             return Err(LoadError::invalid(format!(

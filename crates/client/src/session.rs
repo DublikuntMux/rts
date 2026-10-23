@@ -244,7 +244,6 @@ pub struct Session {
     submitted_tick: u32,
     recording: Option<Replay>,
     last_replay: Option<Replay>,
-    playback: Option<Replay>,
     last_step: f64,
 }
 
@@ -262,7 +261,6 @@ impl Session {
         self.online_setup = None;
         self.submitted_tick = 0;
         self.received_tick = 0;
-        self.playback = None;
     }
 
     fn begin(
@@ -300,8 +298,7 @@ impl Session {
             .simulation()
             .map_err(|error| format!("Cannot load replay map: {error}"))?;
         self.archive();
-        self.last_replay = Some(replay.clone());
-        self.playback = Some(replay);
+        self.last_replay = Some(replay);
         self.mode = Mode::Playback;
         self.last_step = now;
         Ok(Match::new(sim, PlayerId(0), false))
@@ -397,7 +394,7 @@ impl Plugin for SessionPlugin {
         app.init_resource::<Session>()
             .init_resource::<SessionStatus>()
             .init_resource::<PauseMenu>()
-            .init_resource::<ReplayIo>()
+            .init_non_send::<ReplayIo>()
             .insert_non_send(Network::default())
             .add_message::<SessionAction>()
             .add_systems(PreUpdate, poll_network)
@@ -435,7 +432,7 @@ fn handle_actions(
     mut status: ResMut<SessionStatus>,
     mut network: NonSendMut<Network>,
     mut next: ResMut<NextState<AppState>>,
-    io: Res<ReplayIo>,
+    mut io: NonSendMut<ReplayIo>,
     time: Res<Time>,
     state: Res<State<AppState>>,
 ) {
@@ -624,10 +621,16 @@ fn handle_actions(
             SessionAction::Delete { shelf, id } => {
                 library.delete(*shelf, id).map(|()| status.info("Deleted."))
             }
-            SessionAction::ImportReplay => io.load().map(|message| {
-                status.importing = true;
-                status.info(message);
-            }),
+            SessionAction::ImportReplay => {
+                if status.importing {
+                    Err("A replay import is already in progress.".into())
+                } else {
+                    io.load().map(|message| {
+                        status.importing = true;
+                        status.info(message);
+                    })
+                }
+            }
             SessionAction::ExportReplay { id } => library
                 .load_text(Shelf::Replays, id)
                 .and_then(|text| ReplayIo::save(&text))
@@ -910,7 +913,7 @@ fn local_turn(
         .checked_add(INPUT_DELAY_TICKS)
         .ok_or("Match tick limit reached.")?;
     frames.insert(target, std::mem::take(&mut game.pending));
-    let commands = frames.remove(&next_tick).unwrap_or_default();
+    let mut commands = frames.remove(&next_tick).unwrap_or_default();
     let players = u8::try_from(game.sim.players().len()).map_err(|_| "Invalid player count.")?;
     Ok(Turn {
         tick: next_tick,
@@ -918,7 +921,7 @@ fn local_turn(
             .map(|player| PlayerInput {
                 player: PlayerId(player),
                 commands: if PlayerId(player) == game.local_player {
-                    commands.clone()
+                    std::mem::take(&mut commands)
                 } else {
                     Vec::new()
                 },
@@ -970,7 +973,10 @@ fn advance(
                 turn
             }
             Mode::Playback => {
-                let replay = session.playback.as_ref().ok_or("Replay is not loaded.")?;
+                let replay = session
+                    .last_replay
+                    .as_ref()
+                    .ok_or("Replay is not loaded.")?;
                 let Some(turn) = replay.turns.get(game.sim.tick() as usize) else {
                     if game.sim.state_hash() != replay.final_hash {
                         return Err("Replay ended with a different match state.".into());
@@ -1007,7 +1013,7 @@ fn advance(
 }
 
 fn finish_replay_import(
-    mut io: ResMut<ReplayIo>,
+    mut io: NonSendMut<ReplayIo>,
     mut library: ResMut<Library>,
     mut status: ResMut<SessionStatus>,
 ) {

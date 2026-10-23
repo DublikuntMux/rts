@@ -99,7 +99,10 @@ configured palette.
 the image handle. Health bars (M4) will be children of this root. See
 :ref:`client-scenes` for scene rules.
 
-``UnitVisuals`` stores entities, shared images, and persistent movement state.
+``UnitVisuals`` stores entities, shared images, persistent movement state, and
+reusable layout buffers. A flat unit buffer sorts by movement state, tile, and
+stable ID, so packing retains its storage across frames instead of allocating
+a vector for each occupied tile. The placement map also retains its capacity.
 These presentation caches never affect the deterministic core. On match exit,
 the caches reset and roots despawn through ``DespawnOnExit``.
 

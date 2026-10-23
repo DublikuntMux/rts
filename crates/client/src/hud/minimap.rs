@@ -1,7 +1,5 @@
 //! A terrain image built once, with live unit markers and a camera footprint.
 
-use std::collections::BTreeMap;
-
 use bevy::{
     asset::RenderAssetUsages,
     color::{ColorToPacked, Srgba},
@@ -11,6 +9,7 @@ use bevy::{
         events::{PointerClick, PointerDrag},
         pointer::PointerButton,
     },
+    platform::collections::HashMap,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     ui_widgets::observe,
@@ -152,6 +151,7 @@ pub(super) fn update_minimap(
     root: Single<Entity, With<Minimap>>,
     markers: Query<(Entity, &UnitMarker)>,
     mut marker_styles: Query<(&mut Node, &mut BackgroundColor), MarkerFilter>,
+    mut existing: Local<HashMap<UnitId, Entity>>,
 ) {
     let size = window.size() / scale.0;
     let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
@@ -213,10 +213,8 @@ pub(super) fn update_minimap(
             node.height = percent(rect.height() * 100.0);
         }
     }
-    let mut existing: BTreeMap<_, _> = markers
-        .iter()
-        .map(|(entity, marker)| (marker.0, entity))
-        .collect();
+    existing.clear();
+    existing.extend(markers.iter().map(|(entity, marker)| (marker.0, entity)));
     for (id, unit) in game.sim.units() {
         let position = map_fraction(to_world(unit.pos), bounds.0);
         let node = Node {

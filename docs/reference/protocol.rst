@@ -4,7 +4,7 @@ Multiplayer protocol
 Clients and the server exchange WebSocket messages defined in ``rts_net``
 (``crates/net/src/lib.rs``). The crate has no renderer or socket dependency;
 the server runtime and the client session supply the transport. The current
-protocol version is **5**. Older clients and replays are incompatible.
+protocol version is **6**. Older clients and replays are incompatible.
 
 Encoding
 --------
@@ -16,6 +16,9 @@ Encoding
   reject a text-encoded setup and unknown binary tags.
 * Every message is validated when encoded and when decoded. Structures deny
   unknown fields.
+
+Text encoding stops at the applicable byte limit while serializing, so an
+oversized message or replay is rejected before building its complete output.
 
 Shared types
 ------------
@@ -112,7 +115,7 @@ Example text frames:
 
 .. code-block:: text
 
-   Join(version:5,code:"K7Q2PX",name:"Ada")
+   Join(version:6,code:"K7Q2PX",name:"Ada")
    Input(tick:42,commands:[Move(units:[(0),(1)],target:(11147,14223))])
    Turn(turn:(tick:40,inputs:[(player:(0),commands:[]),(player:(1),commands:[Stop(units:[(7)])])]),hash:17134265448149945174)
 
@@ -129,9 +132,9 @@ Message sequence
    hide footbox
    participant Client as C
    participant Server as S
-   C -> S : Rooms { version: 5 }
+   C -> S : Rooms { version: 6 }
    S --> C : Rooms { rooms }
-   C -> S : Create { version: 5, name, public }\nor Join { version: 5, code, name }
+   C -> S : Create { version: 6, name, public }\nor Join { version: 6, code, name }
    S --> C : Setup (binary)
    S --> C : Lobby { code, player, public, slots }
    C -> C : validate setup,\ncompute checksum

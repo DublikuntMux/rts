@@ -1,7 +1,5 @@
 //! Tile-local presentation bounds; never part of simulation occupancy.
 
-use std::collections::BTreeMap;
-
 use bevy::{platform::collections::HashMap, prelude::*};
 use rts_base::{IVec2 as SimPos, UnitDef, UnitId, tile_of};
 
@@ -116,81 +114,108 @@ pub(super) fn group_area() -> f32 {
     (TILE_PX as f32).mul_add(GROUP_AREA, -2.0 * TILE_PADDING)
 }
 
-/// Pack sprite bounds in ID order, retaining relative unit sizes.
-/// A common fit scale keeps the grid inside the group area, which may exceed the
-/// tile so even a full tile of units stays close to its unshared size. The grid is
-/// centered on the members' mean bounds center, which is the point a group was sent
-/// to; it is never pulled toward the tile center, so arriving never shifts the group
-/// and a lone unit stands exactly on the ordered point.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "tile capacity bounds each group to at most u16::MAX units"
-)]
-pub(super) fn layout_units(
-    units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
-) -> HashMap<UnitId, Placement> {
-    let mut tiles = BTreeMap::<(i32, i32), Vec<_>>::new();
-    for (id, position, bounds) in units {
-        let tile = tile_of(position);
-        tiles
-            .entry((tile.x, tile.y))
-            .or_default()
-            .push((id, to_world(position), bounds));
+/// Reusable storage for packing units. Sorting a flat buffer avoids rebuilding a tree
+/// and allocating a fresh vector for every occupied tile on every rendered frame.
+#[derive(Default)]
+pub(super) struct UnitLayout {
+    units: Vec<LayoutUnit>,
+    placements: HashMap<UnitId, Placement>,
+}
+
+struct LayoutUnit {
+    group: (bool, i32, i32),
+    id: UnitId,
+    position: Vec2,
+    bounds: UnitBounds,
+}
+
+impl UnitLayout {
+    pub fn placement(&self, id: UnitId) -> Placement {
+        self.placements[&id]
     }
-    let mut placements = HashMap::default();
-    for (_, mut group) in tiles {
-        group.sort_unstable_by_key(|&(id, _, _)| id);
-        let count = group.len();
-        let mut columns = count.isqrt() + usize::from(count.isqrt().pow(2) < count);
-        let cell = group
-            .iter()
-            .map(|unit| unit.2.size)
-            .fold(Vec2::ZERO, Vec2::max);
-        let grid_bounds = |columns: usize| {
-            let size = Vec2::new(columns as f32, count.div_ceil(columns) as f32);
-            size * cell + (size - Vec2::ONE) * UNIT_GAP
-        };
-        let mut bounds = grid_bounds(columns);
-        // Rectangular sprites may fit better in a vertical stack than a square grid.
-        for candidate in 1..=count {
-            let candidate_bounds = grid_bounds(candidate);
-            if candidate_bounds.max_element() < bounds.max_element() {
-                columns = candidate;
-                bounds = candidate_bounds;
+
+    /// Moving and stopped units pack separately, in stable ID order within each tile.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "tile capacity bounds each group to at most u16::MAX units"
+    )]
+    pub fn update(&mut self, units: impl Iterator<Item = (UnitId, SimPos, UnitBounds, bool)>) {
+        self.units.clear();
+        self.units
+            .extend(units.map(|(id, position, bounds, moving)| {
+                let tile = tile_of(position);
+                LayoutUnit {
+                    group: (moving, tile.x, tile.y),
+                    id,
+                    position: to_world(position),
+                    bounds,
+                }
+            }));
+        self.units
+            .sort_unstable_by_key(|unit| (unit.group, unit.id));
+        self.placements.clear();
+        for group in self.units.chunk_by(|a, b| a.group == b.group) {
+            // The group occupies a contiguous portion of the retained scratch buffer.
+            let count = group.len();
+            let mut columns = count.isqrt() + usize::from(count.isqrt().pow(2) < count);
+            let cell = group
+                .iter()
+                .map(|unit| unit.bounds.size)
+                .fold(Vec2::ZERO, Vec2::max);
+            let grid_bounds = |columns: usize| {
+                let size = Vec2::new(columns as f32, count.div_ceil(columns) as f32);
+                size * cell + (size - Vec2::ONE) * UNIT_GAP
+            };
+            let mut bounds = grid_bounds(columns);
+            // Rectangular sprites may fit better in a vertical stack than a square grid.
+            for candidate in 1..=count {
+                let candidate_bounds = grid_bounds(candidate);
+                if candidate_bounds.max_element() < bounds.max_element() {
+                    columns = candidate;
+                    bounds = candidate_bounds;
+                }
+            }
+            let rows = count.div_ceil(columns);
+            let available = group_area();
+            let scale = (available / bounds.max_element()).min(1.0);
+            // Sum local offsets so large world coordinates do not accumulate rounding
+            // error and pull a crowded group away from its ordered point.
+            let origin = group[0].position;
+            let center = origin
+                + group
+                    .iter()
+                    .map(|unit| unit.position - origin + unit.bounds.offset * scale)
+                    .sum::<Vec2>()
+                    / count as f32;
+            let stride = (cell + Vec2::splat(UNIT_GAP)) * scale;
+            for (index, unit) in group.iter().enumerate() {
+                let row = index / columns;
+                let column = index % columns;
+                // Center the last row as well when the grid is incomplete.
+                let row_columns = columns.min(count - row * columns);
+                let offset = Vec2::new(
+                    column as f32 - (row_columns - 1) as f32 / 2.0,
+                    (rows - 1) as f32 / 2.0 - row as f32,
+                ) * stride;
+                self.placements.insert(
+                    unit.id,
+                    Placement {
+                        position: center + offset - unit.bounds.offset * scale,
+                        scale,
+                    },
+                );
             }
         }
-        let rows = count.div_ceil(columns);
-        let available = group_area();
-        let scale = (available / bounds.max_element()).min(1.0);
-        // Sum local offsets so large world coordinates do not accumulate rounding
-        // error and pull a crowded group away from its ordered point.
-        let origin = group[0].1;
-        let center = origin
-            + group
-                .iter()
-                .map(|unit| unit.1 - origin + unit.2.offset * scale)
-                .sum::<Vec2>()
-                / count as f32;
-        let stride = (cell + Vec2::splat(UNIT_GAP)) * scale;
-        for (index, (id, _, unit_bounds)) in group.into_iter().enumerate() {
-            let row = index / columns;
-            let column = index % columns;
-            // Center the last row as well when the grid is incomplete.
-            let row_columns = columns.min(count - row * columns);
-            let offset = Vec2::new(
-                column as f32 - (row_columns - 1) as f32 / 2.0,
-                (rows - 1) as f32 / 2.0 - row as f32,
-            ) * stride;
-            placements.insert(
-                id,
-                Placement {
-                    position: center + offset - unit_bounds.offset * scale,
-                    scale,
-                },
-            );
-        }
     }
-    placements
+}
+
+#[cfg(test)]
+fn layout_units(
+    units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
+) -> HashMap<UnitId, Placement> {
+    let mut layout = UnitLayout::default();
+    layout.update(units.map(|(id, pos, bounds)| (id, pos, bounds, false)));
+    layout.placements
 }
 
 #[cfg(test)]
@@ -242,6 +267,49 @@ mod tests {
                 )
             });
         assert!((max - min).max_element() <= group_area() + 0.01);
+    }
+
+    #[test]
+    fn retained_layout_reuses_storage_and_keeps_moving_groups_separate() {
+        let position = SimPos::splat(TILE / 2);
+        let bounds = circle(38.375);
+        let units = [
+            (UnitId(0), position, bounds, false),
+            (UnitId(1), position, bounds, false),
+            (UnitId(2), position, bounds, true),
+            (UnitId(3), position, bounds, true),
+            (UnitId(4), position + SimPos::X * TILE, bounds, false),
+        ];
+        let mut layout = UnitLayout::default();
+        layout.update(units.into_iter());
+        let expected = layout.placements.clone();
+        assert_eq!(
+            layout.placement(UnitId(0)).position,
+            layout.placement(UnitId(2)).position
+        );
+        assert_eq!(
+            layout.placement(UnitId(1)).position,
+            layout.placement(UnitId(3)).position
+        );
+        assert_ne!(
+            layout.placement(UnitId(0)).position,
+            layout.placement(UnitId(1)).position
+        );
+        assert_eq!(layout.placement(UnitId(4)).position, to_world(units[4].1));
+        let scratch = layout.units.as_ptr();
+        let capacity = layout.placements.capacity();
+        layout.update(units.into_iter().rev());
+        assert_eq!(layout.units.as_ptr(), scratch);
+        assert_eq!(layout.placements.capacity(), capacity);
+        for (id, placement) in expected {
+            assert_eq!(layout.placement(id).position, placement.position);
+            assert_eq!(layout.placement(id).scale, placement.scale);
+        }
+        layout.update(units[..1].iter().copied());
+        assert_eq!(layout.placements.len(), 1);
+        assert_eq!(layout.placement(UnitId(0)).position, to_world(position));
+        layout.update(std::iter::empty());
+        assert!(layout.placements.is_empty());
     }
 
     #[test]

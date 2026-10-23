@@ -29,18 +29,15 @@ pub fn find_path(
         let index = i32::try_from(index).unwrap();
         IVec2::new(index % width, index / width)
     };
-    let tile_cost = |tile| {
-        rules
-            .terrain(terrain.get(tile).unwrap())
-            .travel_cost()
-            .unwrap()
-    };
-    let minimum_cost = rules
+    // Each terrain type has one fixed rate. Reuse the costs computed for the heuristic
+    // instead of repeating their integer division for every expanded edge.
+    let travel_costs: Vec<_> = rules
         .terrain_types()
         .iter()
-        .filter_map(crate::TerrainDef::travel_cost)
-        .min()
-        .unwrap();
+        .map(crate::TerrainDef::travel_cost)
+        .collect();
+    let tile_cost = |tile| travel_costs[usize::from(terrain.get(tile).unwrap().0)].unwrap();
+    let minimum_cost = travel_costs.iter().flatten().copied().min().unwrap();
     // Even the fastest terrain needs this much time per edge. An unscaled Manhattan
     // heuristic would overestimate routes through terrain faster than normal.
     let heuristic =
