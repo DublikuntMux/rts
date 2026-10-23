@@ -3,9 +3,13 @@ use std::collections::VecDeque;
 use crate::rules::TRAVEL_SCALE;
 use crate::{IVec2, Rules, TICK_RATE, Terrain, path::find_path, tile_of};
 
+/// Application tick and command index distinguish separate selections, even at one target.
+pub type MoveGroupId = (u32, u64);
+
 /// Every field affects subsequent movement and is included in the simulation hash.
 #[derive(Debug, Clone, Hash)]
 pub struct MoveOrder {
+    pub(crate) group: Option<MoveGroupId>,
     target: IVec2,
     waypoints: VecDeque<IVec2>,
     segment_start: IVec2,
@@ -23,6 +27,7 @@ impl MoveOrder {
     ) -> Option<Self> {
         let waypoints = Self::route(start, target, terrain, rules, &|_| true)?;
         Some(Self {
+            group: None,
             target,
             waypoints,
             segment_start: start,

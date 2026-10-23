@@ -89,3 +89,74 @@ fn replay_verifies_convergence_and_blockers_moved_by_commands() {
     assert_eq!(playback.state_hash(), sim.state_hash());
     assert_capacity(&playback);
 }
+
+#[test]
+fn mixed_speed_group_replay_reproduces_every_hash_through_membership_changes() {
+    let setup = MatchSetup {
+        rules: r##"(tile_capacity: 4, terrain: [
+            (id: "grass", symbol: '.', speed_modifier: 1.0, color: "#ffffff"),
+        ], units: [
+            (id: "worker", sprite: "worker.png", size: 1, max_health: 40, radius: 0.3, speed: 2.0),
+            (id: "soldier", sprite: "soldier.png", size: 2, max_health: 80, radius: 0.4, speed: 1.0),
+        ])"##.into(),
+        map: r#"(name: "group replay", players: [(start: (0.5, 0.5))],
+            tiles: ["........"], units: [
+                (kind: "worker", owner: 0, pos: (0.5, 0.5)),
+                (kind: "soldier", owner: 0, pos: (0.5, 0.5)),
+            ])"#.into(),
+        seed: 17,
+        players: 1,
+    };
+    let mut sim = setup.simulation().unwrap();
+    let mut replay = Replay::new(setup).unwrap();
+    let mut hashes = Vec::new();
+    for tick in 1..=180 {
+        let commands = match tick {
+            1 | 24 | 40 => vec![Command::Move {
+                units: vec![UnitId(0), UnitId(1)],
+                target: center(5, 0),
+            }],
+            16 => vec![Command::Stop {
+                units: vec![UnitId(1)],
+            }],
+            20 => vec![Command::Move {
+                units: vec![UnitId(1)],
+                target: center(7, 0),
+            }],
+            32 => vec![Command::Move {
+                units: vec![UnitId(1)],
+                target: center(0, 0),
+            }],
+            _ => vec![],
+        };
+        let turn = Turn {
+            tick,
+            inputs: vec![PlayerInput {
+                player: PlayerId(0),
+                commands,
+            }],
+        };
+        turn.apply(&mut sim).unwrap();
+        assert_capacity(&sim);
+        if tick < 16 {
+            assert_eq!(
+                sim.unit(UnitId(0)).unwrap().pos,
+                sim.unit(UnitId(1)).unwrap().pos
+            );
+        }
+        let hash = sim.state_hash();
+        hashes.push(hash);
+        replay.push(turn, hash).unwrap();
+    }
+    for id in [UnitId(0), UnitId(1)] {
+        assert_eq!(sim.unit(id).unwrap().pos, center(5, 0));
+        assert_eq!(sim.move_target(id), None);
+    }
+    let loaded = Replay::from_ron(&replay.to_ron().unwrap()).unwrap();
+    let mut playback = loaded.setup.simulation().unwrap();
+    for (turn, hash) in loaded.turns.iter().zip(hashes) {
+        turn.apply(&mut playback).unwrap();
+        assert_eq!(playback.state_hash(), hash, "tick {}", turn.tick);
+    }
+    assert_eq!(loaded.playback().unwrap().state_hash(), sim.state_hash());
+}

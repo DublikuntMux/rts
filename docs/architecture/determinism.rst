@@ -121,7 +121,7 @@ of ``std::hash::Hasher``:
    * - ``commands``
      - Locally queued commands by tick, in submission order.
    * - ``move_orders``
-     - Every active order: target, remaining waypoints, segment start,
+     - Every active order: move-group identity, target, remaining waypoints, segment start,
        segment progress, and speed remainder.
 
 Rules and terrain are fixed at setup and are not hashed; the setup checksum

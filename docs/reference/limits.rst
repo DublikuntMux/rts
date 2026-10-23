@@ -60,7 +60,7 @@ Constants are in ``crates/net/src/lib.rs`` unless noted.
      - Value
      - Meaning
    * - ``PROTOCOL_VERSION``
-     - 5
+     - 6
      - Wire, setup, and replay version.
    * - ``MAX_NAME_CHARS``
      - 24

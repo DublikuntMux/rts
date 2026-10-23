@@ -311,6 +311,18 @@ match.
 M2 — Commands, selection, movement
 ----------------------------------
 
+**Selected crowds stay together.** Each accepted multi-unit Move now keeps a
+deterministic group identity. Active members share their slowest base speed
+and plan past their own crowd, while advancement enforces all live capacity.
+Eleven regressions cover crowded open lanes and narrow corridors, mixed speeds,
+static obstacles, unrelated blockers, mixed group/outsider occupancy, rejected
+members, partial-segment waits without rewinding, independent selections,
+membership changes, duplicate IDs, and hashed group identity. A replay regression
+checks every reconstructed hash through grouping, Stop, and replacement orders.
+Protocol/replay version 6 rejects older movement rules and hashes. Workspace
+tests, strict all-target Clippy, formatting, the WebAssembly check, and the
+strict Sphinx build passed. Rendered gameplay and an Android build were not run.
+
 **Terrain speed modifiers.** 122 workspace tests, workspace Clippy with
 warnings denied, formatting, and ``wasm32`` and Android arm64 checks. Tests
 cover integer and decimal modifiers, zero-speed blocking, exact half, normal,

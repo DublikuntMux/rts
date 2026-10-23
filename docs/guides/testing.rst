@@ -56,6 +56,9 @@ What the tests cover
    * - ``crates/base/tests/occupancy.rs``
      - Tile capacity, contention by unit ID, blocked goals and corridors,
        blocker removal, monotonic slow movement.
+   * - ``crates/base/tests/group_movement.rs``
+     - Crowds queue without self-induced detours, mixed speeds, membership
+       changes, fractional progress while blocked, and deterministic group hashes.
    * - ``crates/base/tests/terrain_speed.rs``
      - Half, normal, and double speed; boundary crossings in both axes and
        directions; mixed terrain within a tick; fastest-route choice.

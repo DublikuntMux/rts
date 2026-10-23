@@ -26,7 +26,7 @@ pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
 pub use rules::{Rules, SPEED_SCALE, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds};
 
 use crate::hash::StateHasher;
-use crate::movement::MoveOrder;
+use crate::movement::{MoveGroupId, MoveOrder};
 use crate::occupancy::Occupancy;
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +84,28 @@ pub struct Sim {
     next_unit_id: u32,
     commands: BTreeMap<u32, Vec<(PlayerId, Command)>>,
     move_orders: BTreeMap<UnitId, MoveOrder>,
+}
+
+/// Derived live group usage and pace; rebuilt after commands, never stored or hashed.
+struct MovingGroup {
+    speed: i32,
+    tiles: BTreeMap<(i32, i32), u32>,
+}
+
+impl MovingGroup {
+    fn add(&mut self, pos: IVec2, size: u16) {
+        let tile = tile_of(pos);
+        *self.tiles.entry((tile.x, tile.y)).or_default() += u32::from(size);
+    }
+
+    fn remove(&mut self, pos: IVec2, size: u16) {
+        let tile = tile_of(pos);
+        *self.tiles.get_mut(&(tile.x, tile.y)).unwrap() -= u32::from(size);
+    }
+
+    fn used(&self, tile: IVec2) -> u32 {
+        self.tiles.get(&(tile.x, tile.y)).copied().unwrap_or(0)
+    }
 }
 
 impl Sim {
@@ -163,15 +185,33 @@ impl Sim {
     pub fn step_with_commands(&mut self, commands: impl IntoIterator<Item = (PlayerId, Command)>) {
         self.tick += 1;
         let queued = self.commands.remove(&self.tick).unwrap_or_default();
-        for (player, command) in queued.into_iter().chain(commands) {
-            self.apply_command(player, command);
+        for (index, (player, command)) in (0_u64..).zip(queued.into_iter().chain(commands)) {
+            let group = (self.tick, index);
+            self.apply_command(player, command, group);
         }
+        self.advance_movement();
+    }
+
+    fn advance_movement(&mut self) {
         if self.move_orders.is_empty() {
             return;
         }
         let mut occupancy = Occupancy::new(self.terrain.size());
         for unit in self.units.values() {
             occupancy.add(unit.pos, self.rules.unit(unit.kind).size);
+        }
+        let mut groups = BTreeMap::<MoveGroupId, MovingGroup>::new();
+        for (id, order) in &self.move_orders {
+            if let Some(group) = order.group {
+                let unit = &self.units[id];
+                let definition = self.rules.unit(unit.kind);
+                let group = groups.entry(group).or_insert_with(|| MovingGroup {
+                    speed: definition.speed,
+                    tiles: BTreeMap::new(),
+                });
+                group.speed = group.speed.min(definition.speed);
+                group.add(unit.pos, definition.size);
+            }
         }
         // Stable IDs resolve contention. Each move updates occupancy before the next unit plans.
         self.move_orders.retain(|id, order| {
@@ -180,17 +220,34 @@ impl Sim {
             };
             let definition = self.rules.unit(unit.kind);
             occupancy.remove(unit.pos, definition.size);
+            let mut group = order.group.and_then(|id| groups.get_mut(&id));
+            // Exclude the member itself from both totals to avoid discounting it twice.
+            if let Some(group) = &mut group {
+                group.remove(unit.pos, definition.size);
+            }
+            let can_plan = |tile| {
+                occupancy.fits_excluding(
+                    tile,
+                    definition.size,
+                    self.rules.tile_capacity(),
+                    group.as_ref().map_or(0, |group| group.used(tile)),
+                )
+            };
             let can_enter =
                 |tile| occupancy.fits(tile, definition.size, self.rules.tile_capacity());
-            let active = !order.refresh(unit.pos, &self.terrain, &self.rules, &can_enter)
+            let active = !order.refresh(unit.pos, &self.terrain, &self.rules, &can_plan)
                 || order.advance(
                     &mut unit.pos,
-                    definition.speed,
+                    group.as_ref().map_or(definition.speed, |group| group.speed),
                     &self.terrain,
                     &self.rules,
                     &can_enter,
                 );
             occupancy.add(unit.pos, definition.size);
+            // A member that arrived is now a stationary obstacle, even to its former group.
+            if active && let Some(group) = &mut group {
+                group.add(unit.pos, definition.size);
+            }
             active
         });
     }
@@ -209,8 +266,8 @@ impl Sim {
         }
     }
 
-    fn apply_command(&mut self, player: PlayerId, command: Command) {
-        let (units, target) = match command {
+    fn apply_command(&mut self, player: PlayerId, command: Command, group: MoveGroupId) {
+        let (mut units, target) = match command {
             Command::Move { units, target } => {
                 if self.terrain.speed_modifier(target, &self.rules) == 0 {
                     return;
@@ -219,6 +276,9 @@ impl Sim {
             }
             Command::Stop { units } => (units, None),
         };
+        units.sort_unstable();
+        units.dedup();
+        let mut orders = Vec::new();
         for id in units {
             let Some(unit) = self.units.get(&id).filter(|unit| unit.owner == player) else {
                 continue;
@@ -226,11 +286,16 @@ impl Sim {
             if let Some(target) = target {
                 // An unreachable replacement leaves the current order intact.
                 if let Some(order) = MoveOrder::new(unit.pos, target, &self.terrain, &self.rules) {
-                    self.move_orders.insert(id, order);
+                    orders.push((id, order));
                 }
             } else {
                 self.move_orders.remove(&id);
             }
+        }
+        let group = (orders.len() > 1).then_some(group);
+        for (id, mut order) in orders {
+            order.group = group;
+            self.move_orders.insert(id, order);
         }
     }
 

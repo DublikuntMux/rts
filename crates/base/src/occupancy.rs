@@ -21,8 +21,20 @@ impl Occupancy {
     }
 
     pub(crate) fn fits(&self, tile: IVec2, size: u16, capacity: u16) -> bool {
-        self.index(tile)
-            .is_some_and(|index| self.used[index] + u32::from(size) <= u32::from(capacity))
+        self.fits_excluding(tile, size, capacity, 0)
+    }
+
+    /// Ignore fellow group members while planning, but never while advancing.
+    pub(crate) fn fits_excluding(
+        &self,
+        tile: IVec2,
+        size: u16,
+        capacity: u16,
+        excluded: u32,
+    ) -> bool {
+        self.index(tile).is_some_and(|index| {
+            self.used[index] - excluded + u32::from(size) <= u32::from(capacity)
+        })
     }
 
     pub(crate) fn add(&mut self, pos: IVec2, size: u16) {

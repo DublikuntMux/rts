@@ -30,13 +30,40 @@ Each tick the simulation:
 
 1. Rebuilds tile occupancy from every living unit.
 2. Visits move orders in ``UnitId`` order. For each unit it removes the unit
-   from occupancy, replans its route against the remaining units, spends the
+   from occupancy, replans its route against units outside its move group, spends the
    unit's movement budget along the route, and adds the unit back at its new
    position.
 3. Drops orders that reached their target or whose unit no longer exists.
 
 Because each unit updates occupancy before the next one plans, two units can
 never both take the last space in a tile. The lower ID wins.
+
+Selected groups
+---------------
+
+Units receiving the same ``Move`` command form a movement group. Only owned,
+living units with a statically reachable target join it; duplicate IDs are
+discarded. Separate commands remain separate groups even at the same target.
+The group identity is the application tick and command index, stored in each
+accepted order and included in the state hash. Single-unit orders need no
+group identity.
+
+Each tick, active group members share the slowest member's base speed. Terrain
+still charges its normal travel cost. Planning ignores capacity occupied by
+fellow active members, while actual movement checks all live occupancy. This
+lets a crowd queue behind itself instead of scattering into side routes.
+Group occupancy updates as members move, and a completed member becomes a
+stationary blocker. Stop, replacement orders, removal, and arrival release
+membership; the shared speed is recomputed before the next movement phase.
+Group speed and occupancy are derived data and are not hashed separately.
+
+This reduces splitting without enforcing a rigid formation. Units starting
+apart can choose different sides of an obstacle, and different terrain costs
+or queues can stretch a group. A destination cannot exceed tile capacity, so
+larger selections wait behind members that have already arrived.
+
+Protocol and replay version 6 gates the changed movement rules and hashes;
+older clients, saved games, and replays are incompatible.
 
 Terrain speed
 -------------
@@ -70,7 +97,8 @@ minimizes travel *time*, not distance:
   north, west, east, south. Every tie is therefore resolved identically on
   every peer.
 * **Traversable tiles.** A tile must have a positive speed modifier. While
-  replanning, intermediate tiles must also have free capacity. The start and
+  replanning, intermediate tiles must also have free capacity after excluding
+  fellow active group members. The start and
   goal tiles are exempt, so a unit can approach a full destination and wait
   beside it.
 
@@ -181,9 +209,10 @@ Every active order replans every tick against live occupancy
 (``MoveOrder::refresh``):
 
 * If the unit is partway along a segment whose destination tile still has
-  room, that segment is kept as an *anchor* and the route is replanned from
+  room when fellow movers are excluded, that segment is kept as an *anchor* and the route is replanned from
   its end. Keeping the anchor prevents the unit from turning back toward its
-  previous center and preserves fractional progress.
+  previous center and preserves fractional progress, including while waiting
+  for group members to clear the next tile.
 * Otherwise the unit starts a fresh segment from its current position.
 * If no route exists right now, the order stays active and the unit waits.
   It tries again on the next tick.
@@ -206,4 +235,4 @@ Limits and future work
   simultaneous swaps between adjacent full tiles are not implemented.
 
 Everything that affects a later tick—waypoints, segment start, progress, and
-speed remainder—is part of the state hash.
+speed remainder, plus move-group identity—is part of the state hash.

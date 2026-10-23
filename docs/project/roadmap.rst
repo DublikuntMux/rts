@@ -102,6 +102,12 @@ Local diagnostics
    from pending reports, and log rotation failures still keep the log bounded.
 
 Unit movement and sprites
+   Units ordered together now share the slowest active member's base pace and
+   queue behind fellow movers instead of treating their crowd as a reason to
+   detour. Capacity, terrain costs, and stable-ID contention remain enforced.
+   Stop, replacement, removal, and arrival release group membership. Protocol
+   and replay version 6 gates the changed movement rules and hashes.
+
    Linear simulation-position interpolation keeps travel speed steady through
    tile centers and boundaries. Packed groups are anchored at the point they
    were ordered to, never at the tile center, so arriving never shifts them and
