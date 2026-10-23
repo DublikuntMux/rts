@@ -17,7 +17,7 @@ mod settings;
 mod storage;
 mod units;
 
-use bevy::{log::LogPlugin, prelude::*};
+use bevy::{app::PanicHandlerPlugin, log::LogPlugin, prelude::*};
 use rts_assets::{AssetBundle, BundledAssetPlugin, DataPlugin};
 
 use crate::{
@@ -33,20 +33,23 @@ use crate::{
 ///
 /// Panics if the asset pack is missing or corrupt.
 pub fn run() {
-    rts_assets::with_bundle(|bundle| {
-        let mut app = build_app(bundle);
-        // After the app is built, so Bevy's own hook stays in the chain.
-        crash::install();
+    let mut app = App::new();
+    app.add_plugins(PanicHandlerPlugin);
+    // Keep Bevy's platform hook while also capturing asset-loading and plugin-build panics.
+    crash::install();
+    rts_assets::with_bundle(move |bundle| {
+        build_app(&mut app, bundle);
         app.run();
     });
 }
 
-fn build_app(bundle: AssetBundle) -> App {
-    let mut app = App::new();
+fn build_app(app: &mut App, bundle: AssetBundle) {
     app.insert_resource(CrashReport::load())
         .add_plugins(BundledAssetPlugin::new(bundle))
         .add_plugins(
             DefaultPlugins
+                .build()
+                .disable::<PanicHandlerPlugin>()
                 .set(LogPlugin {
                     custom_layer: |_| Some(crash::log_layer()),
                     ..default()
@@ -76,5 +79,4 @@ fn build_app(bundle: AssetBundle) -> App {
         ))
         .init_resource::<Library>()
         .init_resource::<GameFont>();
-    app
 }

@@ -35,6 +35,23 @@ deployment steps were not executed end to end here.
 Client scenes
 -------------
 
+**Audit of local follow-ups.** Corrected dense-group anchor precision near the
+map edge, export settlement in app storage, failed log rotation, exact log-tail
+boundaries, and browser crash metadata and download lifetimes. Browser text
+fields use native HTML inputs to open the platform keyboard directly from a
+tap; filtering, Unicode character limits, composition, and form storage share
+the menu model. A native launch without its asset pack now writes a report
+with the startup panic and backtrace. Regression tests cover export failure
+without losing the pending report, obstructed rotation, maximum-capacity group
+anchors, arrival frames, character filtering, and validated player-name storage.
+All 255 workspace tests, strict native and WebAssembly Clippy, formatting, the
+Trunk debug build, Android arm64 check, release workflow lint, and strict Sphinx
+build passed. Chromium with software WebGL exercised touch focus, Unicode
+limits, composition, URL filtering, persistence, Tab navigation, and a 390-pixel
+phone layout. A browser startup panic retained its Rust cause after the
+secondary JavaScript trap. Physical-device keyboard display and gameplay,
+and end-to-end release packaging, were not run.
+
 
 **Crash reports and logs.** A local-only crash handler records panics with
 recent log lines, a backtrace, and the version, platform, and UTC time, then

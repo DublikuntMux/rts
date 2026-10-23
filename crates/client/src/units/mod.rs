@@ -581,9 +581,40 @@ mod tests {
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             ))
             .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.sim.step());
+        let mut arrived_at = None;
+        let mut arrival_checks = 0;
         for _ in 0..180 {
             app.update();
+            let world = app.world();
+            let game = world.resource::<Match>();
+            if (0..4).map(UnitId).all(|id| {
+                game.sim.unit(id).unwrap().pos == target && game.sim.move_target(id).is_none()
+            }) {
+                let now = world.resource::<Time>().elapsed_secs_f64();
+                let arrival = *arrived_at.get_or_insert(now);
+                // Allow the final simulation segment to finish interpolating, then
+                // check every frame so a transient slide on arrival cannot hide
+                // behind the eventual settled position.
+                if now - arrival > 1.0 / f64::from(rts_base::TICK_RATE) {
+                    let visuals = world.resource::<UnitVisuals>();
+                    let center = visuals
+                        .entities
+                        .values()
+                        .map(|&entity| {
+                            world
+                                .get::<Transform>(entity)
+                                .unwrap()
+                                .translation
+                                .truncate()
+                        })
+                        .sum::<Vec2>()
+                        / 4.0;
+                    assert!(center.abs_diff_eq(to_world(target), 0.001));
+                    arrival_checks += 1;
+                }
+            }
         }
+        assert!(arrival_checks > 60);
         let game = app.world().resource::<Match>();
         for id in (0..4).map(UnitId) {
             assert_eq!(game.sim.unit(id).unwrap().pos, target);

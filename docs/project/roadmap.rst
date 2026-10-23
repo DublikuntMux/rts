@@ -96,6 +96,11 @@ M3 — Multiplayer
    browser import and export. Menu text fields use the platform keyboard. Unit
    visuals as Bevy scenes.
 
+Local diagnostics
+   Panic capture starts before asset loading and plugin construction. Reports
+   remain local until exported or discarded; app-storage exports live separately
+   from pending reports, and log rotation failures still keep the log bounded.
+
 Unit movement and sprites
    Linear simulation-position interpolation keeps travel speed steady through
    tile centers and boundaries. Packed groups are anchored at the point they

@@ -124,8 +124,8 @@ impl CrashReport {
 // Capture
 // ---------------------------------------------------------------------------
 
-/// Installs the panic hook. Call once, after the app is built, so Bevy's own hook stays in the
-/// chain: it prints the panic to the terminal or the browser console.
+/// Installs the panic hook after Bevy's platform hook and before startup work, so startup
+/// failures are captured and Bevy still prints the panic to the terminal or browser console.
 pub fn install() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
@@ -151,6 +151,17 @@ fn report_for(info: &PanicHookInfo<'_>) -> String {
         report.push_str(&std::backtrace::Backtrace::force_capture().to_string());
         report.push('\n');
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        report.push_str("\nBacktrace:\n");
+        report.push_str(&browser::stack(js_sys::Error::new("Rust panic").into()));
+        report.push('\n');
+    }
+    with_log(report)
+}
+
+/// Appends the same recent diagnostics to Rust panics and browser failures.
+fn with_log(mut report: String) -> String {
     let log = recent_log(REPORT_LOG_BYTES);
     if !log.is_empty() {
         report.push_str("\n=== LOG (newest last) ===\n");
@@ -175,7 +186,11 @@ fn header(message: &str, location: &str) -> String {
          Location: {location}\n",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
+        if cfg!(target_arch = "wasm32") {
+            "web"
+        } else {
+            std::env::consts::OS
+        },
         std::env::consts::ARCH,
         if cfg!(debug_assertions) {
             "debug"
@@ -295,7 +310,7 @@ fn store(text: &str) {
         native::write(root, text);
     }
     #[cfg(target_arch = "wasm32")]
-    browser::write(text);
+    browser::write_panic(text);
 }
 
 fn discard_stored() {
@@ -312,16 +327,7 @@ fn export_text(text: &str) -> Result<String, String> {
     {
         let root = data_dir().ok_or("Cannot locate the app data folder.")?;
         let folder = native::export_folder(root);
-        if folder == root {
-            // No downloads folder: the stored report already is the export.
-            native::write(root, text);
-            return Ok(format!(
-                "Crash report is at {}.",
-                native::report_path(root).display()
-            ));
-        }
-        let path = native::export(&folder, text)?;
-        native::discard(root);
+        let path = native::export(root, &folder, text)?;
         Ok(format!("Crash report saved to {}.", path.display()))
     }
     #[cfg(target_arch = "wasm32")]
@@ -412,18 +418,19 @@ mod native {
         let _ = fs::remove_file(report_path(root));
     }
 
-    /// Copies `text` into `folder` and returns the written path.
-    pub fn export(folder: &Path, text: &str) -> Result<PathBuf, String> {
+    /// Copies `text` into `folder`, settles the pending report, and returns the written path.
+    pub fn export(root: &Path, folder: &Path, text: &str) -> Result<PathBuf, String> {
         fs::create_dir_all(folder)
             .map_err(|error| format!("Cannot create {}: {error}", folder.display()))?;
         let path = report_path(folder);
         fs::write(&path, text)
             .map_err(|error| format!("Cannot write {}: {error}", path.display()))?;
+        discard(root);
         Ok(path)
     }
 
-    /// The player's downloads folder when it exists, the data folder otherwise. Android and iOS
-    /// have no such folder, so the report stays in app storage.
+    /// The player's downloads folder when it exists, an exports folder in app storage otherwise.
+    /// Keep exports separate from the pending report so settling it survives a restart.
     pub fn export_folder(root: &Path) -> PathBuf {
         ["HOME", "USERPROFILE"]
             .iter()
@@ -431,23 +438,26 @@ mod native {
             .map(PathBuf::from)
             .map(|home| home.join("Downloads"))
             .find(|folder| folder.is_dir())
-            .unwrap_or_else(|| root.to_path_buf())
+            .unwrap_or_else(|| root.join("exports"))
     }
 
     /// The open log file, kept for the life of the process.
     static LOG: OnceLock<Option<Mutex<Log>>> = OnceLock::new();
 
-    struct Log {
+    pub(super) struct Log {
         file: File,
         bytes: u64,
     }
 
     /// Opens the log, rotating it first when the previous run filled it.
-    fn open(root: &Path) -> Option<Log> {
+    pub(super) fn open(root: &Path) -> Option<Log> {
         fs::create_dir_all(root).ok()?;
         let path = root.join(LOG_NAME);
-        if fs::metadata(&path).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
-            let _ = fs::rename(&path, root.join(ROTATED_LOG_NAME));
+        if fs::metadata(&path).is_ok_and(|meta| meta.len() > LOG_LIMIT)
+            && fs::rename(&path, root.join(ROTATED_LOG_NAME)).is_err()
+        {
+            // An obstructed rotation must not turn a bounded log into an unbounded one.
+            fs::write(&path, []).ok()?;
         }
         let file = OpenOptions::new()
             .create(true)
@@ -465,18 +475,25 @@ mod native {
         let Ok(mut log) = log.lock() else {
             return;
         };
-        if log.bytes > LOG_LIMIT {
-            match open(root) {
-                Some(next) => *log = next,
-                None => return,
+        log.write(root, line);
+    }
+
+    impl Log {
+        pub(super) fn write(&mut self, root: &Path, line: &str) {
+            if self.bytes > LOG_LIMIT {
+                match open(root) {
+                    Some(next) => *self = next,
+                    None => return,
+                }
             }
+            if self.file.write_all(line.as_bytes()).is_err() || self.file.write_all(b"\n").is_err()
+            {
+                return;
+            }
+            let _ = self.file.flush();
+            let written = u64::try_from(line.len() + 1).unwrap_or(u64::MAX);
+            self.bytes = self.bytes.saturating_add(written);
         }
-        if log.file.write_all(line.as_bytes()).is_err() || log.file.write_all(b"\n").is_err() {
-            return;
-        }
-        let _ = log.file.flush();
-        let written = u64::try_from(line.len() + 1).unwrap_or(u64::MAX);
-        log.bytes = log.bytes.saturating_add(written);
     }
 
     /// The end of the log, at most `limit` bytes.
@@ -488,16 +505,22 @@ mod native {
             return String::new();
         };
         let limit = u64::try_from(limit).unwrap_or(u64::MAX);
-        let start = length.saturating_sub(limit);
+        // Include the preceding byte so a tail starting exactly at a line boundary keeps
+        // that complete line instead of mistaking it for a partial one.
+        let start = length.saturating_sub(limit.saturating_add(1));
         if file.seek(SeekFrom::Start(start)).is_err() {
             return String::new();
         }
         let mut bytes = Vec::new();
-        if file.read_to_end(&mut bytes).is_err() {
+        if file
+            .take(limit.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
             return String::new();
         }
         let mut text = String::from_utf8_lossy(&bytes).into_owned();
-        // A cut can land inside a line or a character; drop the broken first line.
+        // A cut can land inside a line or a character; drop the preceding partial line.
         if start > 0
             && let Some((_, rest)) = text.split_once('\n')
         {
@@ -544,10 +567,15 @@ mod sink {
 
 #[cfg(target_arch = "wasm32")]
 mod browser {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 
     /// Storage key. Reports are plain text, not the compressed documents `storage` keeps.
     const KEY: &str = "rts/crash-report.txt";
+    /// The browser also reports the trap or rejected promise caused by a Rust panic. That
+    /// secondary event must not replace the panic message and Rust source location.
+    static PANICKED: AtomicBool = AtomicBool::new(false);
 
     fn storage() -> Option<web_sys::Storage> {
         web_sys::window()?.local_storage().ok().flatten()
@@ -557,10 +585,27 @@ mod browser {
         storage()?.get_item(KEY).ok().flatten()
     }
 
-    pub fn write(text: &str) {
+    fn write(text: &str) {
         if let Some(storage) = storage() {
             let _ = storage.set_item(KEY, text);
         }
+    }
+
+    pub fn write_panic(text: &str) {
+        PANICKED.store(true, Ordering::Relaxed);
+        write(text);
+    }
+
+    fn record_error(message: &str, location: &str, stack: &str) {
+        if PANICKED.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut report = super::header(message, location);
+        report.push_str("\nBacktrace:\n");
+        report.push_str(stack);
+        report.push('\n');
+        let report = super::with_log(report);
+        write(super::clip(&report, super::JS_REPORT_LIMIT));
     }
 
     pub fn delete() {
@@ -577,14 +622,11 @@ mod browser {
         };
         let errors = Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| {
             if let Ok(event) = event.dyn_into::<web_sys::ErrorEvent>() {
-                let text = format!(
-                    "JavaScript error: {}\n{}:{}\n{}",
-                    event.message(),
-                    event.filename(),
-                    event.lineno(),
-                    stack(event.error())
+                record_error(
+                    &format!("JavaScript error: {}", event.message()),
+                    &format!("{}:{}:{}", event.filename(), event.lineno(), event.colno()),
+                    &stack(event.error()),
                 );
-                write(super::tail(&text, super::JS_REPORT_LIMIT));
             }
         });
         let _ = window.add_event_listener_with_callback("error", errors.as_ref().unchecked_ref());
@@ -592,8 +634,11 @@ mod browser {
 
         let rejections = Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| {
             if let Ok(event) = event.dyn_into::<web_sys::PromiseRejectionEvent>() {
-                let text = format!("Unhandled promise rejection:\n{}", stack(event.reason()));
-                write(super::tail(&text, super::JS_REPORT_LIMIT));
+                record_error(
+                    "Unhandled promise rejection",
+                    "unknown",
+                    &stack(event.reason()),
+                );
             }
         });
         let _ = window.add_event_listener_with_callback(
@@ -604,7 +649,7 @@ mod browser {
     }
 
     /// A thrown value's stack trace, when it has one.
-    fn stack(value: JsValue) -> String {
+    pub(super) fn stack(value: JsValue) -> String {
         js_sys::Reflect::get(&value, &JsValue::from_str("stack"))
             .ok()
             .and_then(|stack| stack.as_string())
@@ -648,22 +693,51 @@ mod tests {
     #[test]
     fn the_log_keeps_only_its_end() {
         let root = folder("log");
+        let mut log = native::open(&root).unwrap();
         for index in 0..3 {
-            native::log(&root, &format!("{index} line"));
+            log.write(&root, &format!("{index} line"));
         }
         let text = native::recent_log(&root, 1024);
         assert!(text.ends_with("2 line\n"), "{text}");
         let short = native::recent_log(&root, 8);
         assert!(short.len() <= 8, "{short}");
         assert!(!short.starts_with("0 line"), "{short}");
+        assert_eq!(native::recent_log(&root, 7), "2 line\n");
     }
 
     #[test]
-    fn exports_write_a_copy() {
-        let target = folder("export");
-        let path = native::export(&target, "report body").unwrap();
+    fn exports_settle_the_pending_report_even_in_app_storage() {
+        let root = folder("export");
+        native::write(&root, "report body");
+        let target = root.join("exports");
+        let path = native::export(&root, &target, "report body").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "report body");
         assert_eq!(path, target.join(REPORT_NAME));
+        assert!(native::read(&root).is_none());
+    }
+
+    #[test]
+    fn failed_exports_keep_the_pending_report() {
+        let root = folder("failed-export");
+        native::write(&root, "report body");
+        let target = root.join("exports");
+        std::fs::write(&target, "a file obstructs the export folder").unwrap();
+        assert!(native::export(&root, &target, "report body").is_err());
+        assert_eq!(native::read(&root).as_deref(), Some("report body"));
+    }
+
+    #[test]
+    fn the_log_stays_bounded_when_rotation_is_obstructed() {
+        let root = folder("rotation");
+        let mut log = native::open(&root).unwrap();
+        std::fs::create_dir(root.join(ROTATED_LOG_NAME)).unwrap();
+        let line = "a".repeat(LINE_LIMIT);
+        for _ in 0..(LOG_LIMIT / (LINE_LIMIT as u64) + 2) {
+            log.write(&root, &line);
+        }
+        let length = std::fs::metadata(root.join(LOG_NAME)).unwrap().len();
+        assert!(length <= LOG_LIMIT + LINE_LIMIT as u64 + 1, "{length}");
+        assert!(native::recent_log(&root, LINE_LIMIT + 1).contains(&line));
     }
 
     #[test]

@@ -94,8 +94,9 @@ Crash reports and logs
 ----------------------
 
 Diagnostics stay on the player's machine; nothing is uploaded. ``crash.rs``
-installs a Rust panic hook after ``DefaultPlugins`` are built, so Bevy's own
-hook stays in the chain and still prints the panic. The hook writes
+installs Bevy's platform panic hook first, then chains its Rust panic hook before
+opening the asset pack or building the remaining plugins. Startup failures are
+captured too, and Bevy still prints the panic. The hook writes
 ``crash-report.txt`` holding the package version, platform, build profile, UTC
 time, panic message, location, backtrace, and the end of the log. The next
 launch reads that report, the menu offers it once, and **Export report** or
@@ -104,10 +105,12 @@ that ends normally leaves none behind.
 
 ``LogPlugin::custom_layer`` adds a tracing layer that appends every event to
 ``game.log`` in the data folder. The file rotates to ``game.log.1`` once it
-passes 512 KiB, so it cannot grow without bound. Browser builds keep the last
+passes 512 KiB, so it cannot grow without bound. If rotation fails, the active
+log is truncated before appending again. Browser builds keep the last
 500 log lines in memory instead, store the report in ``localStorage``, and
 record ``error`` and ``unhandledrejection`` events, because a wasm trap ends
-the module without reaching the Rust panic hook.
+the module without unwinding. Browser failures include the same header and log
+tail; a secondary trap event preserves an already captured Rust panic report.
 
 Export is a separate step, done while the game runs normally, so it can differ
 by platform:
@@ -119,12 +122,12 @@ by platform:
    * - Platform
      - Export
    * - Desktop
-     - A copy in the downloads folder, or the data folder when there is none.
+     - A copy in the downloads folder, or ``exports/`` in the data folder when there is none.
        The menu names the path.
    * - Web
      - A ``crash-report.txt`` download through a ``Blob``.
    * - Android, iOS
-     - The report stays in app-private storage and the menu names the path.
+     - A copy in app-private ``exports/`` storage; the menu names the path.
        A share sheet needs a platform channel and is not implemented.
 
 A panic hook sees only Rust panics. Segfaults, out-of-memory kills, and Android

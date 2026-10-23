@@ -204,7 +204,10 @@ Touch text input
 
 Text fields always use the platform keyboard. Tapping or clicking a field
 focuses it, and Bevy enables the window's input method while a field has
-focus; on Android and iOS that shows the system on-screen keyboard. Edits
+focus; on Android and iOS that shows the system on-screen keyboard. Browsers
+use HTML inputs positioned over the canvas fields because winit's web backend
+cannot open an input method. The HTML input receives the tap directly, preserving
+the browser's user gesture requirement. Edits
 apply directly to the field and the menu model, so there is no Done step.
 Pressing Enter in the address field connects, and Enter in the invite field
 joins. The code field accepts letters and digits and uppercases them as they

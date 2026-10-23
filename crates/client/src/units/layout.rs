@@ -153,11 +153,15 @@ pub(super) fn layout_units(
         let rows = count.div_ceil(columns);
         let available = group_area();
         let scale = (available / bounds.max_element()).min(1.0);
-        let center = group
-            .iter()
-            .map(|unit| unit.1 + unit.2.offset * scale)
-            .sum::<Vec2>()
-            / count as f32;
+        // Sum local offsets so large world coordinates do not accumulate rounding
+        // error and pull a crowded group away from its ordered point.
+        let origin = group[0].1;
+        let center = origin
+            + group
+                .iter()
+                .map(|unit| unit.1 - origin + unit.2.offset * scale)
+                .sum::<Vec2>()
+                / count as f32;
         let stride = (cell + Vec2::splat(UNIT_GAP)) * scale;
         for (index, (id, _, unit_bounds)) in group.into_iter().enumerate() {
             let row = index / columns;
@@ -210,6 +214,25 @@ mod tests {
                 );
             }
         }
+        let min = units
+            .iter()
+            .fold(Vec2::splat(f32::INFINITY), |min, &(id, _, bounds)| {
+                min.min(
+                    bounds
+                        .world_rect(&crate::units::placement_transform(layout[&id]))
+                        .min,
+                )
+            });
+        let max = units
+            .iter()
+            .fold(Vec2::splat(f32::NEG_INFINITY), |max, &(id, _, bounds)| {
+                max.max(
+                    bounds
+                        .world_rect(&crate::units::placement_transform(layout[&id]))
+                        .max,
+                )
+            });
+        assert!((max - min).max_element() <= group_area() + 0.01);
     }
 
     #[test]
@@ -362,6 +385,35 @@ mod tests {
             "the group slid toward the tile center"
         );
         assert_packed(&units);
+    }
+
+    #[test]
+    fn crowded_group_anchor_does_not_drift_at_large_world_coordinates() {
+        let target = SimPos::new(rts_base::MAX_MAP_SIDE * TILE - 575, TILE / 2);
+        let footprint = circle(38.375);
+        // Custom rules may allow up to u16::MAX size-one units in a tile.
+        for count in [1024, u32::from(u16::MAX)] {
+            let layout = layout_units((0..count).map(|id| (UnitId(id), target, footprint)));
+            let min = layout
+                .values()
+                .fold(Vec2::splat(f32::INFINITY), |min, &placement| {
+                    min.min(
+                        footprint
+                            .world_rect(&crate::units::placement_transform(placement))
+                            .min,
+                    )
+                });
+            let max = layout
+                .values()
+                .fold(Vec2::splat(f32::NEG_INFINITY), |max, &placement| {
+                    max.max(
+                        footprint
+                            .world_rect(&crate::units::placement_transform(placement))
+                            .max,
+                    )
+                });
+            assert!(((min + max) / 2.0).abs_diff_eq(to_world(target), 0.01));
+        }
     }
 
     #[test]

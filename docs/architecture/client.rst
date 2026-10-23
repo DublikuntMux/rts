@@ -12,7 +12,8 @@ and sends **commands** that the simulation applies at a tick boundary.
 Plugins
 -------
 
-``build_app`` adds the asset pack, Bevy's ``DefaultPlugins`` with a window
+``run`` installs Bevy's platform panic handler and crash reporting before opening
+the asset pack. ``build_app`` adds the pack, the remaining ``DefaultPlugins`` with a window
 titled *RTS* that fits its canvas to the browser page, and the game plugins:
 
 .. list-table::

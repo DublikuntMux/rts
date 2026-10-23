@@ -5,6 +5,8 @@
 //! Smaller changes, such as messages, availability, and selection highlights, update in place.
 //! The menu only reads [`SessionStatus`] and sends [`SessionAction`]s; the session does the work.
 
+#[cfg(target_arch = "wasm32")]
+mod browser_input;
 mod pages;
 mod previews;
 pub mod widgets;
@@ -52,6 +54,8 @@ pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(target_arch = "wasm32")]
+        browser_input::install(app);
         if !app.is_plugin_added::<TabNavigationPlugin>() {
             app.add_plugins(TabNavigationPlugin);
         }
@@ -899,23 +903,26 @@ fn on_field_edit(
         return;
     };
     let value = text.value().to_string();
+    let value = if *field == Field::Code {
+        let code = value.to_ascii_uppercase();
+        // ASCII case changes keep byte offsets, so the cursor and selection stay valid.
+        if code != value && !text.is_composing() {
+            text.editor_mut().set_text(&code);
+        }
+        code
+    } else {
+        value
+    };
+    store_field_value(*field, value, &mut form, &mut settings);
+}
+
+/// Shared by Bevy's native editor and the browser's HTML input.
+fn store_field_value(field: Field, value: String, form: &mut MenuForm, settings: &mut Settings) {
     match field {
-        Field::Url => {
-            if form.url != value {
-                form.url = value;
-            }
-        }
-        Field::Code => {
-            let code = value.to_ascii_uppercase();
-            // ASCII case changes keep byte offsets, so the cursor and selection stay valid.
-            if code != value && !text.is_composing() {
-                text.editor_mut().set_text(&code);
-            }
-            if form.code != code {
-                form.code = code;
-            }
-        }
-        Field::Name => store_name(value, &mut form, &mut settings),
+        Field::Url if form.url != value => form.url = value,
+        Field::Code if form.code != value => form.code = value,
+        Field::Name => store_name(value, form, settings),
+        Field::Url | Field::Code => {}
     }
 }
 

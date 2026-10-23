@@ -94,6 +94,27 @@ fn act(app: &mut App, action: Action) {
     settle(app);
 }
 
+#[test]
+fn native_and_browser_fields_share_form_and_validated_name_storage() {
+    let mut form = MenuForm::default();
+    let mut settings = Settings::default();
+    store_field_value(
+        Field::Url,
+        "wss://example.test".into(),
+        &mut form,
+        &mut settings,
+    );
+    store_field_value(Field::Code, "ABC123".into(), &mut form, &mut settings);
+    store_field_value(Field::Name, "Лея 👩".into(), &mut form, &mut settings);
+    assert_eq!(form.url, "wss://example.test");
+    assert_eq!(form.code, "ABC123");
+    assert_eq!(form.name.as_deref(), Some("Лея 👩"));
+    assert_eq!(settings.name, "Лея 👩");
+    store_field_value(Field::Name, " invalid ".into(), &mut form, &mut settings);
+    assert_eq!(form.name.as_deref(), Some(" invalid "));
+    assert_eq!(settings.name, "Лея 👩");
+}
+
 fn texts(app: &mut App) -> Vec<String> {
     app.world_mut()
         .query::<&Text>()

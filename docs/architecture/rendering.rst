@@ -134,7 +134,9 @@ A packed group may fill one and a half tiles across. Crowded sprites therefore
 grow past the tile edge instead of shrinking into it: a full tile of workers
 keeps its unshared size, and two soldiers still draw over 85% of theirs. The
 group is anchored at its members' mean bounds center — the point the group was
-ordered to — and is never pulled toward the tile center, so units stop where
+ordered to. The mean sums offsets from one member to avoid precision loss in
+dense groups far from the world origin. It is never pulled toward the tile
+center, so units stop where
 the player clicked even at a tile edge, and a lone unit stands exactly on its
 ordered point. A group near an edge may overlap a neighbouring tile's group;
 that overlap is a presentation detail. If the grid is larger still, a common

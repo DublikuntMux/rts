@@ -14,8 +14,13 @@ use bevy::{
     prelude::*,
     text::{EditableText, EditableTextFilter, FontSize, FontWeight, LineHeight, TextCursorStyle},
     ui::{InteractionDisabled, Pressed},
-    ui_widgets::{Button, ScrollArea, TextInput},
+    ui_widgets::{Button, ScrollArea},
 };
+
+#[cfg(target_arch = "wasm32")]
+use super::browser_input::BrowserTextInput as TextInput;
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::ui_widgets::TextInput;
 
 use super::Action;
 
@@ -78,6 +83,21 @@ pub enum Field {
 }
 
 impl Field {
+    /// Keep the same character rules for native edits, browser edits, and pasted text.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn sanitize(self, value: &str, max_characters: usize) -> String {
+        let value: String = value
+            .chars()
+            .filter(|&c| self.accepts(c))
+            .take(max_characters)
+            .collect();
+        if self == Self::Code {
+            value.to_ascii_uppercase()
+        } else {
+            value
+        }
+    }
+
     /// Whether this field accepts `c` from the platform keyboard.
     pub const fn accepts(self, c: char) -> bool {
         match self {
@@ -733,5 +753,17 @@ mod tests {
         assert!(Field::Name.accepts(' '));
         assert!(Field::Name.accepts('\''));
         assert!(!Field::Name.accepts('\t'));
+    }
+
+    #[test]
+    fn browser_edits_filter_before_counting_and_preserve_unicode_names() {
+        assert_eq!(
+            Field::Url.sanitize(" ws://host:\n9001 ", 256),
+            "ws://host:9001"
+        );
+        assert_eq!(Field::Code.sanitize(" a-b c!123xyz ", 6), "ABC123");
+        assert_eq!(Field::Name.sanitize("Лея 👩\n好\tZ", 6), "Лея 👩好");
+        assert_eq!(Field::Name.sanitize("👩好Z", 2), "👩好");
+        assert_eq!(Field::Code.sanitize("abc", 0), "");
     }
 }
