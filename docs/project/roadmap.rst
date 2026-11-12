@@ -170,14 +170,18 @@ Squads
    slot in ranks shared by the simulation and the client. The client repeats
    the unit sprite for every living soldier. Protocol and replay version 7.
 
+Weapons and attack orders
+   Optional unit weapons with range, damage, and cooldown. Attack orders
+   pursue and fire; idle armed units fire at the nearest enemy in range. Each
+   soldier fires one shot, and shots kill the target's nearest soldiers first.
+   Right-click or tap an enemy to attack; health bars above damaged and
+   selected units.
+
 Upcoming
 --------
 
 M4 — Combat
-   Weapons (range, damage, cooldown), attack and attack-move orders,
-   auto-targeting, soldiers falling one by one, death through
-   ``Sim::remove_unit``, and health bars. Tapping an enemy attacks it;
-   long-press opens a context menu with attack-move and patrol.
+   Attack-move and patrol orders, with a long-press context menu on touch.
 
 M5 — Economy and production
    Resources and gathering, buildings with placement validation,

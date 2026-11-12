@@ -99,7 +99,22 @@ Give orders
   target is water, rock, or outside the map, and no order is sent.
   Alternatively choose **Move** or press M, then click or tap a destination.
   Escape cancels destination targeting before opening the menu.
+* **Attack:** right-click an enemy unit, or tap it with a selection on a touch
+  screen. An orange marker confirms the order. Soldiers chase the target until
+  it is in range, fire until it falls, then stand. Workers are unarmed and
+  move to the spot instead.
 * **Stop:** press X or choose **Stop**. Units drop their current order.
+
+Idle soldiers fire at the nearest enemy in range on their own, but they never
+leave their position to chase it.
+
+Combat
+------
+
+A soldier unit is a squad of six. Each soldier has its own health and fires
+its own shot, so a squad weakens as it loses men. Shots hit the soldiers
+standing nearest the enemy first. A bar above a damaged or selected unit shows
+its remaining health; the unit is destroyed when its last soldier falls.
 
 Orders are never applied instantly. Your client sends them for a tick two
 ticks (100 ms) ahead, and every client applies them at that tick in the same

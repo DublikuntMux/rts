@@ -245,6 +245,6 @@ Rules for scenes:
 * Prefer scenes for reusable hierarchies. Simple entities and procedural
   terrain can keep ordinary spawning.
 
-Planned uses: health bars as unit scene children (M4), building visuals,
+Planned uses: building visuals,
 construction indicators, and command-card widgets (M5), and decorative groups
 in the editor (M7).

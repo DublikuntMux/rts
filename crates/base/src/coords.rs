@@ -33,6 +33,25 @@ pub fn de_tiles<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i32, D::Er
     tiles_to_units(tiles).ok_or_else(|| D::Error::custom(format!("{tiles} tiles is out of range")))
 }
 
+/// Deserializes a positive duration written in seconds into whole simulation ticks.
+#[expect(
+    clippy::float_arithmetic,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "exact-enough conversion from data files; the range is checked before the cast"
+)]
+pub fn de_seconds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let seconds = f64::deserialize(deserializer)?;
+    let ticks = (seconds * f64::from(crate::TICK_RATE)).round();
+    if ticks.is_finite() && ticks >= 1.0 && ticks <= f64::from(u32::MAX) {
+        Ok(ticks as u32)
+    } else {
+        Err(D::Error::custom(format!(
+            "{seconds} seconds must last at least one tick and fit in range"
+        )))
+    }
+}
+
 /// Deserializes a nonnegative terrain speed multiplier into Q10 fixed point.
 pub fn de_speed_modifier<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i32, D::Error> {
     let modifier = f64::deserialize(deserializer)?;

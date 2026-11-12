@@ -558,13 +558,11 @@ impl Game {
         .map_err(|_| "input exceeds message limits")?;
         let player = PlayerId(u8::try_from(slot).expect("bounded player count"));
         for command in &mut commands {
-            let (Command::Move { units, .. } | Command::Stop { units }) = command;
-            units.retain(|&id| self.sim.unit(id).is_some_and(|unit| unit.owner == player));
+            command
+                .units_mut()
+                .retain(|&id| self.sim.unit(id).is_some_and(|unit| unit.owner == player));
         }
-        commands.retain(|command| {
-            let (Command::Move { units, .. } | Command::Stop { units }) = command;
-            !units.is_empty()
-        });
+        commands.retain(|command| !command.units().is_empty());
         let mut inputs = self
             .inputs
             .get(&tick)

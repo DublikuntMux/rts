@@ -57,6 +57,21 @@ deployment steps were not executed end to end here.
 M4 — Combat
 -----------
 
+**Weapons and attack orders (2026-11-12).** Unit types gained an optional
+``weapon`` (range, damage, cooldown). Each tick, attack orders pursue their
+target, then every ready, stationary armed unit fires a volley of one shot per
+living soldier at its ordered target or the nearest enemy in range. Shots hit
+the target's soldier nearest the shooter; units whose last soldier falls are
+removed. ``Command::Attack`` joins the protocol, and Move and Stop end attack
+orders. The client attacks enemies under a right-click or tap when the
+selection is armed, shows an orange order marker, and draws health bars. The
+pinned hash stream was re-baselined. Regressions cover weapon parsing, volley
+order and target choice, cooldowns, range, allies, pursuit and stopping at
+range, order cancellation, invalid attack orders, unreachable targets, fallen
+soldier sprites, and attack input by mouse and touch. All workspace tests,
+strict all-target Clippy, formatting, the ``wasm32`` check, and the strict
+Sphinx build passed. A rendered session was not run.
+
 **Squads (2026-11-12).** Unit types gained ``squad`` (soldiers per unit,
 default 1) and ``max_health`` became per-soldier health; ``Unit::soldiers``
 replaces the single ``health`` value. ``SquadGrid`` places soldiers in ranks

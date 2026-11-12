@@ -30,6 +30,9 @@ Desktop
      - Clear the selection.
    * - Right-click ground
      - Move the selection there.
+   * - Right-click an enemy unit
+     - Attack it with the selection's armed units. Without armed units,
+       move there instead.
    * - M
      - Arm Move targeting; click a destination to move the selection.
    * - X
@@ -68,6 +71,9 @@ Touch
        48 pixels across.
    * - Tap ground with a selection
      - Move the selection there.
+   * - Tap an enemy unit with a selection
+     - Attack it with the selection's armed units, or move there without
+       any.
    * - Tap ground without a selection
      - Nothing.
    * - One-finger drag

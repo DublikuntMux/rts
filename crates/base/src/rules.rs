@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     IVec2, LoadError,
-    coords::{de_speed_modifier, de_tile_pos, de_tiles},
+    coords::{de_seconds, de_speed_modifier, de_tile_pos, de_tiles},
 };
 
 /// Fixed-point terrain speed multiplier representing normal speed.
@@ -71,6 +71,23 @@ pub struct UnitDef {
     /// Movement speed in world units per second (written in tiles per second).
     #[serde(deserialize_with = "de_tiles")]
     pub speed: i32,
+    /// Weapon carried by every soldier. Units without one never attack.
+    #[serde(default)]
+    pub weapon: Option<Weapon>,
+}
+
+/// A ranged weapon. Each living soldier fires one shot per volley.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Weapon {
+    /// Greatest distance between unit centers, in world units (written in tiles).
+    #[serde(deserialize_with = "de_tiles")]
+    pub range: i32,
+    /// Health one shot removes from one soldier.
+    pub damage: i32,
+    /// Ticks between volleys (written in seconds).
+    #[serde(deserialize_with = "de_seconds")]
+    pub cooldown: u32,
 }
 
 const fn one_soldier() -> u8 {
@@ -210,6 +227,14 @@ impl Rules {
             if unit.squad == 0 || unit.max_health <= 0 || unit.radius <= 0 || unit.speed <= 0 {
                 return Err(LoadError::invalid(format!(
                     "unit `{}` needs positive squad, max_health, radius, and speed",
+                    unit.id
+                )));
+            }
+            if let Some(weapon) = unit.weapon
+                && (weapon.range <= 0 || weapon.damage <= 0)
+            {
+                return Err(LoadError::invalid(format!(
+                    "unit `{}` weapon needs positive range and damage",
                     unit.id
                 )));
             }
@@ -556,6 +581,38 @@ mod tests {
         assert_eq!(grid.offset(1, half), IVec2::new(0, -100));
         assert_eq!(grid.offset(5, half), IVec2::new(200, 100));
         assert_eq!(SquadGrid::new(1).offset(0, half), IVec2::ZERO);
+    }
+
+    #[test]
+    fn parses_and_validates_weapons() {
+        let unit = |weapon: &str| {
+            Rules::from_ron(&format!(
+                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "soldier", sprite: "s.png", size: 1, max_health: 40, radius: 0.25, speed: 1.25, {weapon})])"#
+            ))
+        };
+        assert_eq!(unit("").unwrap().unit(UnitKind(0)).weapon, None);
+        assert_eq!(
+            unit("weapon: Some((range: 2.5, damage: 6, cooldown: 0.75))")
+                .unwrap()
+                .unit(UnitKind(0))
+                .weapon,
+            Some(Weapon {
+                range: crate::TILE * 5 / 2,
+                damage: 6,
+                cooldown: 15,
+            })
+        );
+        for weapon in [
+            "weapon: Some((range: 0, damage: 6, cooldown: 1))",
+            "weapon: Some((range: 2, damage: 0, cooldown: 1))",
+            "weapon: Some((range: 2, damage: 6, cooldown: 0))",
+            "weapon: Some((range: 2, damage: 6, cooldown: 0.01))",
+            "weapon: Some((range: 2, damage: 6, cooldown: NaN))",
+            "weapon: Some((range: 2, damage: 6))",
+            "weapon: Some((range: 2, damage: 6, cooldown: 1, splash: 1))",
+        ] {
+            assert!(unit(weapon).is_err(), "accepted {weapon}");
+        }
     }
 
     #[test]

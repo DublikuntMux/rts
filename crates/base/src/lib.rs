@@ -5,6 +5,7 @@
 //! hashed collections, no clocks or OS randomness. See `docs/architecture/determinism.rst`.
 #![deny(clippy::float_arithmetic, clippy::disallowed_types)]
 
+mod combat;
 mod command;
 mod coords;
 mod hash;
@@ -24,7 +25,7 @@ pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
 pub use rules::{
-    Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds,
+    Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds, Weapon,
 };
 
 use crate::hash::StateHasher;
@@ -69,6 +70,8 @@ pub struct Unit {
     /// Health of each soldier by squad slot; zero marks a fallen soldier. Slots keep their
     /// place in the ranks, so survivors do not shuffle when a neighbor falls.
     pub soldiers: Vec<i32>,
+    /// Ticks until the weapon can fire again.
+    pub cooldown: u32,
 }
 
 impl Unit {
@@ -102,6 +105,8 @@ pub struct Sim {
     next_unit_id: u32,
     commands: BTreeMap<u32, Vec<(PlayerId, Command)>>,
     move_orders: BTreeMap<UnitId, MoveOrder>,
+    /// Ordered attack targets by attacker.
+    attack_orders: BTreeMap<UnitId, UnitId>,
 }
 
 /// Derived live group usage and pace; rebuilt after commands, never stored or hashed.
@@ -162,6 +167,7 @@ impl Sim {
             next_unit_id: 0,
             commands: BTreeMap::new(),
             move_orders: BTreeMap::new(),
+            attack_orders: BTreeMap::new(),
         };
         let mut occupancy = Occupancy::new(sim.terrain.size());
         for (index, placement) in map.units.iter().enumerate() {
@@ -200,7 +206,8 @@ impl Sim {
         self.step_with_commands(std::iter::empty());
     }
 
-    /// Advances one tick, applying agreed commands in their supplied order before movement.
+    /// Advances one tick, applying agreed commands in their supplied order before pursuit,
+    /// movement, and combat.
     /// Unlike [`Self::queue_command`], these commands incur no additional input delay.
     /// Local commands already queued for this tick execute first.
     pub fn step_with_commands(&mut self, commands: impl IntoIterator<Item = (PlayerId, Command)>) {
@@ -210,7 +217,9 @@ impl Sim {
             let group = (self.tick, index);
             self.apply_command(player, command, group);
         }
+        self.pursue_targets();
         self.advance_movement();
+        self.advance_combat();
     }
 
     fn advance_movement(&mut self) {
@@ -296,6 +305,10 @@ impl Sim {
                 (units, Some(target))
             }
             Command::Stop { units } => (units, None),
+            Command::Attack { units, target } => {
+                self.order_attack(player, units, target);
+                return;
+            }
         };
         units.sort_unstable();
         units.dedup();
@@ -308,9 +321,11 @@ impl Sim {
                 // An unreachable replacement leaves the current order intact.
                 if let Some(order) = MoveOrder::new(unit.pos, target, &self.terrain, &self.rules) {
                     orders.push((id, order));
+                    self.attack_orders.remove(&id);
                 }
             } else {
                 self.move_orders.remove(&id);
+                self.attack_orders.remove(&id);
             }
         }
         let group = (orders.len() > 1).then_some(group);
@@ -318,6 +333,35 @@ impl Sim {
             order.group = group;
             self.move_orders.insert(id, order);
         }
+    }
+
+    /// Orders the player's armed units to attack another player's unit. Pursuit starts on
+    /// this tick and replaces any move order.
+    fn order_attack(&mut self, player: PlayerId, mut units: Vec<UnitId>, target: UnitId) {
+        if self
+            .units
+            .get(&target)
+            .is_none_or(|target| target.owner == player)
+        {
+            return;
+        }
+        units.sort_unstable();
+        units.dedup();
+        for id in units {
+            let armed = self.units.get(&id).is_some_and(|unit| {
+                unit.owner == player && self.rules.unit(unit.kind).weapon.is_some()
+            });
+            if armed {
+                self.move_orders.remove(&id);
+                self.attack_orders.insert(id, target);
+            }
+        }
+    }
+
+    /// Target of the unit's attack order, if any.
+    #[must_use]
+    pub fn attack_target(&self, id: UnitId) -> Option<UnitId> {
+        self.attack_orders.get(&id).copied()
     }
 
     /// Destination of the unit's active move order, if any.
@@ -338,6 +382,7 @@ impl Sim {
                 owner,
                 pos,
                 soldiers,
+                cooldown: 0,
             },
         );
         id
@@ -374,11 +419,12 @@ impl Sim {
         self.units.get(&id)
     }
 
-    /// Removes a unit and its move order. Its ID is never reused, and its occupied capacity is
-    /// available to pathfinding on the next tick. Simulation actions must call this identically
-    /// on every peer.
+    /// Removes a unit and its orders. Its ID is never reused, and its occupied capacity is
+    /// available to pathfinding on the next tick. Orders that target it end on the next tick.
+    /// Simulation actions must call this identically on every peer.
     pub fn remove_unit(&mut self, id: UnitId) -> Option<Unit> {
         self.move_orders.remove(&id);
+        self.attack_orders.remove(&id);
         self.units.remove(&id)
     }
 
@@ -392,6 +438,7 @@ impl Sim {
         self.units.hash(&mut hasher);
         self.commands.hash(&mut hasher);
         self.move_orders.hash(&mut hasher);
+        self.attack_orders.hash(&mut hasher);
         hasher.finish()
     }
 }

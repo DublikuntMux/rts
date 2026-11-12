@@ -525,8 +525,8 @@ fn full_room_fan_in_strips_nonexistent_and_forged_unit_selections() {
     let sim = content.simulation().unwrap();
     for input in &turn.inputs {
         for command in &input.commands {
-            let (Command::Move { units, .. } | Command::Stop { units }) = command;
-            assert_ne!(units.as_slice(), []);
+            let units = command.units();
+            assert_ne!(units, []);
             for &id in units {
                 assert_eq!(sim.unit(id).unwrap().owner, input.player);
             }

@@ -25,9 +25,16 @@ All fields are required; unknown fields are rejected. Colors are sRGB
            padding: 4.0,
            accepted_order_color: (0.60, 0.90, 0.65),
            blocked_order_color: (1.0, 0.35, 0.25),
+           attack_order_color: (1.0, 0.55, 0.20),
            marker_radius: 12.0,
            marker_cross_size: 5.0,
            marker_duration: 0.6,
+       ),
+       health_bar: (
+           full_color: (0.45, 0.85, 0.40),
+           empty_color: (0.90, 0.25, 0.20),
+           background_color: (0.10, 0.10, 0.10),
+           gap: 3.0,
        ),
        terrain_detail: (
            colors_below: 40.0,
@@ -44,7 +51,13 @@ the displayed unit footprint and its outline. ``selection.color`` also
 colors the drag box. ``marker_radius`` and ``marker_cross_size`` are positive
 screen pixel sizes for move feedback; ``marker_duration`` is a positive
 number of seconds. All sizes and durations must be finite. Marker colors
-distinguish accepted move targets from blocked terrain.
+distinguish accepted move targets, blocked terrain, and attack orders.
+
+``health_bar`` draws a line above every damaged unit and every selected unit,
+``gap`` screen pixels (finite and nonnegative) above its footprint. The
+background spans the footprint; the filled part shows the remaining fraction
+of the squad's total health and blends from ``empty_color`` to
+``full_color`` as health rises.
 
 ``terrain_detail`` sets the shared terrain texture/color and unit sprite/rectangle
 switch in screen pixels per tile.

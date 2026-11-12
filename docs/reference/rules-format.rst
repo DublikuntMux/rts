@@ -24,7 +24,8 @@ Example
            (id: "worker", sprite: "textures/units/worker.png",
             size: 1, max_health: 40, radius: 0.3, speed: 3.0),
            (id: "soldier", sprite: "textures/units/soldier.png",
-            size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5),
+            size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5,
+            weapon: Some((range: 3.0, damage: 4, cooldown: 1.0))),
        ],
    )
 
@@ -134,6 +135,10 @@ Unit types
    * - ``speed``
      - decimal tiles/second
      - Positive speed on terrain with modifier 1.0.
+   * - ``weapon``
+     - optional weapon
+     - ``Some((range, damage, cooldown))``, or ``None`` (the default) for a
+       unit that never attacks. See :ref:`weapons`.
 
 ``radius`` and ``speed`` are converted to world units (1024 per tile) when the
 file loads: ``speed: 2.5`` becomes 2560 world units per second. Values that
@@ -166,6 +171,33 @@ unit dies when its last soldier falls.
 Artists draw one soldier; the client repeats the sprite in every living slot,
 each fitted to its cell of the unit's bounds. Distant zoom draws the whole
 squad as one solid rectangle.
+
+.. _weapons:
+
+Weapons
+-------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 60
+
+   * - Field
+     - Type
+     - Meaning
+   * - ``range``
+     - decimal tiles
+     - Positive greatest distance between unit centers.
+   * - ``damage``
+     - integer
+     - Positive health one shot removes from one soldier.
+   * - ``cooldown``
+     - decimal seconds
+     - Time between volleys, rounded to whole ticks (20 per second). Must be
+       at least one tick.
+
+Every living soldier fires one shot per volley, so a squad that loses
+soldiers also loses firepower. Each shot hits the living soldier of the target
+standing nearest the shooter. See :ref:`combat`.
 
 Custom sprite bounds
 --------------------
@@ -209,6 +241,8 @@ Validation
 * A unit with ``size`` of 0 or larger than ``tile_capacity``.
 * A unit with zero ``squad`` or nonpositive ``max_health``, ``radius``, or
   ``speed``.
+* A weapon with nonpositive ``range`` or ``damage``, or a ``cooldown`` that
+  rounds to less than one tick.
 * A missing ``sprite`` path, or a path that is empty or contains only whitespace.
 * Nonfinite or out-of-range ``visual_bounds`` components, or a size component
   that rounds to zero or is negative.
@@ -275,7 +309,9 @@ Bundled content
      - 2.5 tiles/s
 
 With ``tile_capacity: 4``, a tile holds four workers, two soldiers, or two
-workers and one soldier.
+workers and one soldier. Workers are unarmed. Each soldier carries a weapon
+with a range of 3 tiles that deals 4 damage once per second, so a full squad
+deals 24 damage per volley.
 
 The bundled sprites are ``textures/units/worker.png`` and
 ``textures/units/soldier.png``, relative to the asset pack root.

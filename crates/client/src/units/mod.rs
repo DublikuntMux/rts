@@ -670,6 +670,38 @@ mod tests {
         assert!(centers[1].2.x > centers[0].2.x);
         assert_eq!(world.resource::<Match>().sim.state_hash(), hash);
 
+        // An enemy squad in range shoots; the fallen soldiers' sprites hide in place.
+        let mut game = app.world_mut().resource_mut::<Match>();
+        let rules = game.sim.rules().clone();
+        let map = MapData::from_ron(
+            r#"(name: "squad", players: [(start: (0.5,0.5)), (start: (2.5,0.5))],
+            tiles: ["..."], units: [(kind:"soldier",owner:0,pos:(0.5,0.5)),
+            (kind:"soldier",owner:1,pos:(2.5,0.5))])"#,
+        )
+        .unwrap();
+        game.sim = Sim::new(rules, &map).unwrap();
+        while game.sim.unit(UnitId(0)).unwrap().alive() == soldiers.len() {
+            game.sim.step();
+        }
+        let fallen: Vec<_> = game
+            .sim
+            .unit(UnitId(0))
+            .unwrap()
+            .soldiers
+            .iter()
+            .map(|&health| health == 0)
+            .collect();
+        assert!(fallen.contains(&false), "{fallen:?}");
+        app.update();
+        for (&soldier, fallen) in soldiers.iter().zip(fallen) {
+            let expected = if fallen {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
+            assert_eq!(*app.world().get::<Visibility>(soldier).unwrap(), expected);
+        }
+
         app.world_mut()
             .resource_mut::<Match>()
             .sim
@@ -679,7 +711,12 @@ mod tests {
         for soldier in soldiers {
             assert!(app.world().get_entity(soldier).is_err());
         }
-        assert!(app.world().resource::<UnitVisuals>().soldiers.is_empty());
+        assert!(
+            !app.world()
+                .resource::<UnitVisuals>()
+                .soldiers
+                .contains_key(&UnitId(0))
+        );
     }
 
     #[test]

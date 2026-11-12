@@ -10,7 +10,7 @@ mod graphics;
 pub use bevy_asset_packer::{AssetBundle, BundledAssetPlugin};
 
 pub use crate::data::{DataPlugin, MapAsset, RulesAsset};
-pub use crate::graphics::{Graphics, SelectionStyle, TerrainDetail};
+pub use crate::graphics::{Graphics, HealthBarStyle, SelectionStyle, TerrainDetail};
 
 const ASSET_PACK: &str = "assets.pack";
 

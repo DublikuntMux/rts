@@ -207,9 +207,13 @@ Gizmos
   screen pixels in the bundled file). Outlines may overlap;
   they do not participate in packing.
 * The drag box while box-selecting.
-* An order marker after a move: a circle and cross using the configured
-  radius, cross size, duration, and accepted/blocked colors. Bundled defaults
-  show green for accepted targets and red for blocked terrain for 0.6 seconds.
+* A health bar above every damaged or selected unit, spanning its drawn
+  footprint ``health_bar.gap`` screen pixels above it. The fill shows the
+  squad's remaining share of total health.
+* An order marker after a move or attack: a circle and cross using the
+  configured radius, cross size, duration, and colors. Bundled defaults show
+  green for accepted targets, red for blocked terrain, and orange for attacks
+  for 0.6 seconds.
 
 Gizmo sizes are multiplied by the camera scale so they keep a constant size on
 screen.

@@ -28,6 +28,8 @@ Modules
      - ``Command`` and ``INPUT_DELAY_TICKS``.
    * - ``movement.rs``
      - ``MoveOrder``: routes, replanning, and the per-tick movement budget.
+   * - ``combat.rs``
+     - Attack-order pursuit, volleys, target choice, and casualties.
    * - ``path.rs``
      - Travel-time A* over the tile grid.
    * - ``occupancy.rs``
@@ -55,6 +57,7 @@ Match state
      next_unit_id: u32
      {field} commands: BTreeMap<u32, Vec<(PlayerId, Command)>>
      move_orders: BTreeMap<UnitId, MoveOrder>
+     attack_orders: BTreeMap<UnitId, UnitId>
    }
    class Rules {
      tile_capacity: u16
@@ -70,6 +73,7 @@ Match state
      owner: PlayerId
      pos: IVec2
      soldiers: Vec<i32>
+     cooldown: u32
    }
    class Player {
      start: IVec2
@@ -101,6 +105,8 @@ Match state
 * ``commands`` holds locally queued commands by application tick. Online play
   supplies commands per turn instead.
 * ``move_orders`` holds at most one active order per unit.
+* ``attack_orders`` maps an attacker to the unit it was ordered to attack.
+  ``cooldown`` counts the ticks until a unit's weapon can fire again.
 
 Setup
 -----
@@ -134,19 +140,21 @@ The tick step
    :tick += 1;
    :take local commands queued for this tick;
    :apply queued commands, then supplied commands,\nin order;
+   :pursue attack targets: drop orders whose target died,\nstop attackers in range, re-route the rest;
    if (any move orders?) then (yes)
      :rebuild occupancy from all living units;
      :for each order in UnitId order:\n  remove the unit from occupancy\n  replan against live occupancy\n  advance along the route\n  add the unit back at its new position;
      :drop orders that finished\nor whose unit no longer exists;
    else (no)
    endif
+   :fire every ready, stationary weapon in UnitId order;\nremove units whose last soldier fell;
    stop
    @enduml
 
 ``Sim::step()`` is ``step_with_commands`` with no supplied commands. Commands
 are always applied *before* movement on the same tick, so a Stop applied on
 tick N prevents any movement on tick N. :doc:`movement` describes the movement
-phase in detail.
+phase in detail; :ref:`combat` describes pursuit and fire.
 
 Commands
 --------
@@ -156,6 +164,7 @@ Commands
    pub enum Command {
        Move { units: Vec<UnitId>, target: IVec2 },
        Stop { units: Vec<UnitId> },
+       Attack { units: Vec<UnitId>, target: UnitId },
    }
 
 A command names units by stable ID and a target in world units. Applying a
@@ -166,8 +175,45 @@ command checks everything again, because a command may be stale or hostile:
   issuing player, the simulation plans a route ignoring other units. If the
   target is reachable, the new order replaces the unit's current one. If not,
   the current order stays, so an invalid replacement never strands a unit.
-* **Stop** removes the order of each listed unit the player owns.
+  A new move order also ends the unit's attack order.
+* **Stop** removes the move and attack orders of each listed unit the player
+  owns.
+* **Attack** is ignored if the target does not exist or belongs to the
+  issuing player. Otherwise each listed unit that the player owns and that has
+  a ``weapon`` drops its move order and records the attack order. Unarmed
+  units are skipped.
 * Unknown IDs, other players' units, and invalid players are skipped.
+  ``Command::units`` returns the listed units of any variant.
+
+.. _combat:
+
+Combat
+------
+
+``combat.rs`` runs two phases around movement.
+
+**Pursuit** (before movement) visits attack orders in attacker ID order. An
+order whose target no longer exists ends together with the attacker's move
+order. An attacker within weapon range of its target drops its move order so
+it can fire this tick. Otherwise it keeps its route while the target stays in
+the same tile, or plans a new route to the target's position. An unreachable
+target ends the order.
+
+**Fire** (after movement) visits every armed unit in ID order. Its cooldown
+counts down by one; a unit with ticks left or with a move order does not fire.
+A ready unit fires at its ordered target if it is in range. Without an attack
+order, it fires at the nearest unit of another player in range, ties going to
+the lowest ID; idle units therefore defend themselves but never chase.
+Range compares the squared distance between unit centers as a 64-bit integer.
+
+A volley is one shot per living soldier. Each shot removes ``damage`` health
+from the living soldier of the target squad standing nearest the shooter.
+Soldier positions come from ``SquadGrid::offset`` inside a square of the
+target's ``radius``, ties going to the lower slot, so the rank facing the
+shooter falls first and excess damage carries to the next soldier. Health
+stops at zero. A unit whose last soldier falls is removed through
+``remove_unit`` immediately, so it no longer fires later in the same tick.
+After a volley, the cooldown restarts at the weapon's ``cooldown``.
 
 Input delay
 -----------
@@ -191,13 +237,14 @@ Unit lifecycle
 
 * Units are created by ``Sim::new`` from the map. In-match spawning
   (production) arrives in M5.
-* ``Sim::remove_unit(id)`` removes a unit and its order and returns it. IDs
+* ``Sim::remove_unit(id)`` removes a unit and its orders and returns it. IDs
   are never reused. The freed capacity is visible to pathfinding on the next
-  tick. Simulation actions must call it identically on every peer; combat
-  deaths (M4) will use it.
+  tick, and attack orders against it end then. Combat removes a unit when its
+  last soldier falls.
 * ``Sim::units()`` iterates living units in ID order. ``Sim::unit(id)``,
-  ``Sim::move_target(id)``, ``players()``, ``terrain()``, ``rules()``, and
-  ``tick()`` are the read-only views the client uses for rendering and input.
+  ``Sim::move_target(id)``, ``Sim::attack_target(id)``, ``players()``,
+  ``terrain()``, ``rules()``, and ``tick()`` are the read-only views the
+  client uses for rendering and input.
 
 Errors
 ------

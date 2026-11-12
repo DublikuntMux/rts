@@ -1,6 +1,7 @@
 // Core game data. Distances are in tiles; speeds are in tiles per second.
 // Each tile holds up to tile_capacity total unit size, regardless of player.
 // A unit is a squad of `squad` soldiers (default 1); max_health is per soldier.
+// Each living soldier fires its weapon once per cooldown (seconds) at targets within range.
 (
     tile_capacity: 4,
     terrain: [
@@ -12,6 +13,7 @@
     ],
     units: [
         (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: 3.0),
-        (id: "soldier", sprite: "textures/units/soldier.png", size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5),
+        (id: "soldier", sprite: "textures/units/soldier.png", size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5,
+         weapon: Some((range: 3.0, damage: 4, cooldown: 1.0))),
     ],
 )

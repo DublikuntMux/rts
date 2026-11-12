@@ -11,6 +11,7 @@ pub struct Graphics {
     #[serde(deserialize_with = "colors")]
     pub player_colors: Vec<Color>,
     pub selection: SelectionStyle,
+    pub health_bar: HealthBarStyle,
     pub terrain_detail: TerrainDetail,
 }
 
@@ -25,9 +26,25 @@ pub struct SelectionStyle {
     pub accepted_order_color: Color,
     #[serde(deserialize_with = "color")]
     pub blocked_order_color: Color,
+    #[serde(deserialize_with = "color")]
+    pub attack_order_color: Color,
     pub marker_radius: f32,
     pub marker_cross_size: f32,
     pub marker_duration: f64,
+}
+
+/// Bars above damaged or selected units. Sizes are screen pixels.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthBarStyle {
+    #[serde(deserialize_with = "color")]
+    pub full_color: Color,
+    #[serde(deserialize_with = "color")]
+    pub empty_color: Color,
+    #[serde(deserialize_with = "color")]
+    pub background_color: Color,
+    /// Gap between the unit footprint and the bar.
+    pub gap: f32,
 }
 
 /// Hysteresis thresholds in screen pixels per tile.
@@ -53,6 +70,9 @@ impl Graphics {
         let selection = &graphics.selection;
         if !selection.padding.is_finite() || selection.padding < 0.0 {
             return Err("selection.padding must be finite and nonnegative".into());
+        }
+        if !graphics.health_bar.gap.is_finite() || graphics.health_bar.gap < 0.0 {
+            return Err("health_bar.gap must be finite and nonnegative".into());
         }
         for (field, value) in [
             (
@@ -136,6 +156,11 @@ mod tests {
             ("color: (0.95, 0.83, 0.45)", "color: (0.95, NaN, 0.45)"),
             ("padding: 4.0", "padding: -1.0"),
             ("padding: 4.0", "padding: NaN"),
+            ("gap: 3.0", "gap: -1.0"),
+            (
+                "attack_order_color: (1.0, 0.55, 0.20)",
+                "attack_order_color: (2.0, 0.55, 0.20)",
+            ),
             ("marker_radius: 12.0", "marker_radius: 0.0"),
             ("marker_cross_size: 5.0", "marker_cross_size: inf"),
             ("marker_duration: 0.6", "marker_duration: -0.6"),

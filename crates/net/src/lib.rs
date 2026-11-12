@@ -212,7 +212,7 @@ pub fn validate_commands(commands: &[Command]) -> Result<(), NetError> {
     let mut selections = 0;
     let mut orders = BTreeMap::new();
     for command in commands {
-        let (Command::Move { units, .. } | Command::Stop { units }) = command;
+        let units = command.units();
         if units.len() > MAX_UNITS_PER_COMMAND {
             return Err(NetError::invalid("too many units in command"));
         }

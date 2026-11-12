@@ -31,6 +31,7 @@ Shared types
    enum Command {
        Move { units: Vec<UnitId>, target: IVec2 },  // target in world units
        Stop { units: Vec<UnitId> },
+       Attack { units: Vec<UnitId>, target: UnitId },
    }
 
    struct PlayerInput { player: PlayerId, commands: Vec<Command> }

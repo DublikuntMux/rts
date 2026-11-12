@@ -7,8 +7,8 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
-use rts_assets::Graphics;
-use rts_base::{Command, IVec2 as SimPos, UnitId};
+use rts_assets::{Graphics, HealthBarStyle};
+use rts_base::{Command, IVec2 as SimPos, PlayerId, Unit, UnitDef, UnitId};
 
 use crate::{
     camera::{CameraControl, RtsCamera},
@@ -192,7 +192,15 @@ impl PointerState {
 }
 
 #[derive(Resource, Default)]
-struct OrderFeedback(Option<(Vec2, bool, f64)>);
+struct OrderFeedback(Option<(Vec2, Marker, f64)>);
+
+/// What the last order marker shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Marker {
+    Move,
+    Blocked,
+    Attack,
+}
 
 /// Screen conversion uses the camera's current transform, including this frame's pan/zoom.
 /// This avoids reading a `GlobalTransform` that is only propagated later in `PostUpdate`.
@@ -329,19 +337,42 @@ fn control_units(
         if let Some(targeting) = targeting.as_deref_mut() {
             targeting.0 = false;
         }
-        if let Some(position) = window
-            .cursor_position()
-            .filter(|&position| view.playable(position))
-        {
-            selection.touch_mode = false;
-            issue_move(
-                view.world(position),
-                &selection,
+        if let Some(position) = window.cursor_position() {
+            right_click(
+                position,
+                &view,
+                &visuals,
+                &mut selection,
                 &mut game,
                 &mut feedback,
                 time.elapsed_secs_f64(),
             );
         }
+    }
+}
+
+/// Attacks or moves to the clicked point of the world view.
+fn right_click(
+    position: Vec2,
+    view: &ScreenView,
+    visuals: &Query<(&UnitVisual, &Transform)>,
+    selection: &mut Selection,
+    game: &mut Match,
+    feedback: &mut OrderFeedback,
+    now: f64,
+) {
+    if view.playable(position) {
+        selection.touch_mode = false;
+        issue_move(
+            view.world(position),
+            selection,
+            game,
+            feedback,
+            now,
+            visuals,
+            view.scale,
+            false,
+        );
     }
 }
 
@@ -374,7 +405,7 @@ fn finish_press(
     let position = view.world(press.current);
     if let Some(targeting) = targeting.filter(|targeting| targeting.0) {
         targeting.0 = false;
-        issue_move(position, selection, game, feedback, now);
+        move_to(position, selection, game, feedback, now);
         return;
     }
     if press.dragged {
@@ -402,31 +433,9 @@ fn finish_press(
                     .map(|_| visual.0)
             }));
     } else {
-        let hit = visuals
-            .iter()
-            .filter_map(|(visual, transform)| {
-                let unit = game.sim.unit(visual.0)?;
-                if unit.owner != game.local_player {
-                    return None;
-                }
-                let definition = game.sim.rules().unit(unit.kind);
-                let bounds = UnitBounds::from_definition(definition).world_rect(transform);
-                let distance = position.distance_squared(bounds.center());
-                let minimum = if touch { 24.0 } else { 8.0 } * view.scale;
-                let hit = if definition.visual_bounds.is_some() {
-                    Rect::from_center_half_size(
-                        bounds.center(),
-                        bounds.half_size().max(Vec2::splat(minimum)),
-                    )
-                    .contains(position)
-                } else {
-                    let radius = (bounds.width() / 2.0).max(minimum);
-                    distance <= radius * radius
-                };
-                hit.then_some((visual.0, distance))
-            })
-            .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
-            .map(|hit| hit.0);
+        let hit = unit_at(position, touch, view.scale, visuals, game, |owner| {
+            owner == game.local_player
+        });
         if let Some(id) = hit {
             if !press.additive {
                 selection.units.clear();
@@ -437,11 +446,88 @@ fn finish_press(
                 selection.units.insert(id);
             }
         } else if touch && !selection.units.is_empty() {
-            issue_move(position, selection, game, feedback, now);
+            issue_move(
+                position, selection, game, feedback, now, visuals, view.scale, true,
+            );
         } else if !press.additive {
             selection.units.clear();
         }
     }
+}
+
+/// The nearest unit drawn under `position` whose owner passes `owners`.
+fn unit_at(
+    position: Vec2,
+    touch: bool,
+    scale: f32,
+    visuals: &Query<(&UnitVisual, &Transform)>,
+    game: &Match,
+    owners: impl Fn(PlayerId) -> bool,
+) -> Option<UnitId> {
+    visuals
+        .iter()
+        .filter_map(|(visual, transform)| {
+            let unit = game.sim.unit(visual.0)?;
+            if !owners(unit.owner) {
+                return None;
+            }
+            let definition = game.sim.rules().unit(unit.kind);
+            let bounds = UnitBounds::from_definition(definition).world_rect(transform);
+            let distance = position.distance_squared(bounds.center());
+            let minimum = if touch { 24.0 } else { 8.0 } * scale;
+            let hit = if definition.visual_bounds.is_some() {
+                Rect::from_center_half_size(
+                    bounds.center(),
+                    bounds.half_size().max(Vec2::splat(minimum)),
+                )
+                .contains(position)
+            } else {
+                let radius = (bounds.width() / 2.0).max(minimum);
+                distance <= radius * radius
+            };
+            hit.then_some((visual.0, distance))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
+        .map(|hit| hit.0)
+}
+
+/// Attacks an enemy under the pointer with the selection's armed units; otherwise moves.
+fn issue_move(
+    position: Vec2,
+    selection: &Selection,
+    game: &mut Match,
+    feedback: &mut OrderFeedback,
+    now: f64,
+    visuals: &Query<(&UnitVisual, &Transform)>,
+    scale: f32,
+    touch: bool,
+) {
+    let armed: Vec<_> = selection
+        .units
+        .iter()
+        .copied()
+        .filter(|&id| {
+            game.sim
+                .unit(id)
+                .is_some_and(|unit| game.sim.rules().unit(unit.kind).weapon.is_some())
+        })
+        .collect();
+    let enemy = (!armed.is_empty())
+        .then(|| {
+            unit_at(position, touch, scale, visuals, game, |owner| {
+                owner != game.local_player
+            })
+        })
+        .flatten();
+    if let Some(target) = enemy {
+        feedback.0 = Some((position, Marker::Attack, now));
+        game.queue_command(Command::Attack {
+            units: armed,
+            target,
+        });
+        return;
+    }
+    move_to(position, selection, game, feedback, now);
 }
 
 #[expect(
@@ -449,7 +535,7 @@ fn finish_press(
     clippy::cast_precision_loss,
     reason = "validated small world coordinates are rounded into sim units"
 )]
-fn issue_move(
+fn move_to(
     position: Vec2,
     selection: &Selection,
     game: &mut Match,
@@ -463,7 +549,15 @@ fn issue_move(
         (position * Vec2::new(1.0, -1.0) * (rts_base::TILE as f32 / TILE_PX as f32)).round();
     let target = SimPos::new(target.x as i32, target.y as i32);
     let traversable = game.sim.terrain().speed_modifier(target, game.sim.rules()) > 0;
-    feedback.0 = Some((position, traversable, now));
+    feedback.0 = Some((
+        position,
+        if traversable {
+            Marker::Move
+        } else {
+            Marker::Blocked
+        },
+        now,
+    ));
     if traversable {
         game.queue_command(Command::Move {
             units: selection.units.iter().copied().collect(),
@@ -490,6 +584,19 @@ fn draw_selection(
         return;
     };
     let style = &graphics.selection;
+    for (visual, transform) in &visuals {
+        if let Some(unit) = game.sim.unit(visual.0) {
+            draw_health_bar(
+                &mut gizmos,
+                &graphics.health_bar,
+                unit,
+                game.sim.rules().unit(unit.kind),
+                transform,
+                projection.scale,
+                selection.units.contains(&visual.0),
+            );
+        }
+    }
     for (visual, transform) in &visuals {
         if selection.units.contains(&visual.0)
             && let Some(unit) = game.sim.unit(visual.0)
@@ -536,18 +643,47 @@ fn draw_selection(
             style.color,
         );
     }
-    if let Some((position, accepted, started)) = feedback.0 {
+    if let Some((position, marker, started)) = feedback.0 {
         let age = time.elapsed_secs_f64() - started;
         if age < style.marker_duration {
-            let color = if accepted {
-                style.accepted_order_color
-            } else {
-                style.blocked_order_color
+            let color = match marker {
+                Marker::Move => style.accepted_order_color,
+                Marker::Blocked => style.blocked_order_color,
+                Marker::Attack => style.attack_order_color,
             };
             gizmos.circle_2d(position, style.marker_radius * projection.scale, color);
             gizmos.cross_2d(position, style.marker_cross_size * projection.scale, color);
         }
     }
+}
+
+/// Bars appear above damaged units, and above selected units even at full health.
+fn draw_health_bar(
+    gizmos: &mut Gizmos,
+    style: &HealthBarStyle,
+    unit: &Unit,
+    definition: &UnitDef,
+    transform: &Transform,
+    scale: f32,
+    selected: bool,
+) {
+    let max = i64::from(definition.max_health) * i64::from(definition.squad);
+    let health = unit.health();
+    if health >= max && !selected {
+        return;
+    }
+    #[expect(clippy::cast_precision_loss, reason = "a fraction for display")]
+    let fraction = (health as f32 / max as f32).clamp(0.0, 1.0);
+    let bounds = UnitBounds::from_definition(definition).world_rect(transform);
+    let y = style.gap.mul_add(scale, bounds.max.y);
+    let start = Vec2::new(bounds.min.x, y);
+    let end = Vec2::new(bounds.max.x, y);
+    gizmos.line_2d(start, end, style.background_color);
+    gizmos.line_2d(
+        start,
+        start.lerp(end, fraction),
+        style.empty_color.mix(&style.full_color, fraction),
+    );
 }
 
 #[cfg(test)]
@@ -583,15 +719,21 @@ mod tests {
     }
 
     fn test_app() -> App {
+        test_app_with("worker")
+    }
+
+    /// A local unit of `kind` at tile (1, 1), screen (336, 236), and an enemy soldier at tile
+    /// (2, 1), screen (464, 236).
+    fn test_app_with(kind: &str) -> App {
         let rules = Rules::from_ron(include_str!("../../../assets/data/core.rules.ron")).unwrap();
-        let map = MapData::from_ron(
+        let map = MapData::from_ron(&format!(
             r#"(
             name: "input", players: [(start: (0.5,0.5)), (start: (3.5,3.5))],
             tiles: ["....","....","....","...."],
-            units: [(kind: "worker", owner: 0, pos: (1.5,1.5)),
+            units: [(kind: "{kind}", owner: 0, pos: (1.5,1.5)),
                 (kind: "soldier", owner: 1, pos: (2.5,1.5))],
-        )"#,
-        )
+        )"#
+        ))
         .unwrap();
         let sim = Sim::new(rules, &map).unwrap();
         let mut app = App::new();
@@ -808,6 +950,39 @@ mod tests {
             }]
         );
         assert_eq!(game.sim.move_target(UnitId(0)), None);
+    }
+
+    #[test]
+    fn right_click_or_tap_on_an_enemy_attacks_with_armed_units() {
+        let attack = vec![Command::Attack {
+            units: vec![UnitId(0)],
+            target: UnitId(1),
+        }];
+        let mut app = test_app_with("soldier");
+        click(&mut app, Vec2::new(336.0, 236.0));
+        mouse_event(&mut app, Vec2::new(464.0, 236.0), MouseButton::Right, true);
+        assert_eq!(app.world().resource::<Match>().pending, attack);
+        assert_eq!(
+            app.world()
+                .resource::<OrderFeedback>()
+                .0
+                .map(|(_, marker, _)| marker),
+            Some(Marker::Attack)
+        );
+
+        let mut app = test_app_with("soldier");
+        tap(&mut app, Vec2::new(336.0, 236.0));
+        tap(&mut app, Vec2::new(464.0, 236.0));
+        assert_eq!(app.world().resource::<Match>().pending, attack);
+
+        // Unarmed units move to the enemy's position instead.
+        let mut app = test_app();
+        click(&mut app, Vec2::new(336.0, 236.0));
+        mouse_event(&mut app, Vec2::new(464.0, 236.0), MouseButton::Right, true);
+        assert!(matches!(
+            app.world().resource::<Match>().pending.as_slice(),
+            [Command::Move { units, .. }] if units == &[UnitId(0)]
+        ));
     }
 
     #[test]

@@ -8,8 +8,35 @@ use crate::{IVec2, UnitId};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Command {
-    Move { units: Vec<UnitId>, target: IVec2 },
-    Stop { units: Vec<UnitId> },
+    Move {
+        units: Vec<UnitId>,
+        target: IVec2,
+    },
+    Stop {
+        units: Vec<UnitId>,
+    },
+    /// Armed units pursue and fire at another player's unit until it dies.
+    Attack {
+        units: Vec<UnitId>,
+        target: UnitId,
+    },
+}
+
+impl Command {
+    /// The units this command orders.
+    #[must_use]
+    pub fn units(&self) -> &[UnitId] {
+        match self {
+            Self::Move { units, .. } | Self::Stop { units } | Self::Attack { units, .. } => units,
+        }
+    }
+
+    /// Mutable access to the ordered units, for filtering before submission.
+    pub const fn units_mut(&mut self) -> &mut Vec<UnitId> {
+        match self {
+            Self::Move { units, .. } | Self::Stop { units } | Self::Attack { units, .. } => units,
+        }
+    }
 }
 
 impl Hash for Command {
@@ -25,6 +52,11 @@ impl Hash for Command {
             Self::Stop { units } => {
                 1_u8.hash(state);
                 units.hash(state);
+            }
+            Self::Attack { units, target } => {
+                2_u8.hash(state);
+                units.hash(state);
+                target.hash(state);
             }
         }
     }
@@ -54,6 +86,13 @@ mod tests {
                 },
                 1_u8,
             ),
+            (
+                Command::Attack {
+                    units: vec![UnitId(3)],
+                    target: UnitId(4),
+                },
+                2_u8,
+            ),
         ] {
             let mut actual = StateHasher::default();
             command.hash(&mut actual);
@@ -62,6 +101,9 @@ mod tests {
             vec![UnitId(3)].hash(&mut expected);
             if tag == 0 {
                 IVec2::new(7, 9).hash(&mut expected);
+            }
+            if tag == 2 {
+                UnitId(4).hash(&mut expected);
             }
             assert_eq!(actual.finish(), expected.finish());
         }
