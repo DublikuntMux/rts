@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-bevy = { version = "0.20.0", default-features = false, features = [
+bevy = { version = "0.20.1", default-features = false, features = [
     "std",
     "async_executor",
     "multi_threaded",
@@ -34,19 +34,19 @@ bevy = { version = "0.20.0", default-features = false, features = [
 bevy_asset_packer = { version = "0.5.0", default-features = false }
 # Keep vector types compatible with Bevy 0.20 (glam 0.33).
 glam = "0.33.12"
-ron = "0.12.2"
+ron = "0.12.3"
 miniz_oxide = "0.9.1"
 rand = { version = "0.10.3", default-features = false, features = ["std_rng"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
-wasm-bindgen-futures = "0.4.79"
+wasm-bindgen-futures = "0.4.80"
 ewebsock = { version = "0.8.0", default-features = false }
 futures-util = { version = "0.3.34", features = ["sink"] }
 tokio = { version = "1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
-js-sys = "0.3.106"
-wasm-bindgen = "0.2.129"
-web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Storage", "Blob", "BlobPropertyBag", "Url", "Event", "ErrorEvent", "PromiseRejectionEvent", "FileList", "File"] }
+js-sys = "0.3.107"
+wasm-bindgen = "0.2.130"
+web-sys = { version = "0.3.107", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Storage", "Blob", "BlobPropertyBag", "Url", "Event", "ErrorEvent", "PromiseRejectionEvent", "FileList", "File"] }
 
 rts_assets = { path = "crates/assets" }
 rts_base = { path = "crates/base" }
