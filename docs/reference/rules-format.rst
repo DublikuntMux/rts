@@ -22,9 +22,9 @@ Example
        ],
        units: [
            (id: "worker", sprite: "textures/units/worker.png",
-            size: 1, max_health: 40, radius: 0.3, speed: 2.5),
+            size: 1, max_health: 40, radius: 0.3, speed: 3.0),
            (id: "soldier", sprite: "textures/units/soldier.png",
-            size: 2, max_health: 80, radius: 0.4, speed: 3.0),
+            size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5),
        ],
    )
 
@@ -113,9 +113,14 @@ Unit types
    * - ``size``
      - integer
      - Tile capacity the unit consumes. 1 to ``tile_capacity``.
+   * - ``squad``
+     - integer
+     - Soldiers in one unit, 1 to 255. Defaults to 1. The client draws each
+       soldier with ``sprite`` in ranks inside the unit's bounds; see
+       :ref:`squads`.
    * - ``max_health``
      - integer
-     - Positive starting health. Combat arrives in M4.
+     - Positive starting health of each soldier.
    * - ``radius``
      - decimal tiles
      - Positive nominal drawing radius. Crowded visual groups stay near this
@@ -143,6 +148,24 @@ its bounds together, but only as far as a group area of one and a half tiles
 requires, so stacked units keep most of their unshared size. The simulation
 never reads ``sprite``; changing only its path does not affect movement or
 state hashes.
+
+.. _squads:
+
+Squads
+------
+
+A unit with ``squad`` greater than 1 is a squad: it moves, occupies tile
+capacity, and takes orders as one unit, but each soldier has its own health.
+Soldiers stand in a near-square grid filled row by row from the top-left:
+``columns`` is the smallest number whose square holds the squad and ``rows`` is
+``ceil(squad / columns)``, so six soldiers form two ranks of three. The
+simulation and the client share this grid (``rts_base::SquadGrid``). Fallen
+soldiers leave their slot empty instead of shuffling the survivors, and the
+unit dies when its last soldier falls.
+
+Artists draw one soldier; the client repeats the sprite in every living slot,
+each fitted to its cell of the unit's bounds. Distant zoom draws the whole
+squad as one solid rectangle.
 
 Custom sprite bounds
 --------------------
@@ -184,7 +207,8 @@ Validation
 * No terrain, more than 256 terrain types, or more than 65536 unit types.
 * Duplicate terrain IDs, terrain symbols, or unit IDs.
 * A unit with ``size`` of 0 or larger than ``tile_capacity``.
-* A unit with nonpositive ``max_health``, ``radius``, or ``speed``.
+* A unit with zero ``squad`` or nonpositive ``max_health``, ``radius``, or
+  ``speed``.
 * A missing ``sprite`` path, or a path that is empty or contains only whitespace.
 * Nonfinite or out-of-range ``visual_bounds`` components, or a size component
   that rounds to zero or is negative.
@@ -212,11 +236,11 @@ Bundled content
      - ``#4a7a3e``
    * - ``dirt``
      - ``,``
-     - 1.0
+     - 1.1
      - ``#8a7350``
    * - ``sand``
      - ``:``
-     - 1.0
+     - 0.9
      - ``#c9b27a``
    * - ``water``
      - ``~``
@@ -229,23 +253,26 @@ Bundled content
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 10 20 15 35
+   :widths: 18 10 10 22 12 28
 
    * - Unit
      - Size
-     - Max health
+     - Squad
+     - Health per soldier
      - Radius
      - Speed
    * - ``worker``
      - 1
+     - 1
      - 40
      - 0.3
-     - 2.5 tiles/s
+     - 3.0 tiles/s
    * - ``soldier``
      - 2
-     - 80
-     - 0.4
-     - 3.0 tiles/s
+     - 6
+     - 30
+     - 0.45
+     - 2.5 tiles/s
 
 With ``tile_capacity: 4``, a tile holds four workers, two soldiers, or two
 workers and one soldier.

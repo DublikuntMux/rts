@@ -22,7 +22,7 @@ What you can change
      - ``tile_capacity`` in the rules file.
    * - Terrain types: symbol, speed, color, texture
      - ``terrain`` in the rules file.
-   * - Unit types: size, health, radius, speed, visual bounds
+   * - Unit types: size, squad, health, radius, speed, visual bounds
      - ``units`` in the rules file.
    * - Map name, size, and terrain layout
      - ``name`` and ``tiles`` in the map file.
@@ -57,8 +57,10 @@ Create a mod
           (id: "road", symbol: '=', speed_modifier: 2.0, color: "#9a9a90"),
       ],
       units: [
-          (id: "worker", size: 1, max_health: 40, radius: 0.3, speed: 2.5),
-          (id: "soldier", size: 2, max_health: 80, radius: 0.4, speed: 4.0),
+          (id: "worker", sprite: "textures/units/worker.png",
+           size: 1, max_health: 40, radius: 0.3, speed: 3.0),
+          (id: "soldier", sprite: "textures/units/soldier.png",
+           size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 4.0),
       ],
 
    Then use ``=`` in the map's ``tiles`` rows.

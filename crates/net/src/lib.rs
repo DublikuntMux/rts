@@ -13,7 +13,7 @@ pub use replay::{MAX_REPLAY_BYTES, MAX_REPLAY_TURNS, Replay};
 pub use rts_base::INPUT_DELAY_TICKS;
 pub use setup::{MAX_SETUP_BYTES, MatchSetup};
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const MAX_NAME_CHARS: usize = 24;
 pub const MAX_MAP_NAME_CHARS: usize = 64;
 pub const MAX_LISTED_ROOMS: usize = 64;

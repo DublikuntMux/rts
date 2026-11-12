@@ -227,7 +227,8 @@ border; ocher marks selected minimap units and an armed Move command.
   from the current match, including server-provided maps. Live player-colored
   unit dots and a camera outline update as UI nodes. Click, tap, or drag it
   to center the camera without issuing orders.
-* The center shows unit names, health totals, order status, and the current
+* The center shows unit names, living soldiers out of the squad size (for
+  squads), health totals, order status, and the current
   mouse or touch hint. A single unit has a sprite portrait; a group shows
   up to twelve 48-pixel portraits. Portrait images keep their aspect ratio,
   centered in their square frames. Activating a portrait narrows the selection

@@ -8,7 +8,7 @@ const fn center(x: i32, y: i32) -> IVec2 {
 /// group membership, replacement orders, and fractional movement. A replay produced by the
 /// unchanged simulation must continue to verify after implementation-only optimizations.
 #[test]
-fn movement_hash_stream_matches_v6_baseline() {
+fn movement_hash_stream_matches_v7_baseline() {
     let rules = Rules::from_ron(
         r##"(tile_capacity: 4, terrain: [
             (id: "normal", symbol: '.', speed_modifier: 1, color: "#ffffff"),
@@ -67,5 +67,5 @@ fn movement_hash_stream_matches_v6_baseline() {
             sim.step();
         }
     }
-    assert_eq!(fingerprint, 18_304_470_849_813_970_820);
+    assert_eq!(fingerprint, 2_399_222_562_652_370_932);
 }

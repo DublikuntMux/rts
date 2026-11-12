@@ -537,11 +537,16 @@ fn update_selection(
         [(_, unit)] => unit_name(&game.sim.rules().unit(unit.kind).id),
         units => format!("{} units selected", units.len()),
     };
-    let total_health: i64 = units.iter().map(|(_, unit)| i64::from(unit.health)).sum();
+    let total_health: i64 = units.iter().map(|(_, unit)| unit.health()).sum();
     let max_health: i64 = units
         .iter()
-        .map(|(_, unit)| i64::from(game.sim.rules().unit(unit.kind).max_health))
+        .map(|(_, unit)| {
+            let definition = game.sim.rules().unit(unit.kind);
+            i64::from(definition.max_health) * i64::from(definition.squad)
+        })
         .sum();
+    let soldiers: usize = units.iter().map(|(_, unit)| unit.alive()).sum();
+    let squad: usize = units.iter().map(|(_, unit)| unit.soldiers.len()).sum();
     let moving = units
         .iter()
         .filter(|(id, _)| game.sim.move_target(*id).is_some())
@@ -549,10 +554,14 @@ fn update_selection(
     let detail = if units.is_empty() {
         "Your forces await orders".into()
     } else {
-        format!(
-            "{total_health} / {max_health} HP  ·  {}",
-            if moving > 0 { "Moving" } else { "Idle" }
-        )
+        let state = if moving > 0 { "Moving" } else { "Idle" };
+        if squad > units.len() {
+            format!(
+                "{soldiers} / {squad} soldiers  ·  {total_health} / {max_health} HP  ·  {state}"
+            )
+        } else {
+            format!("{total_health} / {max_health} HP  ·  {state}")
+        }
     };
     for (role, mut text) in &mut labels {
         let value = match role.0 {

@@ -40,7 +40,9 @@ fn spawns_units_in_file_order_with_full_health() {
     let units: Vec<_> = sim.units().collect();
     assert_eq!(units.len(), 2);
     assert_eq!(units[0].1.pos, IVec2::new(TILE * 3 / 2, TILE / 2));
-    assert_eq!(units[0].1.health, 80);
+    assert_eq!(units[0].1.soldiers, [30; 6]);
+    assert_eq!((units[0].1.alive(), units[0].1.health()), (6, 180));
+    assert_eq!(units[1].1.soldiers, [40]);
     assert_eq!(units[1].1.pos, IVec2::new(TILE / 4, TILE * 7 / 4));
     assert!(units[0].0 < units[1].0);
 }

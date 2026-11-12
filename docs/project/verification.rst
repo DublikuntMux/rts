@@ -54,6 +54,21 @@ strict Sphinx build passed. The workflows have not yet run on GitHub-hosted
 runners, and the Windows, macOS, Linux, Android, and Pages packaging and
 deployment steps were not executed end to end here.
 
+M4 — Combat
+-----------
+
+**Squads (2026-11-12).** Unit types gained ``squad`` (soldiers per unit,
+default 1) and ``max_health`` became per-soldier health; ``Unit::soldiers``
+replaces the single ``health`` value. ``SquadGrid`` places soldiers in ranks
+for both the simulation and the client, which draws one child sprite per
+living soldier and a solid formation rectangle when zoomed out. Bundled
+soldiers form squads of six with 30 health each. Protocol and replay version 7
+covers the new unit state; the pinned hash stream was re-baselined as v7.
+Regressions cover squad parsing and validation, grid geometry, spawn health,
+soldier sprite placement, zoom switching, and cleanup with the unit. All
+workspace tests, strict all-target Clippy, formatting, the ``wasm32`` check,
+and the strict Sphinx build passed. A rendered session was not run.
+
 Client scenes
 -------------
 

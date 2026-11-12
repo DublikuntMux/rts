@@ -5,7 +5,7 @@ mod motion;
 
 use bevy::{platform::collections::HashMap, prelude::*, sprite::Anchor};
 use rts_assets::Graphics;
-use rts_base::{UnitId, UnitKind};
+use rts_base::{SquadGrid, Unit, UnitId, UnitKind};
 
 pub use self::layout::UnitBounds;
 use self::{
@@ -19,6 +19,8 @@ use crate::{
 };
 
 const UNIT_Z: f32 = 1.0;
+/// Soldiers draw just above their unit's transparent root.
+const SOLDIER_Z: f32 = 0.01;
 
 #[derive(Component, Clone)]
 pub struct UnitVisual(pub UnitId);
@@ -49,6 +51,27 @@ struct UnitVisuals {
     images: HashMap<UnitKind, Handle<Image>>,
     motion: HashMap<UnitId, UnitMotion>,
     layout: UnitLayout,
+    /// Child sprites of multi-soldier units, by squad slot.
+    soldiers: HashMap<UnitId, Vec<Entity>>,
+}
+
+/// One soldier's place in the ranks, relative to its unit's visual root.
+fn soldier_cell(bounds: UnitBounds, grid: SquadGrid, index: u8) -> (Vec2, UnitBounds) {
+    let cells = Vec2::new(f32::from(grid.columns), f32::from(grid.rows));
+    let size = bounds.size / cells;
+    let (column, row) = grid.cell(index);
+    // Row zero is the top rank, as in the simulation, whose y axis points down.
+    let center = Vec2::new(
+        (f32::from(column) + 0.5).mul_add(size.x, -bounds.size.x / 2.0),
+        (f32::from(row) + 0.5).mul_add(-size.y, bounds.size.y / 2.0),
+    ) + bounds.offset;
+    (
+        center,
+        UnitBounds {
+            offset: Vec2::ZERO,
+            size,
+        },
+    )
 }
 
 /// The sprite and distant rectangle share exactly the same size and anchor.
@@ -79,13 +102,15 @@ fn sync_units(
     assets: Res<AssetServer>,
     textures: Res<Assets<Image>>,
     detail: Res<ZoomDetail>,
-    mut sprites: Query<(&mut Transform, &mut Sprite, &mut Anchor)>,
+    mut sprites: Query<(&mut Transform, &mut Sprite, &mut Anchor), Without<SoldierVisual>>,
+    mut soldier_sprites: Query<(&mut Sprite, &mut Visibility), With<SoldierVisual>>,
 ) {
     let UnitVisuals {
         entities,
         images,
         motion,
         layout,
+        soldiers,
     } = &mut *visuals;
     layout.update(game.sim.units().map(|(id, unit)| {
         (
@@ -113,36 +138,60 @@ fn sync_units(
         let image = images
             .entry(unit.kind)
             .or_insert_with(|| assets.load(definition.sprite.clone()));
-        // Both detail modes draw the image's shape once it has loaded.
-        let size = bounds.sprite_size(textures.get(&*image).map(Image::size_f32));
-        let anchor = Anchor(-bounds.offset / size);
-        let desired_image = if detail.0 {
-            image.clone()
-        } else {
-            Handle::default()
-        };
+        let image_size = textures.get(&*image).map(Image::size_f32);
+        let squad = (definition.squad > 1).then(|| Squad {
+            unit,
+            bounds,
+            grid: definition.ranks(),
+            image_size,
+            detail: detail.0,
+        });
+        let player = graphics.player_color(unit.owner.0);
+        let RootStyle {
+            size,
+            anchor,
+            image: desired_image,
+            color: desired_color,
+        } = RootStyle::new(bounds, image_size, squad.is_some(), detail.0, image, player);
         if let Some(&entity) = entities.get(&id) {
             if let Ok((mut transform, mut sprite, mut current_anchor)) = sprites.get_mut(entity) {
                 *transform = placement_transform(placement);
                 if sprite.image != desired_image {
                     sprite.image = desired_image;
                 }
+                if sprite.color != desired_color {
+                    sprite.color = desired_color;
+                }
                 if sprite.custom_size != Some(size) {
                     sprite.custom_size = Some(size);
                 }
                 current_anchor.set_if_neq(anchor);
             }
+            let squad = Squad {
+                unit,
+                bounds,
+                grid: definition.ranks(),
+                image_size,
+                detail: detail.0,
+            };
+            squad.update(
+                soldiers.get(&id).map_or(&[], Vec::as_slice),
+                &mut soldier_sprites,
+            );
             continue;
         }
         let sprite = Sprite {
             image: desired_image,
-            color: graphics.player_color(unit.owner.0),
+            color: desired_color,
             custom_size: Some(size),
             ..default()
         };
         let entity = commands
             .spawn_scene(unit_scene(id, sprite, anchor, placement))
             .id();
+        if let Some(squad) = &squad {
+            soldiers.insert(id, squad.spawn(&mut commands, entity, image, player));
+        }
         entities.insert(id, entity);
     }
     entities.retain(|&id, &mut entity| {
@@ -153,6 +202,117 @@ fn sync_units(
         alive
     });
     motion.retain(|id, _| entities.contains_key(id));
+    soldiers.retain(|id, _| entities.contains_key(id));
+}
+
+/// Marks a soldier sprite inside a multi-soldier unit.
+#[derive(Component)]
+struct SoldierVisual;
+
+/// Size, anchor, image, and tint of a unit's root sprite.
+struct RootStyle {
+    size: Vec2,
+    anchor: Anchor,
+    image: Handle<Image>,
+    color: Color,
+}
+
+impl RootStyle {
+    /// Both detail modes draw the image's shape once it has loaded. A squad's root is the
+    /// whole formation: a solid rectangle when distant, transparent behind its soldiers.
+    fn new(
+        bounds: UnitBounds,
+        image_size: Option<Vec2>,
+        squad: bool,
+        detail: bool,
+        image: &Handle<Image>,
+        player: Color,
+    ) -> Self {
+        let size = if squad {
+            bounds.size
+        } else {
+            bounds.sprite_size(image_size)
+        };
+        Self {
+            size,
+            anchor: Anchor(-bounds.offset / size),
+            image: if detail && !squad {
+                image.clone()
+            } else {
+                Handle::default()
+            },
+            color: if detail && squad { Color::NONE } else { player },
+        }
+    }
+}
+
+/// What a squad's soldier sprites are drawn from this frame.
+struct Squad<'a> {
+    unit: &'a Unit,
+    bounds: UnitBounds,
+    grid: SquadGrid,
+    image_size: Option<Vec2>,
+    detail: bool,
+}
+
+impl Squad<'_> {
+    fn spawn(
+        &self,
+        commands: &mut Commands,
+        root: Entity,
+        image: &Handle<Image>,
+        color: Color,
+    ) -> Vec<Entity> {
+        (0..self.unit.soldiers.len())
+            .map(|index| {
+                let (center, cell) = soldier_cell(self.bounds, self.grid, slot(index));
+                commands
+                    .spawn((
+                        SoldierVisual,
+                        Sprite {
+                            image: image.clone(),
+                            color,
+                            custom_size: Some(cell.sprite_size(self.image_size)),
+                            ..default()
+                        },
+                        Transform::from_translation(center.extend(SOLDIER_Z)),
+                        soldier_visibility(self.unit, index, self.detail),
+                        ChildOf(root),
+                    ))
+                    .id()
+            })
+            .collect()
+    }
+
+    fn update(
+        &self,
+        soldiers: &[Entity],
+        sprites: &mut Query<(&mut Sprite, &mut Visibility), With<SoldierVisual>>,
+    ) {
+        for (index, &soldier) in soldiers.iter().enumerate() {
+            if let Ok((mut sprite, mut visibility)) = sprites.get_mut(soldier) {
+                let (_, cell) = soldier_cell(self.bounds, self.grid, slot(index));
+                let size = cell.sprite_size(self.image_size);
+                if sprite.custom_size != Some(size) {
+                    sprite.custom_size = Some(size);
+                }
+                visibility.set_if_neq(soldier_visibility(self.unit, index, self.detail));
+            }
+        }
+    }
+}
+
+fn slot(index: usize) -> u8 {
+    u8::try_from(index).expect("squads have at most 255 soldiers")
+}
+
+/// Fallen soldiers disappear; distant units show only their solid formation rectangle.
+fn soldier_visibility(unit: &Unit, index: usize, detail: bool) -> Visibility {
+    if detail && unit.soldiers[index] > 0 {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    }
 }
 
 fn clear_units(mut visuals: ResMut<UnitVisuals>) {
@@ -418,7 +578,8 @@ mod tests {
             let visuals = app.world().resource::<UnitVisuals>();
             for (&id, &unit_entity) in &visuals.entities {
                 let kind = app.world().resource::<Match>().sim.unit(id).unwrap().kind;
-                let expected = if detailed {
+                let squad = visuals.soldiers.get(&id);
+                let expected = if detailed && squad.is_none() {
                     visuals.images[&kind].clone()
                 } else {
                     Handle::default()
@@ -427,6 +588,16 @@ mod tests {
                     app.world().get::<Sprite>(unit_entity).unwrap().image,
                     expected
                 );
+                for &soldier in squad.into_iter().flatten() {
+                    assert_eq!(
+                        *app.world().get::<Visibility>(soldier).unwrap(),
+                        if detailed {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        }
+                    );
+                }
             }
             assert_eq!(app.world().resource::<ZoomDetail>().0, detailed);
             let sprite = app.world().get::<Sprite>(entity).unwrap();
@@ -442,6 +613,73 @@ mod tests {
             assert_eq!(sprite.custom_size, Some(bounds.size));
         }
         assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    }
+
+    #[test]
+    fn squads_draw_one_sprite_per_soldier_in_ranks() {
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "squad", players: [(start: (0.5,0.5))], tiles: ["."],
+            units: [(kind:"soldier",owner:0,pos:(0.5,0.5))])"#,
+        )
+        .unwrap();
+        let sim = Sim::new(rules, &map).unwrap();
+        let hash = sim.state_hash();
+        let definition = sim.rules().unit(UnitKind(1)).clone();
+        let bounds = UnitBounds::from_definition(&definition);
+        let mut app = scene_app(sim);
+        app.world_mut().spawn(RtsCamera::default());
+        app.update();
+        let visuals = app.world().resource::<UnitVisuals>();
+        let root = visuals.entities[&UnitId(0)];
+        let soldiers = visuals.soldiers[&UnitId(0)].clone();
+        let image = visuals.images[&UnitKind(1)].clone();
+        assert_eq!(soldiers.len(), usize::from(definition.squad));
+        let world = app.world();
+        let root_sprite = world.get::<Sprite>(root).unwrap();
+        assert_eq!(root_sprite.color, Color::NONE);
+        assert_eq!(root_sprite.custom_size, Some(bounds.size));
+        let grid = definition.ranks();
+        let cell = bounds.size / Vec2::new(f32::from(grid.columns), f32::from(grid.rows));
+        let mut centers = Vec::new();
+        for (index, &soldier) in soldiers.iter().enumerate() {
+            assert_eq!(world.get::<ChildOf>(soldier).unwrap().parent(), root);
+            let sprite = world.get::<Sprite>(soldier).unwrap();
+            assert_eq!(sprite.image, image);
+            assert_eq!(sprite.custom_size, Some(cell));
+            assert_eq!(
+                *world.get::<Visibility>(soldier).unwrap(),
+                Visibility::Inherited
+            );
+            let center = world
+                .get::<Transform>(soldier)
+                .unwrap()
+                .translation
+                .truncate();
+            assert!(
+                Rect::from_center_size(bounds.offset, bounds.size).contains(center),
+                "{center}"
+            );
+            let (column, row) = grid.cell(slot(index));
+            centers.push((column, row, center));
+        }
+        // The first rank is drawn above the second, left to right.
+        let (first, second) = (centers[0].2, centers[usize::from(grid.columns)].2);
+        assert!(first.y > second.y && (first.x - second.x).abs() < 0.001);
+        assert!(centers[1].2.x > centers[0].2.x);
+        assert_eq!(world.resource::<Match>().sim.state_hash(), hash);
+
+        app.world_mut()
+            .resource_mut::<Match>()
+            .sim
+            .remove_unit(UnitId(0));
+        app.update();
+        assert!(app.world().get_entity(root).is_err());
+        for soldier in soldiers {
+            assert!(app.world().get_entity(soldier).is_err());
+        }
+        assert!(app.world().resource::<UnitVisuals>().soldiers.is_empty());
     }
 
     #[test]

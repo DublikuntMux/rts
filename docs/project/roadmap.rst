@@ -34,8 +34,8 @@ Status
      - Authoritative server, lobby, replays.
    * - M4
      - Combat
-     - Not started
-     - Health, weapons, attack orders, death.
+     - In progress
+     - Squads, health, weapons, attack orders, death.
    * - M5
      - Economy and production
      - Not started
@@ -165,14 +165,19 @@ Main menu
    edge scrolling, and desktop fullscreen. Protocol v5 adds a room list,
    player names, and explicit readiness separate from setup loading.
 
+Squads
+   A unit is a squad of ``squad`` soldiers, each with its own health and a
+   slot in ranks shared by the simulation and the client. The client repeats
+   the unit sprite for every living soldier. Protocol and replay version 7.
+
 Upcoming
 --------
 
 M4 — Combat
-   Health, weapons (range, damage, cooldown), attack and attack-move orders,
-   auto-targeting, death through ``Sim::remove_unit``, and health bars as unit
-   scene children. Tapping an enemy attacks it; long-press opens a context
-   menu with attack-move and patrol.
+   Weapons (range, damage, cooldown), attack and attack-move orders,
+   auto-targeting, soldiers falling one by one, death through
+   ``Sim::remove_unit``, and health bars. Tapping an enemy attacks it;
+   long-press opens a context menu with attack-move and patrol.
 
 M5 — Economy and production
    Resources and gathering, buildings with placement validation,

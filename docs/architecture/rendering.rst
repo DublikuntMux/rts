@@ -120,6 +120,19 @@ a distant rectangle has the fitted image's shape.
 Rectangles use Bevy's white default sprite image; the required image handle
 remains cached for zooming back in. There are no separate unit detail settings.
 
+Squads
+------
+
+A unit type with ``squad`` above 1 draws each soldier as a child sprite of the
+unit root (``SoldierVisual``). The unit's bounds are split into the shared
+``SquadGrid`` cells, row zero at the top as in the simulation, and every
+soldier's image is fitted to its cell. The root keeps the whole bounds: it is
+transparent at sprite detail and becomes the solid formation rectangle when
+zoomed out, while the soldiers hide. A fallen soldier's sprite hides and its
+cell stays empty. Soldiers inherit the root transform, so tile packing and
+movement smoothing move and scale the formation as one piece, and selection
+still hits the unit's bounds.
+
 Tile groups
 -----------
 

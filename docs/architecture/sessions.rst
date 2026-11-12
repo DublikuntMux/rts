@@ -199,7 +199,7 @@ Connection flow
 2048 bytes; native builds refuse ``wss://``) and opens an ``ewebsock``
 socket. Socket events enter a bounded channel of 128 events; if it fills,
 the socket stops reading. On open, the client sends
-``Rooms { version: 6 }``. The first ``Rooms`` reply marks the server
+``Rooms { version: 7 }``. The first ``Rooms`` reply marks the server
 ``Connected``. Create and join use this same connection.
 
 ``poll_network`` runs in ``PreUpdate`` and handles up to 128 events per frame:

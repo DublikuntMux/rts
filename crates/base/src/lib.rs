@@ -23,7 +23,9 @@ pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
-pub use rules::{Rules, SPEED_SCALE, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds};
+pub use rules::{
+    Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds,
+};
 
 use crate::hash::StateHasher;
 use crate::movement::{MoveGroupId, MoveOrder};
@@ -64,7 +66,23 @@ pub struct Unit {
     pub owner: PlayerId,
     /// Center in world units.
     pub pos: IVec2,
-    pub health: i32,
+    /// Health of each soldier by squad slot; zero marks a fallen soldier. Slots keep their
+    /// place in the ranks, so survivors do not shuffle when a neighbor falls.
+    pub soldiers: Vec<i32>,
+}
+
+impl Unit {
+    /// Combined health of the living soldiers.
+    #[must_use]
+    pub fn health(&self) -> i64 {
+        self.soldiers.iter().map(|&health| i64::from(health)).sum()
+    }
+
+    /// Number of living soldiers.
+    #[must_use]
+    pub fn alive(&self) -> usize {
+        self.soldiers.iter().filter(|&&health| health > 0).count()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -311,14 +329,15 @@ impl Sim {
     fn spawn_unit(&mut self, kind: UnitKind, owner: PlayerId, pos: IVec2) -> UnitId {
         let id = UnitId(self.next_unit_id);
         self.next_unit_id += 1;
-        let health = self.rules.unit(kind).max_health;
+        let definition = self.rules.unit(kind);
+        let soldiers = vec![definition.max_health; usize::from(definition.squad)];
         self.units.insert(
             id,
             Unit {
                 kind,
                 owner,
                 pos,
-                health,
+                soldiers,
             },
         );
         id

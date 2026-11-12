@@ -57,6 +57,10 @@ pub struct UnitDef {
     pub sprite: String,
     /// Tile capacity consumed by this unit.
     pub size: u16,
+    /// Soldiers in the unit, drawn in ranks and damaged one at a time. Defaults to one.
+    #[serde(default = "one_soldier")]
+    pub squad: u8,
+    /// Health of each soldier.
     pub max_health: i32,
     /// Nominal drawing radius in world units (written in tiles).
     #[serde(deserialize_with = "de_tiles")]
@@ -67,6 +71,60 @@ pub struct UnitDef {
     /// Movement speed in world units per second (written in tiles per second).
     #[serde(deserialize_with = "de_tiles")]
     pub speed: i32,
+}
+
+const fn one_soldier() -> u8 {
+    1
+}
+
+impl UnitDef {
+    /// Arrangement of this unit's soldiers.
+    #[must_use]
+    pub fn ranks(&self) -> SquadGrid {
+        SquadGrid::new(self.squad)
+    }
+}
+
+/// Soldiers stand in a near-square grid, filled row by row from the top-left. Both the
+/// simulation and the client use it, so the soldier a shot hits is the one drawn nearest the
+/// shooter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SquadGrid {
+    pub columns: u8,
+    pub rows: u8,
+}
+
+impl SquadGrid {
+    #[must_use]
+    pub fn new(squad: u8) -> Self {
+        let mut columns = 1_u8;
+        while u16::from(columns) * u16::from(columns) < u16::from(squad) {
+            columns += 1;
+        }
+        Self {
+            columns,
+            rows: squad.div_ceil(columns),
+        }
+    }
+
+    /// Column and row of soldier `index`.
+    #[must_use]
+    pub const fn cell(self, index: u8) -> (u8, u8) {
+        (index % self.columns, index / self.columns)
+    }
+
+    /// Center of soldier `index` relative to the unit center, inside a box of `half_size`.
+    #[must_use]
+    pub fn offset(self, index: u8, half_size: IVec2) -> IVec2 {
+        let (column, row) = self.cell(index);
+        let axis = |cell: u8, cells: u8, half: i32| {
+            (2 * i32::from(cell) + 1 - i32::from(cells)) * half / i32::from(cells)
+        };
+        IVec2::new(
+            axis(column, self.columns, half_size.x),
+            axis(row, self.rows, half_size.y),
+        )
+    }
 }
 
 /// Drawing bounds in world units, independent of simulation movement and tile capacity.
@@ -149,9 +207,9 @@ impl Rules {
             if !ids.insert(&unit.id) {
                 return Err(LoadError::invalid(format!("duplicate unit `{}`", unit.id)));
             }
-            if unit.max_health <= 0 || unit.radius <= 0 || unit.speed <= 0 {
+            if unit.squad == 0 || unit.max_health <= 0 || unit.radius <= 0 || unit.speed <= 0 {
                 return Err(LoadError::invalid(format!(
-                    "unit `{}` needs positive max_health, radius, and speed",
+                    "unit `{}` needs positive squad, max_health, radius, and speed",
                     unit.id
                 )));
             }
@@ -459,6 +517,45 @@ mod tests {
         assert_eq!(rules.unit(kind).radius, crate::TILE / 4);
         assert_eq!(rules.unit(kind).speed, crate::TILE * 5 / 4);
         assert_eq!(rules.terrain_by_symbol('g'), Some(TerrainId(0)));
+    }
+
+    #[test]
+    fn squad_defaults_to_one_and_must_be_positive() {
+        let unit = |squad: &str| {
+            Rules::from_ron(&format!(
+                r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "w.png", size: 1, {squad} max_health: 40, radius: 0.25, speed: 1.25)])"#
+            ))
+        };
+        assert_eq!(unit("").unwrap().unit(UnitKind(0)).squad, 1);
+        assert_eq!(unit("squad: 6,").unwrap().unit(UnitKind(0)).squad, 6);
+        let error = unit("squad: 0,").unwrap_err();
+        assert!(error.to_string().contains("squad"), "{error}");
+        assert!(unit("squad: 256,").is_err());
+    }
+
+    #[test]
+    fn squad_grid_is_near_square_and_centered() {
+        for (squad, columns, rows) in [
+            (1, 1, 1),
+            (2, 2, 1),
+            (4, 2, 2),
+            (5, 3, 2),
+            (6, 3, 2),
+            (9, 3, 3),
+            (255, 16, 16),
+        ] {
+            assert_eq!(
+                SquadGrid::new(squad),
+                SquadGrid { columns, rows },
+                "{squad}"
+            );
+        }
+        let grid = SquadGrid::new(6);
+        let half = IVec2::new(300, 200);
+        assert_eq!(grid.offset(0, half), IVec2::new(-200, -100));
+        assert_eq!(grid.offset(1, half), IVec2::new(0, -100));
+        assert_eq!(grid.offset(5, half), IVec2::new(200, 100));
+        assert_eq!(SquadGrid::new(1).offset(0, half), IVec2::ZERO);
     }
 
     #[test]

@@ -117,7 +117,7 @@ of ``std::hash::Hasher``:
    * - ``next_unit_id``
      - The next ID to allocate.
    * - ``units``
-     - Every living unit in ID order: kind, owner, position, health.
+     - Every living unit in ID order: kind, owner, position, soldier health.
    * - ``commands``
      - Locally queued commands by tick, in submission order.
    * - ``move_orders``

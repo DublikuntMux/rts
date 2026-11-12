@@ -69,7 +69,7 @@ Match state
      kind: UnitKind
      owner: PlayerId
      pos: IVec2
-     health: i32
+     soldiers: Vec<i32>
    }
    class Player {
      start: IVec2
@@ -94,8 +94,10 @@ Match state
 * ``Terrain`` stores one ``TerrainId`` per tile, row-major with the top row
   first. ``speed_modifier(pos)`` returns 0 outside the map, so "outside" and
   "blocked" are the same check.
-* ``Unit`` has no ID field; its ID is its key in ``units``. ``health`` is set
-  to ``max_health`` and is reserved for combat (M4).
+* ``Unit`` has no ID field; its ID is its key in ``units``. ``soldiers`` holds
+  one health value per squad slot, each starting at ``max_health``; zero marks
+  a fallen soldier whose slot stays empty. ``Unit::health`` sums the living
+  soldiers and ``Unit::alive`` counts them. See :ref:`squads`.
 * ``commands`` holds locally queued commands by application tick. Online play
   supplies commands per turn instead.
 * ``move_orders`` holds at most one active order per unit.

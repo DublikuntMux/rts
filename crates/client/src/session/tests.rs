@@ -519,7 +519,7 @@ fn setup_acknowledges_server_content_and_start_requires_readiness() {
             .sim
             .unit(UnitId(0))
             .unwrap()
-            .health,
+            .health(),
         900
     );
     assert_eq!(
