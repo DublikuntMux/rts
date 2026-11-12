@@ -4,6 +4,7 @@
 //! every armed unit that is not moving fires a volley at its ordered target, or else at the
 //! nearest enemy in range. Every living soldier fires one shot, and each shot hits the living
 //! soldier of the target squad standing nearest the shooter, so the facing rank falls first.
+//! Defeated soldiers count as kills; reaching a new rank restores the whole squad.
 
 use crate::{IVec2, PlayerId, Sim, UnitId, movement::MoveOrder, rules::Weapon, tile_of};
 
@@ -106,7 +107,8 @@ impl Sim {
         let shooter = &self.units[&id];
         let shots = shooter.alive();
         let from = shooter.pos;
-        let damage = weapon.damage;
+        let damage = self.rules.shot_damage(weapon, shooter.kills);
+        let mut kills = 0;
         let victim = self.units.get_mut(&target).expect("target is alive");
         let definition = self.rules.unit(victim.kind);
         let grid = definition.ranks();
@@ -127,9 +129,19 @@ impl Sim {
             };
             let health = &mut victim.soldiers[slot];
             *health = health.saturating_sub(damage).max(0);
+            if *health == 0 {
+                kills += 1;
+            }
         }
         let destroyed = victim.alive() == 0;
-        self.units.get_mut(&id).expect("shooter is alive").cooldown = weapon.cooldown;
+        let shooter = self.units.get_mut(&id).expect("shooter is alive");
+        shooter.cooldown = weapon.cooldown;
+        let rank = self.rules.rank(shooter.kills);
+        shooter.kills = shooter.kills.saturating_add(kills);
+        if self.rules.rank(shooter.kills) > rank {
+            let max_health = self.rules.unit(shooter.kind).max_health;
+            shooter.soldiers.fill(max_health);
+        }
         if destroyed {
             self.remove_unit(target);
         }

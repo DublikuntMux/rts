@@ -25,7 +25,8 @@ pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
 pub use rules::{
-    Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef, UnitKind, VisualBounds, Weapon,
+    MAX_DAMAGE_BONUS, RankDef, Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef,
+    UnitKind, VisualBounds, Weapon,
 };
 
 use crate::hash::StateHasher;
@@ -72,6 +73,8 @@ pub struct Unit {
     pub soldiers: Vec<i32>,
     /// Ticks until the weapon can fire again.
     pub cooldown: u32,
+    /// Enemy soldiers this unit has defeated. Determines its rank.
+    pub kills: u32,
 }
 
 impl Unit {
@@ -383,6 +386,7 @@ impl Sim {
                 pos,
                 soldiers,
                 cooldown: 0,
+                kills: 0,
             },
         );
         id

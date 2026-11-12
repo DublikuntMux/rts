@@ -67,5 +67,5 @@ fn movement_hash_stream_matches_v7_baseline() {
             sim.step();
         }
     }
-    assert_eq!(fingerprint, 8_698_689_647_068_750_086);
+    assert_eq!(fingerprint, 7_097_546_498_927_173_293);
 }

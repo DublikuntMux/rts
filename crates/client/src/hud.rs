@@ -546,6 +546,18 @@ fn update_selection(
         })
         .sum();
     let soldiers: usize = units.iter().map(|(_, unit)| unit.alive()).sum();
+    let veterancy = match units.as_slice() {
+        [(_, unit)] => match game.sim.rules().rank(unit.kills) {
+            0 if unit.kills == 0 => String::new(),
+            0 => format!("  ·  {} kills", unit.kills),
+            rank => format!(
+                "  ·  {}, {} kills",
+                game.sim.rules().ranks()[rank - 1].name,
+                unit.kills
+            ),
+        },
+        _ => String::new(),
+    };
     let squad: usize = units.iter().map(|(_, unit)| unit.soldiers.len()).sum();
     let moving = units
         .iter()
@@ -557,10 +569,10 @@ fn update_selection(
         let state = if moving > 0 { "Moving" } else { "Idle" };
         if squad > units.len() {
             format!(
-                "{soldiers} / {squad} soldiers  ·  {total_health} / {max_health} HP  ·  {state}"
+                "{soldiers} / {squad} soldiers  ·  {total_health} / {max_health} HP  ·  {state}{veterancy}"
             )
         } else {
-            format!("{total_health} / {max_health} HP  ·  {state}")
+            format!("{total_health} / {max_health} HP  ·  {state}{veterancy}")
         }
     };
     for (role, mut text) in &mut labels {

@@ -7,6 +7,9 @@ use crate::{
     coords::{de_seconds, de_speed_modifier, de_tile_pos, de_tiles},
 };
 
+/// Largest rank damage bonus, in percent.
+pub const MAX_DAMAGE_BONUS: u32 = 10_000;
+
 /// Fixed-point terrain speed multiplier representing normal speed.
 pub const SPEED_SCALE: i32 = 1024;
 
@@ -20,6 +23,22 @@ pub struct Rules {
     tile_capacity: u16,
     terrain: Vec<TerrainDef>,
     units: Vec<UnitDef>,
+    /// Veterancy ranks above the starting rank, in increasing order of kills.
+    #[serde(default)]
+    ranks: Vec<RankDef>,
+}
+
+/// A veterancy rank. Reaching it restores every soldier of the squad, including fallen ones,
+/// and raises the damage of each shot.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RankDef {
+    /// Display name. Only the client reads it.
+    pub name: String,
+    /// Enemy soldiers the unit must have defeated.
+    pub kills: u32,
+    /// Extra damage per shot, in percent of the weapon's damage.
+    pub damage_bonus: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,6 +226,22 @@ impl Rules {
                 )));
             }
         }
+        let mut previous = 0;
+        for rank in &self.ranks {
+            if rank.kills <= previous {
+                return Err(LoadError::invalid(format!(
+                    "rank `{}` needs more kills than the rank before it",
+                    rank.name
+                )));
+            }
+            if rank.damage_bonus > MAX_DAMAGE_BONUS {
+                return Err(LoadError::invalid(format!(
+                    "rank `{}` damage_bonus exceeds {MAX_DAMAGE_BONUS}",
+                    rank.name
+                )));
+            }
+            previous = rank.kills;
+        }
         let mut ids = BTreeSet::new();
         for unit in &self.units {
             if unit.sprite.trim().is_empty() {
@@ -248,6 +283,32 @@ impl Rules {
             }
         }
         Ok(())
+    }
+
+    /// Ranks above the starting rank.
+    #[must_use]
+    pub fn ranks(&self) -> &[RankDef] {
+        &self.ranks
+    }
+
+    /// Rank reached with `kills`: zero is the starting rank, `n` is `ranks()[n - 1]`.
+    #[must_use]
+    pub fn rank(&self, kills: u32) -> usize {
+        self.ranks
+            .iter()
+            .take_while(|rank| rank.kills <= kills)
+            .count()
+    }
+
+    /// Damage of one shot from a unit with `kills`, including its rank bonus.
+    #[must_use]
+    pub fn shot_damage(&self, weapon: &Weapon, kills: u32) -> i32 {
+        let bonus = match self.rank(kills) {
+            0 => 0,
+            rank => self.ranks[rank - 1].damage_bonus,
+        };
+        let damage = i64::from(weapon.damage) * (100 + i64::from(bonus)) / 100;
+        i32::try_from(damage).unwrap_or(i32::MAX)
     }
 
     /// Maximum combined unit size in one tile.
@@ -612,6 +673,49 @@ mod tests {
             "weapon: Some((range: 2, damage: 6, cooldown: 1, splash: 1))",
         ] {
             assert!(unit(weapon).is_err(), "accepted {weapon}");
+        }
+    }
+
+    #[test]
+    fn ranks_need_increasing_kills_and_raise_damage() {
+        let rules = |ranks: &str| {
+            Rules::from_ron(&format!(
+                "(tile_capacity: 4, terrain: [{TERRAIN}], units: [], ranks: [{ranks}])"
+            ))
+        };
+        let parsed = rules(
+            r#"(name: "Veteran", kills: 3, damage_bonus: 25), (name: "Elite", kills: 10, damage_bonus: 50)"#,
+        )
+        .unwrap();
+        assert_eq!(
+            [0, 2, 3, 9, 10, 99].map(|kills| parsed.rank(kills)),
+            [0, 0, 1, 1, 2, 2]
+        );
+        let weapon = Weapon {
+            range: 1,
+            damage: 7,
+            cooldown: 1,
+        };
+        assert_eq!(
+            [0, 3, 10].map(|kills| parsed.shot_damage(&weapon, kills)),
+            [7, 8, 10]
+        );
+        assert_eq!(
+            Rules::from_ron(&format!(
+                "(tile_capacity: 4, terrain: [{TERRAIN}], units: [])"
+            ))
+            .unwrap()
+            .ranks(),
+            []
+        );
+        for ranks in [
+            r#"(name: "Zero", kills: 0, damage_bonus: 0)"#,
+            r#"(name: "A", kills: 5, damage_bonus: 0), (name: "B", kills: 5, damage_bonus: 0)"#,
+            r#"(name: "A", kills: 5, damage_bonus: 0), (name: "B", kills: 4, damage_bonus: 0)"#,
+            r#"(name: "Huge", kills: 5, damage_bonus: 10001)"#,
+            r#"(name: "Odd", kills: 5)"#,
+        ] {
+            assert!(rules(ranks).is_err(), "accepted {ranks}");
         }
     }
 

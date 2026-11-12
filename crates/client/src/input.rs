@@ -586,14 +586,23 @@ fn draw_selection(
     let style = &graphics.selection;
     for (visual, transform) in &visuals {
         if let Some(unit) = game.sim.unit(visual.0) {
+            let definition = game.sim.rules().unit(unit.kind);
             draw_health_bar(
                 &mut gizmos,
                 &graphics.health_bar,
                 unit,
-                game.sim.rules().unit(unit.kind),
+                definition,
                 transform,
                 projection.scale,
                 selection.units.contains(&visual.0),
+            );
+            draw_rank(
+                &mut gizmos,
+                &graphics.health_bar,
+                game.sim.rules().rank(unit.kills),
+                definition,
+                transform,
+                projection.scale,
             );
         }
     }
@@ -684,6 +693,36 @@ fn draw_health_bar(
         start.lerp(end, fraction),
         style.empty_color.mix(&style.full_color, fraction),
     );
+}
+
+/// One chevron per rank above the unit's left edge, stacked upward.
+fn draw_rank(
+    gizmos: &mut Gizmos,
+    style: &HealthBarStyle,
+    rank: usize,
+    definition: &UnitDef,
+    transform: &Transform,
+    scale: f32,
+) {
+    const CHEVRON: Vec2 = Vec2::new(4.0, 2.5);
+    const SPACING: f32 = 3.0;
+    let bounds = UnitBounds::from_definition(definition).world_rect(transform);
+    let base = Vec2::new(
+        CHEVRON.x.mul_add(scale, bounds.min.x),
+        (style.gap + SPACING).mul_add(scale, bounds.max.y),
+    );
+    for step in 0..rank {
+        #[expect(clippy::cast_precision_loss, reason = "a handful of ranks")]
+        let tip = base + Vec2::new(0.0, (step as f32).mul_add(SPACING, CHEVRON.y) * scale);
+        gizmos.linestrip_2d(
+            [
+                tip + Vec2::new(-CHEVRON.x, -CHEVRON.y) * scale,
+                tip,
+                tip + Vec2::new(CHEVRON.x, -CHEVRON.y) * scale,
+            ],
+            style.full_color,
+        );
+    }
 }
 
 #[cfg(test)]

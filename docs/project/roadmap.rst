@@ -35,7 +35,7 @@ Status
    * - M4
      - Combat
      - In progress
-     - Squads, health, weapons, attack orders, death.
+     - Squads, health, weapons, attack orders, death, veterancy.
    * - M5
      - Economy and production
      - Not started
@@ -176,6 +176,11 @@ Weapons and attack orders
    soldier fires one shot, and shots kill the target's nearest soldiers first.
    Right-click or tap an enemy to attack; health bars above damaged and
    selected units.
+
+Veterancy ranks
+   Units earn kills for every enemy soldier they defeat. Each rank in the
+   rules restores the whole squad once and adds damage per shot; chevrons and
+   the details line show the rank.
 
 Upcoming
 --------

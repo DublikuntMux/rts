@@ -16,4 +16,11 @@
         (id: "soldier", sprite: "textures/units/soldier.png", size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5,
          weapon: Some((range: 3.0, damage: 4, cooldown: 1.0))),
     ],
+    // Veterancy. Kills count enemy soldiers; each new rank restores the whole squad,
+    // including fallen soldiers, and raises damage per shot by damage_bonus percent.
+    ranks: [
+        (name: "Veteran", kills: 6, damage_bonus: 25),
+        (name: "Elite", kills: 18, damage_bonus: 50),
+        (name: "Hero", kills: 36, damage_bonus: 100),
+    ],
 )

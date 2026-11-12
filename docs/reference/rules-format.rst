@@ -51,6 +51,10 @@ Top level
      - list
      - Required. At most 65536 unit types. A type's position is its
        ``UnitKind``.
+   * - ``ranks``
+     - list
+     - Veterancy ranks above the starting rank. Defaults to none. See
+       :ref:`ranks`.
 
 Unknown fields are errors in every structure, so a typo never silently falls
 back to a default.
@@ -199,6 +203,37 @@ Every living soldier fires one shot per volley, so a squad that loses
 soldiers also loses firepower. Each shot hits the living soldier of the target
 standing nearest the shooter. See :ref:`combat`.
 
+.. _ranks:
+
+Ranks
+-----
+
+Units earn veterancy by defeating enemy soldiers. Every soldier a unit's
+shots bring to zero health counts as one kill. Each entry in ``ranks``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 60
+
+   * - Field
+     - Type
+     - Meaning
+   * - ``name``
+     - string
+     - Display name. Client only.
+   * - ``kills``
+     - integer
+     - Kills needed. Positive and strictly greater than the previous rank's.
+   * - ``damage_bonus``
+     - integer
+     - Extra damage per shot in percent, 0 to 10000. ``25`` turns 4 damage
+       into 5; the result rounds down.
+
+A unit's rank is the number of entries whose ``kills`` it has reached.
+Reaching a new rank restores every soldier of the squad to ``max_health``,
+including fallen ones, once per rank. One volley that crosses several ranks
+still restores the squad once.
+
 Custom sprite bounds
 --------------------
 
@@ -243,6 +278,8 @@ Validation
   ``speed``.
 * A weapon with nonpositive ``range`` or ``damage``, or a ``cooldown`` that
   rounds to less than one tick.
+* A rank whose ``kills`` is zero or not greater than the previous rank's, or
+  whose ``damage_bonus`` exceeds 10000.
 * A missing ``sprite`` path, or a path that is empty or contains only whitespace.
 * Nonfinite or out-of-range ``visual_bounds`` components, or a size component
   that rounds to zero or is negative.
@@ -312,6 +349,23 @@ With ``tile_capacity: 4``, a tile holds four workers, two soldiers, or two
 workers and one soldier. Workers are unarmed. Each soldier carries a weapon
 with a range of 3 tiles that deals 4 damage once per second, so a full squad
 deals 24 damage per volley.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Rank
+     - Kills
+     - Damage bonus
+   * - Veteran
+     - 6
+     - 25%
+   * - Elite
+     - 18
+     - 50%
+   * - Hero
+     - 36
+     - 100%
 
 The bundled sprites are ``textures/units/worker.png`` and
 ``textures/units/soldier.png``, relative to the asset pack root.

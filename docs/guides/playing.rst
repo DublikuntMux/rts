@@ -116,6 +116,12 @@ its own shot, so a squad weakens as it loses men. Shots hit the soldiers
 standing nearest the enemy first. A bar above a damaged or selected unit shows
 its remaining health; the unit is destroyed when its last soldier falls.
 
+Squads gain ranks by defeating enemy soldiers: **Veteran** at 6 kills,
+**Elite** at 18, and **Hero** at 36. Each promotion restores the whole squad,
+fallen soldiers included, and makes every shot hit harder. Chevrons above the
+health bar show the rank, and the details panel shows the rank name and
+kills.
+
 Orders are never applied instantly. Your client sends them for a tick two
 ticks (100 ms) ahead, and every client applies them at that tick in the same
 order. :doc:`../architecture/networking` explains why.

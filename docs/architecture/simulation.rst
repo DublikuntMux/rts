@@ -74,6 +74,7 @@ Match state
      pos: IVec2
      soldiers: Vec<i32>
      cooldown: u32
+     kills: u32
    }
    class Player {
      start: IVec2
@@ -214,6 +215,12 @@ shooter falls first and excess damage carries to the next soldier. Health
 stops at zero. A unit whose last soldier falls is removed through
 ``remove_unit`` immediately, so it no longer fires later in the same tick.
 After a volley, the cooldown restarts at the weapon's ``cooldown``.
+
+Every soldier a volley brings to zero health adds one to the shooter's
+``kills``. ``Rules::rank(kills)`` turns kills into a rank, and
+``Rules::shot_damage`` adds that rank's ``damage_bonus``. When a volley
+raises the shooter's rank, every soldier of the shooter is restored to
+``max_health``, fallen ones included. See :ref:`ranks`.
 
 Input delay
 -----------

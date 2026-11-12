@@ -57,6 +57,17 @@ deployment steps were not executed end to end here.
 M4 — Combat
 -----------
 
+**Veterancy ranks (2026-11-12).** Rules gained ``ranks`` (name, kills,
+damage bonus) and units count the enemy soldiers they defeat. Reaching a new
+rank restores every soldier of the squad, fallen ones included, and raises
+the damage of each shot. The bundled rules define Veteran, Elite, and Hero.
+The client shows rank chevrons above the health bar and the rank and kills in
+the details line. The pinned hash stream was re-baselined. Regressions cover
+rank parsing and validation, rank lookup, bonus damage rounding, kill
+counting, promotion during a volley, and the single restore per rank. All
+workspace tests, strict all-target Clippy, formatting, the ``wasm32`` check,
+and the strict Sphinx build passed. A rendered session was not run.
+
 **Weapons and attack orders (2026-11-12).** Unit types gained an optional
 ``weapon`` (range, damage, cooldown). Each tick, attack orders pursue their
 target, then every ready, stationary armed unit fires a volley of one shot per
