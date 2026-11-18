@@ -2,9 +2,11 @@
 
 use std::hash::{Hash, Hasher};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{LoadError, PlayerId, Sim, SkirmishMap, UnitId, economy::Economy};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MatchOutcome {
     Winner(PlayerId),
     Draw,

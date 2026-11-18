@@ -9,6 +9,8 @@
 //! Every volley is also recorded for presentation in [`Sim::volleys`]. The record is
 //! rebuilt each tick and never feeds back into the match or its hash.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{IVec2, PlayerId, Sim, UnitId, UnitKind, movement::MoveOrder, rules::Weapon, tile_of};
 
 /// Squared distance between two world positions, without overflow.
@@ -23,7 +25,8 @@ fn in_range(from: IVec2, to: IVec2, weapon: &Weapon) -> bool {
 }
 
 /// One unit's volley during the latest tick. Presentation only: not hashed or replayed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Volley {
     pub shooter: UnitId,
     pub shooter_kind: UnitKind,
@@ -39,7 +42,8 @@ pub struct Volley {
 }
 
 /// One soldier's shot within a [`Volley`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Shot {
     /// Squad slot of the soldier that fired.
     pub soldier: u8,

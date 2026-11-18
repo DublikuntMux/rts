@@ -31,7 +31,7 @@ impl Hash for ResourceKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Resources {
     pub wood: u32,
@@ -147,7 +147,7 @@ pub struct Deposit {
     pub remaining: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrainingKind {
     Worker,
     RifleSquad,
@@ -160,7 +160,8 @@ impl Hash for TrainingKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Training {
     pub kind: TrainingKind,
     /// Ticks until completion, or zero while waiting for a free spawn tile.

@@ -16,6 +16,7 @@ mod occupancy;
 mod path;
 mod rules;
 mod skirmish;
+mod visibility;
 
 use std::{
     collections::BTreeMap,
@@ -37,6 +38,10 @@ pub use rules::{
 };
 
 pub use skirmish::MatchOutcome;
+pub use visibility::{
+    FogVisibility, OwnUnitState, PlayerKnowledge, PlayerView, TileVisibility, ViewDeposit,
+    ViewFrame, ViewIntro, ViewUnit,
+};
 
 use crate::hash::StateHasher;
 use crate::movement::{MoveGroupId, MoveOrder};
@@ -71,7 +76,8 @@ pub struct UnitId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u8);
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Unit {
     pub kind: UnitKind,
     pub owner: PlayerId,

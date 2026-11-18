@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     EconomyRules, IVec2, LoadError,
@@ -221,11 +221,11 @@ pub struct VisualBounds {
 }
 
 /// Index of a terrain type in [`Rules`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TerrainId(pub u8);
 
 /// Index of a unit type in [`Rules`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct UnitKind(pub u16);
 
 impl Rules {
@@ -386,6 +386,12 @@ impl Rules {
     #[must_use]
     pub fn unit(&self, kind: UnitKind) -> &UnitDef {
         &self.units[usize::from(kind.0)]
+    }
+
+    /// Looks up a unit kind supplied by a view or another external source.
+    #[must_use]
+    pub fn get_unit(&self, kind: UnitKind) -> Option<&UnitDef> {
+        self.units.get(usize::from(kind.0))
     }
 
     pub(crate) fn terrain_by_symbol(&self, symbol: char) -> Option<TerrainId> {
