@@ -181,8 +181,9 @@ with nearest-neighbour scaling, so every art pixel is a crisp square block.
 * **Units and buildings** are grayscale with a dark outline, transparent
   backgrounds, and no partial alpha outside building shadows. The player tint
   multiplies them, so light areas carry the team color and dark areas stay
-  dark. Workers are squat tracked machines, and soldiers are upright riflemen,
-  so the two read apart by silhouette at gameplay scale. Sprite sizes follow
+  dark. Workers are squat tracked machines, soldiers are upright riflemen, and
+  scouts are slim lone troopers in a peaked cap with binoculars raised, so all
+  three read apart by silhouette at gameplay scale. Sprite sizes follow
   roughly 2.5 to 3 screen pixels per art pixel at camera scale 1:
 
   .. list-table::
@@ -198,6 +199,9 @@ with nearest-neighbour scaling, so every art pixel is a crisp square block.
      * - ``soldier.png``
        - 16×24, ×8
        - 128×192; the 2:3 shape fills a squad cell
+     * - ``scout.png``
+       - 16×24, ×8
+       - 128×192; same palette and scale as the soldier
      * - ``headquarters.png``
        - 64×64, ×4
        - 256×256

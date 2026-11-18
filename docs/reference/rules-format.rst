@@ -357,11 +357,20 @@ Bundled content
      - 30
      - 0.45
      - 2.5 tiles/s
+   * - ``scout``
+     - 1
+     - 1
+     - 35
+     - 0.3
+     - 4.5 tiles/s
 
 With ``tile_capacity: 4``, a tile holds four workers, two soldiers, or two
 workers and one soldier. Workers are unarmed. Each soldier carries a weapon
 with a range of 3 tiles that deals 4 damage once per second, so a full squad
-deals 24 damage per volley.
+deals 24 damage per volley. A scout is a lone, fast recon trooper with
+``sight: 8``, twice the default, and a light carbine with a range of 2.5 tiles
+that deals 2 damage once per second. Every other bundled unit uses the default
+sight of 4.
 
 .. list-table::
    :header-rows: 1
@@ -380,8 +389,9 @@ deals 24 damage per volley.
      - 36
      - 100%
 
-The bundled sprites are ``textures/units/worker.png`` and
-``textures/units/soldier.png``, relative to the asset pack root.
+The bundled sprites are ``textures/units/worker.png``,
+``textures/units/soldier.png``, and ``textures/units/scout.png``, relative to
+the asset pack root.
 
 
 Skirmish economy
@@ -399,3 +409,10 @@ pairs. Each cost must be positive for both resources. Specify
 ``harvest_ticks`` in whole simulation ticks (20 per second).
 ``carry_capacity`` is the stock one worker can carry per trip. Timings
 and carry capacity must be positive.
+
+The optional ``scout: Some((cost: (wood, gold), ticks))`` entry lets owned
+barracks train the ``scout`` unit kind, which must then exist, be mobile, and
+carry a weapon. Its cost needs both resources and its duration must be positive.
+When the entry is absent, as in rules written before scouts, ``TrainScout``
+orders are ignored and simulation hashes match earlier builds. The bundled rules
+price a scout at 35 wood and 25 gold and train it in 70 ticks (3.5 seconds).

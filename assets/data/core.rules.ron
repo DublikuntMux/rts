@@ -15,6 +15,9 @@
         (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: 3.0),
         (id: "soldier", sprite: "textures/units/soldier.png", size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5,
          weapon: Some((range: 3.0, damage: 4, cooldown: 1.0))),
+        // Fast recon trooper: sees twice as far as other units but carries only a light carbine.
+        (id: "scout", sprite: "textures/units/scout.png", size: 1, max_health: 35, radius: 0.3, speed: 4.5,
+         sight: 8, weapon: Some((range: 2.5, damage: 2, cooldown: 1.0))),
         (id: "headquarters", sprite: "textures/units/headquarters.png", size: 4, max_health: 480,
          radius: 0.5, speed: 0.0, building: true),
         (id: "barracks", sprite: "textures/units/barracks.png", size: 4, max_health: 250,
@@ -29,6 +32,8 @@
         worker_ticks: 80,
         barracks_ticks: 120,
         rifle_ticks: 100,
+        // Scouts train at a barracks.
+        scout: Some((cost: (wood: 35, gold: 25), ticks: 70)),
         harvest_ticks: 22,
         carry_capacity: 15,
     )),
