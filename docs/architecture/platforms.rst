@@ -13,7 +13,7 @@ Targets
    :widths: 18 27 27 28
 
    * - Concern
-     - Desktop
+     - Desktop (Linux, Windows)
      - Web (``wasm32``)
      - Android
    * - Entry point
@@ -29,7 +29,7 @@ Targets
      - WebGL2
      - Vulkan or GLES via wgpu
    * - Asset pack
-     - File next to the executable; ``Contents/Resources`` in macOS app bundles
+     - File next to the executable
      - Fetched, then range requests
      - Mapped from the APK
    * - WebSocket

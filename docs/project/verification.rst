@@ -27,6 +27,13 @@ units, buildings, and deposit overlays.
 Tooling
 -------
 
+**macOS support removed (2026-11-18).** The release workflow no longer builds,
+signs, or publishes a macOS app. The asset loader dropped its app-bundle
+``Contents/Resources`` lookup, so desktop always opens ``assets.pack`` beside
+the executable. ``rts_assets`` tests, its strict all-target Clippy, a YAML
+parse of the workflow, and the strict Sphinx build passed. The edited workflow
+was not run, and ``actionlint`` is not installed locally.
+
 **Release builds use the release profile again (2026-11-18).** The v0.1.3
 Android APK aborted at startup on an Adreno device running Android 16. Logcat
 showed ash panicking with ``Unable to load create_debug_utils_messenger_ext``

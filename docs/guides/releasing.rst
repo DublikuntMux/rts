@@ -68,9 +68,6 @@ The workflow builds and publishes:
        for the widest glibc compatibility.
    * - ``rts-windows-x86_64-<tag>.zip``
      - ``rts.exe``, ``rts-server.exe``, and ``assets.pack``.
-   * - ``rts-macos-universal-<tag>.zip``
-     - Ad-hoc-signed ``RTS.app`` with a universal binary and
-       ``Contents/Resources/assets.pack``, plus the standalone ``rts-server``.
    * - ``rts-android-<tag>.apk``
      - Release APK, signed with the debug key.
    * - ``rts-web-<tag>.zip``
@@ -79,13 +76,8 @@ The workflow builds and publishes:
      - Generated release notes and checksums for every other asset.
 
 On Linux and Windows, the game opens ``assets.pack`` from the directory
-containing the executable, so keep the files together. The macOS app opens
-``Contents/Resources/assets.pack`` inside its bundle; ``Contents/MacOS``
-contains only the executable so code signing treats the pack as a resource.
-The workflow verifies the app and server signatures before archiving.
-macOS builds are ad-hoc signed
-because the project has no Apple developer certificate: the first launch needs
-right-click **Open**. Android release builds still use the debug signing key,
+containing the executable, so keep the files together. macOS is not a
+release target. Android release builds still use the debug signing key,
 so they install for testing but cannot be uploaded to Google Play. Replace the
 signing configuration in ``android/app/build.gradle.kts`` before a store
 release.

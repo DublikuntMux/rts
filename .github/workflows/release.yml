@@ -98,15 +98,13 @@ jobs:
             printf '| --- | --- |\n'
             printf '| Linux (x86_64) | rts-linux-x86_64-%s.tar.gz |\n' "$TAG"
             printf '| Windows (x86_64) | rts-windows-x86_64-%s.zip |\n' "$TAG"
-            printf '| macOS (universal) | rts-macos-universal-%s.zip |\n' "$TAG"
             printf '| Android | rts-android-%s.apk |\n' "$TAG"
             printf '| Web | rts-web-%s.zip |\n\n' "$TAG"
             if [ "$DEPLOY_WEB" = "true" ]; then
               printf 'The web build is also published to GitHub Pages.\n\n'
             fi
             printf '## Notes\n\n'
-            printf -- '- Keep assets.pack next to rts on Linux and Windows. On macOS it is included inside RTS.app/Contents/Resources.\n'
-            printf -- '- macOS builds are ad-hoc signed. On first launch, right-click **RTS.app** and choose **Open**.\n'
+            printf -- '- Keep assets.pack next to rts on Linux and Windows.\n'
             printf -- '- The Android APK is a release build signed with the debug key.\n'
           } >> release-notes.md
       - uses: actions/upload-artifact@v7
@@ -197,15 +195,9 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            targets: ""
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            targets: ""
-          - name: macos-universal
-            os: macos-latest
-            target: aarch64-apple-darwin
-            targets: aarch64-apple-darwin,x86_64-apple-darwin
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -213,8 +205,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: ${{ matrix.targets }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -234,15 +224,9 @@ jobs:
         with:
           shared-key: release-${{ matrix.name }}
           cache-on-failure: true
-      - name: Build (Linux and Windows)
-        if: runner.os != 'macOS'
+      - name: Build
         shell: bash
         run: cargo build --locked --release --workspace --target "$TARGET"
-      - name: Build (macOS universal)
-        if: runner.os == 'macOS'
-        run: |
-          cargo build --locked --release --workspace --target aarch64-apple-darwin
-          cargo build --locked --release --workspace --target x86_64-apple-darwin
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -263,53 +247,6 @@ jobs:
           Copy-Item "target/$env:TARGET/release/rts-server.exe" $stage
           Copy-Item "target/$env:TARGET/release/assets.pack" $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip" -Force
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          arm=aarch64-apple-darwin
-          intel=x86_64-apple-darwin
-          stage="rts-macos-universal-${TAG}"
-          app="$stage/RTS.app"
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          lipo -create -output "$app/Contents/MacOS/rts" \
-            "target/$arm/release/rts" "target/$intel/release/rts"
-          lipo -create -output "$stage/rts-server" \
-            "target/$arm/release/rts-server" "target/$intel/release/rts-server"
-          cp "target/$arm/release/assets.pack" "$app/Contents/Resources/"
-          cat > "$app/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key>
-            <string>RTS</string>
-            <key>CFBundleDisplayName</key>
-            <string>RTS</string>
-            <key>CFBundleIdentifier</key>
-            <string>cudzinec.rts</string>
-            <key>CFBundleExecutable</key>
-            <string>rts</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>${VERSION}</string>
-            <key>CFBundleVersion</key>
-            <string>${GITHUB_RUN_NUMBER}</string>
-            <key>LSMinimumSystemVersion</key>
-            <string>11.0</string>
-            <key>LSApplicationCategoryType</key>
-            <string>public.app-category.strategy-games</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-          </dict>
-          </plist>
-          PLIST
-          codesign --force --sign - "$app"
-          codesign --force --sign - "$stage/rts-server"
-          codesign --verify --strict --verbose=2 "$app"
-          codesign --verify --strict --verbose=2 "$stage/rts-server"
-          ditto -c -k --sequesterRsrc --keepParent "$stage" "$stage.zip"
       - uses: actions/upload-artifact@v7
         with:
           name: rts-${{ matrix.name }}
@@ -401,7 +338,6 @@ jobs:
           for asset in \
             "rts-linux-x86_64-${TAG}.tar.gz" \
             "rts-windows-x86_64-${TAG}.zip" \
-            "rts-macos-universal-${TAG}.zip" \
             "rts-android-${TAG}.apk" \
             "rts-web-${TAG}.zip"; do
             if [ ! -s "release-assets/$asset" ]; then
