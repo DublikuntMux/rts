@@ -2,6 +2,7 @@ mod camera;
 mod crash;
 #[cfg(target_arch = "wasm32")]
 mod download;
+mod effects;
 mod font;
 mod game;
 mod hud;
@@ -69,6 +70,7 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
             GamePlugin,
             MapPlugin,
             UnitsPlugin,
+            effects::EffectsPlugin,
             RtsCameraPlugin,
             SelectionPlugin,
             HudPlugin,

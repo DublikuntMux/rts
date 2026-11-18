@@ -5,7 +5,7 @@ mod motion;
 
 use bevy::{platform::collections::HashMap, prelude::*, sprite::Anchor};
 use rts_assets::Graphics;
-use rts_base::{SquadGrid, Unit, UnitId, UnitKind};
+use rts_base::{SquadGrid, Unit, UnitDef, UnitId, UnitKind};
 
 pub use self::layout::UnitBounds;
 use self::{
@@ -72,6 +72,14 @@ fn soldier_cell(bounds: UnitBounds, grid: SquadGrid, index: u8) -> (Vec2, UnitBo
             size,
         },
     )
+}
+
+/// Where a soldier of a unit whose root is drawn at `root` stands in world space. A unit
+/// without a squad has one slot at its footprint's center.
+pub fn soldier_point(root: &Transform, definition: &UnitDef, slot: u8) -> Vec2 {
+    let bounds = UnitBounds::from_definition(definition);
+    let (center, _) = soldier_cell(bounds, definition.ranks(), slot);
+    root.translation.truncate() + center * root.scale.truncate()
 }
 
 /// The sprite and distant rectangle share exactly the same size and anchor.

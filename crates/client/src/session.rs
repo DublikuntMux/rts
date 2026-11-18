@@ -992,6 +992,7 @@ fn advance(
         };
     turn.apply(&mut game.sim)
         .map_err(|error| format!("Cannot advance match: {error}"))?;
+    game.record_volleys();
     let hash = game.sim.state_hash();
     if session.mode == Mode::Online {
         if authoritative_hash != Some(hash) {

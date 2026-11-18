@@ -4,7 +4,7 @@ use bevy::{
     asset::{LoadState, LoadedFolder},
     prelude::*,
 };
-use rts_base::{Command, PlayerId, Sim, TICK_RATE};
+use rts_base::{Command, PlayerId, Sim, TICK_RATE, Volley};
 use rts_net::{MAX_COMMANDS_PER_TURN, MatchSetup};
 
 use rts_assets::{Graphics, MapAsset, RulesAsset};
@@ -31,6 +31,8 @@ pub struct Match {
     pub local_player: PlayerId,
     pub accepts_orders: bool,
     pub pending: Vec<Command>,
+    /// Volleys of stepped ticks, by tick, until the effects layer draws them.
+    pub volleys: Vec<(u32, Volley)>,
 }
 
 impl Match {
@@ -40,7 +42,19 @@ impl Match {
             local_player,
             accepts_orders,
             pending: Vec::new(),
+            volleys: Vec::new(),
         }
+    }
+
+    /// Keeps the volleys of the tick just stepped. Several ticks may run before a frame
+    /// draws them; only the newest are kept if nothing drains them.
+    pub fn record_volleys(&mut self) {
+        const LIMIT: usize = 256;
+        let tick = self.sim.tick();
+        let volleys = self.sim.volleys().iter().cloned();
+        self.volleys.extend(volleys.map(|volley| (tick, volley)));
+        let excess = self.volleys.len().saturating_sub(LIMIT);
+        self.volleys.drain(..excess);
     }
 
     /// Returns whether input was collected for the next delayed local/network batch.

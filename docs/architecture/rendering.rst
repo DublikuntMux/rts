@@ -1,10 +1,11 @@
 Rendering
 =========
 
-The client draws two layers: a terrain tilemap and unit visuals, plus gizmos
-for selection. Everything is derived from the simulation each frame; nothing
-drawn feeds back into it. Code lives in ``crates/client/src/map.rs`` and
-``units/mod.rs``, ``units/layout.rs``, and ``units/motion.rs``.
+The client draws three layers: a terrain tilemap, unit visuals, and combat
+effects, plus gizmos for selection. Everything is derived from the simulation;
+nothing drawn feeds back into it. Code lives in ``crates/client/src/map.rs``,
+``units/mod.rs``, ``units/layout.rs``, ``units/motion.rs``, and
+``effects.rs``.
 
 Local presentation settings live in ``assets/data/client.graphics.ron`` and
 are installed as the ``Graphics`` resource before the main menu opens. Player
@@ -196,6 +197,46 @@ click targets and selection outlines; a drag selects any custom bounds
 intersecting the box. Units without custom bounds retain circle hit tests,
 rings, and selection by center. Minimum mouse and touch hit areas remain in
 effect. Smoothing never changes the simulation or its hash.
+
+Combat effects
+--------------
+
+Every volley the simulation fires is drawn as pixel-art tracers and impacts by
+``effects.rs``. The simulation records each tick's volleys in
+``Sim::volleys``: shooter and target with their kinds and positions, and for
+every shot the squad slot that fired and the slot it hit. The record is
+rebuilt each tick and excluded from the state hash, so hashes and replays are
+unchanged. After each turn, ``advance`` copies the record into ``Match``
+with its tick, so catch-up frames that step several ticks keep every volley.
+
+Once per frame, before units sync, ``spawn_shots`` turns the new volleys into
+one effect per shot. Endpoints are fixed then: the firing soldier as drawn,
+to the hit soldier as drawn, using ``soldier_point`` from the unit's root
+transform and squad cell. A unit with no visual yet falls back to its
+simulation position. Running before ``SyncUnits`` keeps a target destroyed
+by the volley on screen long enough to be measured. Tracers therefore end
+where the target stood when the shot landed, not where it later walks.
+
+Each shot is a parent entity with five child sprites, animated in virtual
+time:
+
+1. a pale muzzle flash block at the shooter for 0.05 s;
+2. a three-block tracer, bright head and amber tail, flying to the target at
+   2400 world pixels per second, between 0.04 and 0.12 s;
+3. an impact plus shape for 0.06 s, then one dim block for 0.06 s.
+
+Soldiers of one volley start 18 ms apart, so a squad reads as a ripple of
+shots. Colors are fixed neutral warm tones, distinct from player colors and
+legible on every terrain. Blocks are untextured squares snapped to a grid
+of four world pixels, the terrain's art pixel, and drawn at z = 2 above
+units. When zoomed out, blocks grow to stay at least two screen pixels wide.
+
+Effects stay cheap in large fights and catch-up. A volley more than three
+ticks old when drawn is skipped, and older ticks start their shots aged so
+timing stays true. At most 192 shots are live. ``Match`` keeps at most 256
+undrawn volleys. Effects freeze with the pause menu's virtual time and
+despawn when the match ends. Replays draw the same effects because playback
+steps the simulation through the same ``advance``.
 
 Gizmos
 ------
