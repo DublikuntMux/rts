@@ -5,10 +5,12 @@
 //! TLS at a reverse proxy for browser WSS clients.
 
 mod coordinator;
+mod layout;
 
 pub use coordinator::{
     ClientId, Config, Coordinator, Delivery, MAX_CATCH_UP_TURNS, MAX_FUTURE_TICKS,
 };
+pub use layout::{RANDOM_MAP_NAME, random_setup};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod runtime;

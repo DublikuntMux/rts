@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use rand::{SeedableRng, rngs::StdRng};
-use rts_base::{Command, IVec2, PlayerId, TILE, UnitId};
+use rts_base::{Command, IVec2, PlayerId, PlayerView, TILE, UnitId, ViewFrame};
 use rts_net::{
     ClientMessage, MAX_COMMANDS_PER_TURN, MAX_UNITS_PER_COMMAND, MatchSetup, PROTOCOL_VERSION,
-    Replay, ServerMessage, encode_server,
+    ServerMessage, encode_server,
 };
 use rts_server::{Config, Coordinator, Delivery, MAX_CATCH_UP_TURNS, MAX_FUTURE_TICKS};
 
@@ -13,6 +13,22 @@ const NOW: Duration = Duration::ZERO;
 /// A coordinator with reproducible room codes.
 fn coordinator(config: Config) -> Coordinator {
     Coordinator::new(config, StdRng::seed_from_u64(0))
+}
+
+/// A server that plays one public map.
+fn fixed(setup: MatchSetup) -> Config {
+    Config {
+        setup,
+        random_layout: false,
+        ..Config::default()
+    }
+}
+
+fn frame(delivery: &Delivery) -> &ViewFrame {
+    let ServerMessage::View { frame } = &delivery.message else {
+        panic!("expected a view frame, got {:?}", delivery.message)
+    };
+    frame
 }
 
 fn setup() -> MatchSetup {
@@ -45,7 +61,12 @@ fn create(server: &mut Coordinator, client: u64, setup: &MatchSetup) -> String {
     );
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].client, client);
-    assert_eq!(messages[0].message, ServerMessage::Setup(setup.clone()));
+    let ServerMessage::Setup(lobby) = &messages[0].message else {
+        panic!("expected setup")
+    };
+    assert_eq!(lobby, server.lobby_setup());
+    assert_eq!(lobby.rules, setup.rules);
+    assert_eq!(lobby.players, setup.players);
     let ServerMessage::Lobby {
         code,
         player,
@@ -83,10 +104,7 @@ fn join(server: &mut Coordinator, client: u64, code: &str) -> Vec<Delivery> {
 
 fn lobby() -> (Coordinator, String) {
     let content = setup();
-    let mut server = coordinator(Config {
-        setup: content.clone(),
-        ..Config::default()
-    });
+    let mut server = coordinator(fixed(content.clone()));
     for id in 1..=3 {
         assert!(server.connect(id, NOW));
     }
@@ -95,13 +113,8 @@ fn lobby() -> (Coordinator, String) {
 }
 
 fn ready(server: &mut Coordinator, client: u64) -> Vec<Delivery> {
-    let loaded = receive(
-        server,
-        client,
-        ClientMessage::Loaded {
-            checksum: setup().checksum(),
-        },
-    );
+    let checksum = server.lobby_setup().checksum();
+    let loaded = receive(server, client, ClientMessage::Loaded { checksum });
     if loaded
         .iter()
         .any(|d| matches!(d.message, ServerMessage::Error { .. }))
@@ -114,22 +127,51 @@ fn ready(server: &mut Coordinator, client: u64) -> Vec<Delivery> {
 fn running() -> Coordinator {
     let (mut server, code) = lobby();
     let messages = join(&mut server, 2, &code);
-    assert_eq!(messages[0].message, ServerMessage::Setup(setup()));
+    assert_eq!(
+        messages[0].message,
+        ServerMessage::Setup(server.lobby_setup().clone())
+    );
     assert_eq!(messages[0].client, 2);
     ready(&mut server, 1);
     ready(&mut server, 2);
     let messages = receive(&mut server, 1, ClientMessage::Start);
-    assert_eq!(messages.len(), 2);
-    for message in messages {
-        assert_eq!(
-            message.message,
-            ServerMessage::Started {
-                players: 2,
-                input_delay: 2
-            }
-        );
+    assert_eq!(messages.len(), 4);
+    let sim = setup().simulation().unwrap();
+    for (slot, pair) in messages.chunks(2).enumerate() {
+        let player = PlayerId(u8::try_from(slot).unwrap());
+        assert_eq!(pair[0].client, u64::from(player.0) + 1);
+        assert_eq!(pair[1].client, pair[0].client);
+        let ServerMessage::Started {
+            players: 2,
+            input_delay: 2,
+            view,
+        } = pair[0].message
+        else {
+            panic!("expected start")
+        };
+        assert_eq!(view.player, player);
+        assert_eq!(view.start, sim.players()[slot].start);
+        assert_eq!(frame(&pair[1]).tick, 0);
     }
     server
+}
+
+/// Follows one player's frames like a client.
+fn view_of(started: &[Delivery], client: u64) -> PlayerView {
+    let mut view = None;
+    for delivery in started.iter().filter(|d| d.client == client) {
+        match &delivery.message {
+            ServerMessage::Started { view: intro, .. } => {
+                view = Some(
+                    PlayerView::new(rts_base::Rules::from_ron(&setup().rules).unwrap(), *intro)
+                        .unwrap(),
+                );
+            }
+            ServerMessage::View { frame } => view.as_mut().unwrap().apply(frame.clone()).unwrap(),
+            _ => {}
+        }
+    }
+    view.unwrap()
 }
 
 fn assert_error(messages: &[Delivery], client: u64) {
@@ -167,7 +209,9 @@ fn joins_without_local_checksum_then_ready_requires_matching_setup_and_host_full
     );
     let joined = join(&mut server, 2, &code);
     assert_eq!(joined.len(), 3);
-    assert!(matches!(&joined[0].message, ServerMessage::Setup(content) if *content == setup()));
+    assert!(
+        matches!(&joined[0].message, ServerMessage::Setup(content) if content == server.lobby_setup())
+    );
     assert_error(&join(&mut server, 3, &code), 3);
     assert_error(&receive(&mut server, 2, ClientMessage::Start), 2);
     assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
@@ -194,7 +238,7 @@ fn joins_without_local_checksum_then_ready_requires_matching_setup_and_host_full
             ServerMessage::Lobby { ref slots, .. } if slots.iter().flatten().filter(|s| s.ready).count() == 2
         ));
     }
-    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
+    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 4);
     assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
     assert_error(&ready(&mut server, 2), 2);
 }
@@ -229,7 +273,7 @@ fn readiness_clears_on_departure_and_slots_can_be_reused() {
             )));
         assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
         ready(&mut server, 3);
-        assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
+        assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 4);
         assert_ended(&server.disconnect(1), 2);
         create(&mut server, 3, &setup());
     }
@@ -253,19 +297,13 @@ fn clock_runs_exactly_twenty_hz_without_inputs_and_never_speeds_up_from_input() 
         );
     }
     assert!(server.advance(Duration::from_millis(49)).is_empty());
-    let mut expected = setup().simulation().unwrap();
     for tick in 1..=100 {
         let now = Duration::from_millis(u64::from(tick) * 50);
         let messages = server.advance(now);
         assert_eq!(messages.len(), 2);
-        expected.step();
-        for delivery in messages {
-            let ServerMessage::Turn { turn, hash } = delivery.message else {
-                panic!("expected turn")
-            };
-            assert_eq!(turn.tick, tick);
-            assert!(turn.inputs.iter().all(|input| input.commands.is_empty()));
-            assert_eq!(hash, expected.state_hash());
+        assert_eq!((messages[0].client, messages[1].client), (1, 2));
+        for delivery in &messages {
+            assert_eq!(frame(delivery).tick, tick);
         }
         assert!(server.advance(now).is_empty());
         assert!(server.advance(now + Duration::from_millis(49)).is_empty());
@@ -273,15 +311,24 @@ fn clock_runs_exactly_twenty_hz_without_inputs_and_never_speeds_up_from_input() 
 }
 
 #[test]
-fn authoritative_hashes_replay_real_movement_and_ignore_forged_unit_ownership() {
-    let mut server = running();
-    let mut replay = Replay::new(setup()).unwrap();
-    let mut sim = setup().simulation().unwrap();
-    let enemy_initial = sim.unit(UnitId(1)).unwrap().pos;
-    let own_initial = sim.unit(UnitId(0)).unwrap().pos;
+fn private_views_follow_real_movement_and_ignore_forged_unit_ownership() {
+    let (mut server, code) = lobby();
+    join(&mut server, 2, &code);
+    ready(&mut server, 1);
+    ready(&mut server, 2);
+    let started = receive(&mut server, 1, ClientMessage::Start);
+    let mut host = view_of(&started, 1);
+    let mut guest = view_of(&started, 2);
+    let worker = host
+        .units()
+        .find(|(_, unit)| unit.owner == PlayerId(0))
+        .unwrap()
+        .0;
+    let initial = host.unit(worker).unwrap().pos;
+    let target = IVec2::new(TILE * 7 / 2, TILE / 2);
     let move_command = Command::Move {
-        units: vec![UnitId(0), UnitId(1), UnitId(u32::MAX)],
-        target: IVec2::new(TILE * 7 / 2, TILE / 2),
+        units: vec![worker, UnitId(1), UnitId(u32::MAX)],
+        target,
     };
     assert!(
         receive(
@@ -289,50 +336,61 @@ fn authoritative_hashes_replay_real_movement_and_ignore_forged_unit_ownership() 
             1,
             ClientMessage::Input {
                 tick: 1,
-                commands: vec![move_command.clone()]
+                commands: vec![move_command]
             }
         )
         .is_empty()
     );
-    // The guest attempts to stop the host's moving unit. Sim must ignore it.
+    // The guest names the host's worker by its own view ID. The server must drop it.
+    let forged = guest
+        .units()
+        .find(|(_, unit)| unit.owner == PlayerId(0))
+        .unwrap()
+        .0;
     receive(
         &mut server,
         2,
         ClientMessage::Input {
             tick: 2,
             commands: vec![Command::Stop {
-                units: vec![UnitId(0)],
+                units: vec![forged],
             }],
         },
     );
+    let mut reference = setup().simulation().unwrap();
+    reference.step_with_commands([(
+        PlayerId(0),
+        Command::Move {
+            units: vec![UnitId(0)],
+            target,
+        },
+    )]);
     for tick in 1_u32..=12 {
+        if tick > 1 {
+            reference.step();
+        }
         let messages = server.advance(Duration::from_millis(u64::from(tick) * 50));
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].message, messages[1].message);
-        let ServerMessage::Turn { turn, hash } = &messages[0].message else {
-            panic!("expected turn")
-        };
-        turn.apply(&mut sim).unwrap();
-        assert_eq!(*hash, sim.state_hash());
-        replay.push(turn.clone(), *hash).unwrap();
-        assert_eq!(replay.playback().unwrap().state_hash(), *hash);
-        assert_eq!(sim.unit(UnitId(1)).unwrap().pos, enemy_initial);
-    }
-    assert_ne!(sim.unit(UnitId(0)).unwrap().pos, own_initial);
-    let mut reference = setup().simulation().unwrap();
-    reference.step_with_commands([(PlayerId(0), move_command)]);
-    for _ in 2..=12 {
-        reference.step();
-    }
-    assert_eq!(sim.state_hash(), reference.state_hash());
-    assert_eq!(
-        Replay::from_ron(&replay.to_ron().unwrap())
+        host.apply(frame(&messages[0]).clone()).unwrap();
+        guest.apply(frame(&messages[1]).clone()).unwrap();
+        assert_eq!(
+            host.unit(worker).unwrap().pos,
+            reference.unit(UnitId(0)).unwrap().pos
+        );
+        // The guest's soldier never moved.
+        let soldier = guest
+            .units()
+            .find(|(_, unit)| unit.owner == PlayerId(1))
             .unwrap()
-            .playback()
-            .unwrap()
-            .state_hash(),
-        sim.state_hash()
-    );
+            .1;
+        assert_eq!(soldier.pos, reference.unit(UnitId(1)).unwrap().pos);
+    }
+    assert_ne!(host.unit(worker).unwrap().pos, initial);
+    assert_eq!(host.move_target(worker), reference.move_target(UnitId(0)));
+    // Each player sees its own orders only.
+    let guest_worker = guest.unit(forged).unwrap();
+    assert_eq!(guest_worker.pos, host.unit(worker).unwrap().pos);
+    assert!(guest.own(forged).is_none());
 }
 
 #[test]
@@ -426,11 +484,8 @@ fn inputs_authenticate_slots_allow_gaps_and_reject_past_duplicate_out_of_order_a
     );
     for tick in 9..=10 {
         let messages = server.advance(Duration::from_millis(tick * 50));
-        let ServerMessage::Turn { turn, .. } = &messages[0].message else {
-            panic!("expected turn")
-        };
-        assert_eq!(turn.inputs[0].player, PlayerId(0));
-        assert_eq!(turn.inputs[1].player, PlayerId(1));
+        assert_eq!(frame(&messages[0]).tick, u32::try_from(tick).unwrap());
+        assert_eq!((messages[0].client, messages[1].client), (1, 2));
     }
 }
 
@@ -477,17 +532,14 @@ fn invalid_oversized_batches_do_not_consume_a_submission() {
 }
 
 #[test]
-fn full_room_fan_in_strips_nonexistent_and_forged_unit_selections() {
+fn full_room_inputs_strip_nonexistent_and_forged_unit_selections() {
     let mut content = setup();
     content.map = content.map.replace(
         "(start: (1.5, 0.5))]",
         &("(start: (1.5, 0.5)),".repeat(7) + "]"),
     );
     content.players = 8;
-    let mut server = coordinator(Config {
-        setup: content.clone(),
-        ..Config::default()
-    });
+    let mut server = coordinator(fixed(content.clone()));
     for id in 1..=8 {
         assert!(server.connect(id, NOW));
     }
@@ -495,46 +547,47 @@ fn full_room_fan_in_strips_nonexistent_and_forged_unit_selections() {
     for id in 2..=8 {
         join(&mut server, id, &code);
     }
+    let checksum = server.lobby_setup().checksum();
     for id in 1..=8 {
-        receive(
-            &mut server,
-            id,
-            ClientMessage::Loaded {
-                checksum: content.checksum(),
-            },
-        );
+        receive(&mut server, id, ClientMessage::Loaded { checksum });
         receive(&mut server, id, ClientMessage::Ready { ready: true });
     }
-    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 8);
+    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 16);
     for id in 1..=8 {
-        let commands = vec![Command::Stop {
+        // Every player orders every view ID to move. Only player 0's worker may move, and only
+        // when player 0 orders it.
+        let commands = vec![Command::Move {
             units: (0..u32::try_from(MAX_UNITS_PER_COMMAND).unwrap())
                 .map(UnitId)
                 .collect(),
+            target: IVec2::new(TILE * 7 / 2, TILE * 3 / 2),
         }];
         assert!(receive(&mut server, id, ClientMessage::Input { tick: 1, commands }).is_empty());
     }
     let messages = server.advance(Duration::from_millis(50));
     assert_eq!(messages.len(), 8);
-    let rts_net::ServerFrame::Text(encoded) = encode_server(&messages[0].message).unwrap() else {
-        panic!("turns must use text frames")
-    };
-    let ServerMessage::Turn { turn, .. } = &messages[0].message else {
-        panic!("expected turn")
-    };
-    let sim = content.simulation().unwrap();
-    for input in &turn.inputs {
-        for command in &input.commands {
-            let units = command.units();
-            assert_ne!(units, []);
-            for &id in units {
-                assert_eq!(sim.unit(id).unwrap().owner, input.player);
-            }
-        }
+    for delivery in &messages {
+        let rts_net::ServerFrame::Text(encoded) = encode_server(&delivery.message).unwrap() else {
+            panic!("views must use text frames")
+        };
+        assert_eq!(rts_net::decode_server(&encoded).unwrap(), delivery.message);
     }
+    let mut reference = content.simulation().unwrap();
+    reference.step_with_commands([(
+        PlayerId(0),
+        Command::Move {
+            units: vec![UnitId(0)],
+            target: IVec2::new(TILE * 7 / 2, TILE * 3 / 2),
+        },
+    )]);
+    for _ in 2..=40 {
+        reference.step();
+        server.advance(Duration::from_millis(u64::from(reference.tick()) * 50));
+    }
+    // The soldier never moved; the worker reached its target.
     assert_eq!(
-        rts_net::decode_server(&encoded).unwrap(),
-        messages[0].message
+        reference.unit(UnitId(1)).unwrap().pos,
+        content.simulation().unwrap().unit(UnitId(1)).unwrap().pos
     );
 }
 
@@ -549,8 +602,9 @@ fn long_stalls_bound_catch_up_then_resume_normal_cadence() {
     assert!(server.advance(Duration::from_millis(100_049)).is_empty());
     let messages = server.advance(Duration::from_millis(100_050));
     assert_eq!(messages.len(), 2);
-    assert!(
-        matches!(&messages[0].message, ServerMessage::Turn { turn, .. } if turn.tick == u32::try_from(MAX_CATCH_UP_TURNS + 1).unwrap())
+    assert_eq!(
+        frame(&messages[0]).tick,
+        u32::try_from(MAX_CATCH_UP_TURNS + 1).unwrap()
     );
 }
 
@@ -570,10 +624,7 @@ fn invalid_server_setup_refuses_connections_without_panicking() {
             ..setup()
         },
     ] {
-        let mut server = coordinator(Config {
-            setup: content,
-            ..Config::default()
-        });
+        let mut server = coordinator(fixed(content));
         assert!(!server.connect(1, NOW));
         assert!(
             receive(
@@ -612,8 +663,7 @@ fn room_connection_limits_and_unique_codes_remain_enforced() {
     let mut server = coordinator(Config {
         max_connections: 3,
         max_rooms: 2,
-        setup: setup(),
-        ..Config::default()
+        ..fixed(setup())
     });
     assert!(server.connect(1, NOW));
     assert!(!server.connect(1, NOW));
@@ -690,10 +740,7 @@ fn assert_error_text(messages: &[Delivery], client: u64, expected: &str) {
 #[test]
 fn room_listing_filters_public_waiting_nonfull_rooms_and_keeps_code_order_and_limit() {
     let content = setup();
-    let mut server = coordinator(Config {
-        setup: content.clone(),
-        ..Config::default()
-    });
+    let mut server = coordinator(fixed(content.clone()));
     for id in 1..=80 {
         assert!(server.connect(id, NOW));
     }
@@ -784,14 +831,9 @@ fn explicit_readiness_requires_loaded_and_all_ready_and_can_be_revoked() {
         1,
         "load the match setup first",
     );
+    let checksum = server.lobby_setup().checksum();
     for id in 1..=2 {
-        let loaded = receive(
-            &mut server,
-            id,
-            ClientMessage::Loaded {
-                checksum: setup().checksum(),
-            },
-        );
+        let loaded = receive(&mut server, id, ClientMessage::Loaded { checksum });
         for message in loaded {
             assert!(
                 matches!(message.message, ServerMessage::Lobby { slots, .. } if slots.iter().flatten().all(|s| !s.ready))
@@ -823,20 +865,14 @@ fn explicit_readiness_requires_loaded_and_all_ready_and_can_be_revoked() {
         "all players must be ready",
     );
     receive(&mut server, 2, ClientMessage::Ready { ready: true });
-    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
+    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 4);
     assert_error_text(
         &receive(&mut server, 2, ClientMessage::Ready { ready: false }),
         2,
         "match has already started",
     );
     assert_error_text(
-        &receive(
-            &mut server,
-            2,
-            ClientMessage::Loaded {
-                checksum: setup().checksum(),
-            },
-        ),
+        &receive(&mut server, 2, ClientMessage::Loaded { checksum }),
         2,
         "match has already started",
     );
@@ -882,7 +918,7 @@ fn guest_leave_can_list_and_rejoin_with_new_name_but_must_load_and_ready_again()
     );
     assert_error(&receive(&mut server, 1, ClientMessage::Start), 1);
     ready(&mut server, 2);
-    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 2);
+    assert_eq!(receive(&mut server, 1, ClientMessage::Start).len(), 4);
 }
 
 #[test]
@@ -913,10 +949,7 @@ fn listed_map_name_is_sanitized_and_truncated_by_character() {
     content.map = content
         .map
         .replace("\"server\"", &format!("\"Map\\n{}\"", "界".repeat(70)));
-    let mut server = coordinator(Config {
-        setup: content.clone(),
-        ..Config::default()
-    });
+    let mut server = coordinator(fixed(content.clone()));
     assert!(server.connect(1, NOW));
     assert!(server.connect(2, NOW));
     create(&mut server, 1, &content);

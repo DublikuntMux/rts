@@ -1,9 +1,9 @@
 use rts_base::{Command, DepositId, IVec2, PlayerId, TILE, UnitId};
 use rts_net::{
-    ClientMessage, INPUT_DELAY_TICKS, MAX_COMMANDS_PER_TURN, MAX_MESSAGE_BYTES, MAX_SETUP_BYTES,
-    MAX_UNITS_PER_COMMAND, MatchSetup, PROTOCOL_VERSION, PlayerInput, Replay, ServerFrame,
-    ServerMessage, Turn, decode_client, decode_server, decode_server_binary, encode_client,
-    encode_server, validate_commands,
+    ClientMessage, INPUT_DELAY_TICKS, LobbySetup, MAX_COMMANDS_PER_TURN, MAX_MESSAGE_BYTES,
+    MAX_SETUP_BYTES, MAX_UNITS_PER_COMMAND, MatchSetup, PROTOCOL_VERSION, PlayerInput, Replay,
+    ServerFrame, ServerMessage, Turn, decode_client, decode_server, decode_server_binary,
+    encode_client, encode_server, validate_commands,
 };
 
 fn text_frame(message: &ServerMessage) -> String {
@@ -39,6 +39,29 @@ fn setup() -> MatchSetup {
         seed: 42,
         players: 2,
     }
+}
+
+fn lobby() -> LobbySetup {
+    LobbySetup {
+        rules: setup().rules,
+        map: "Network".to_owned(),
+        players: 2,
+    }
+}
+
+const fn intro() -> rts_base::ViewIntro {
+    rts_base::ViewIntro {
+        player: PlayerId(1),
+        players: 2,
+        size: IVec2::new(4, 2),
+        start: IVec2::new(TILE / 2, TILE / 2),
+        skirmish: false,
+    }
+}
+
+fn frame() -> rts_base::ViewFrame {
+    let sim = setup().simulation().unwrap();
+    rts_base::PlayerKnowledge::new(&sim, PlayerId(1)).observe(&sim)
 }
 
 fn turn(tick: u32, commands: Vec<Command>) -> Turn {
@@ -89,7 +112,7 @@ fn all_wire_messages_roundtrip() {
             name: "Guest".to_owned(),
         },
         ClientMessage::Loaded {
-            checksum: setup().checksum(),
+            checksum: lobby().checksum(),
         },
         ClientMessage::Start,
         ClientMessage::Input {
@@ -130,7 +153,7 @@ fn all_wire_messages_roundtrip() {
             rooms: vec![room_info()],
         },
         ServerMessage::Rooms { rooms: vec![] },
-        ServerMessage::Setup(setup()),
+        ServerMessage::Setup(lobby()),
         ServerMessage::Lobby {
             code: "AB12C3".to_owned(),
             player: PlayerId(1),
@@ -149,11 +172,9 @@ fn all_wire_messages_roundtrip() {
         ServerMessage::Started {
             players: 2,
             input_delay: INPUT_DELAY_TICKS,
+            view: intro(),
         },
-        ServerMessage::Turn {
-            turn: turn(1, vec![move_command(), stop_command()]),
-            hash: u64::MAX,
-        },
+        ServerMessage::View { frame: frame() },
         ServerMessage::Ended {
             reason: "disconnected".to_owned(),
         },
@@ -440,18 +461,20 @@ fn replay_rejects_invalid_continuity_versions_players_and_corruption() {
 }
 
 #[test]
-fn setup_messages_minify_and_compress_large_documents_and_validate_content() {
-    let mut content = setup();
-    // Both original documents can reach their independent 4 MiB limit. Quoted and
-    // backslash characters in comments expand when carried inside a RON string.
-    for document in [&mut content.rules, &mut content.map] {
-        document.push_str("\n//");
-        document.push_str(&"\"\\".repeat((MAX_SETUP_BYTES - document.len()) / 2));
-        document.push_str(&" ".repeat(MAX_SETUP_BYTES - document.len()));
-    }
+fn setup_messages_minify_and_compress_large_rules_and_validate_content() {
+    let mut content = lobby();
+    // The rules document can reach its 4 MiB limit. Quoted and backslash characters in
+    // comments expand when carried inside a RON string.
+    content.rules.push_str("\n//");
+    content
+        .rules
+        .push_str(&"\"\\".repeat((MAX_SETUP_BYTES - content.rules.len()) / 2));
+    content
+        .rules
+        .push_str(&" ".repeat(MAX_SETUP_BYTES - content.rules.len()));
     let message = ServerMessage::Setup(content.clone());
     let encoded = binary_frame(&message);
-    assert!(encoded.len() < content.rules.len() + content.map.len());
+    assert!(encoded.len() < content.rules.len());
     assert!(encoded.len() < rts_net::MAX_SERVER_MESSAGE_BYTES);
     assert_eq!(
         decode_server_binary(&encoded).unwrap(),
@@ -459,15 +482,19 @@ fn setup_messages_minify_and_compress_large_documents_and_validate_content() {
     );
     assert_eq!(content.checksum(), content.minified().checksum());
     for invalid in [
-        MatchSetup {
-            players: 1,
+        LobbySetup {
+            players: 0,
             ..content.clone()
         },
-        MatchSetup {
-            map: "invalid".to_owned(),
+        LobbySetup {
+            map: "bad\nname".to_owned(),
             ..content.clone()
         },
-        MatchSetup {
+        LobbySetup {
+            rules: "invalid".to_owned(),
+            ..content.clone()
+        },
+        LobbySetup {
             rules: " ".repeat(MAX_SETUP_BYTES + 1),
             ..content
         },
@@ -479,7 +506,30 @@ fn setup_messages_minify_and_compress_large_documents_and_validate_content() {
 }
 
 #[test]
-fn turn_fan_in_accepts_every_players_independently_valid_large_input() {
+fn lobby_setup_reveals_no_map_content_and_checks_every_field() {
+    let content = lobby();
+    let ServerMessage::Setup(decoded) =
+        decode_server_binary(&binary_frame(&ServerMessage::Setup(content.clone()))).unwrap()
+    else {
+        panic!("expected setup")
+    };
+    assert_eq!(decoded, content.minified());
+    // Rules are public; the map's terrain, units, starts and the seed never travel.
+    let map = setup().map;
+    assert!(!decoded.rules.contains("network") && !map.contains("Network"));
+    for index in 0..3 {
+        let mut changed = content.clone();
+        match index {
+            0 => changed.rules = changed.rules.replace("max_health: 40", "max_health: 41"),
+            1 => changed.map = "Other".to_owned(),
+            _ => changed.players = 1,
+        }
+        assert_ne!(content.checksum(), changed.checksum());
+    }
+}
+
+#[test]
+fn view_messages_are_bounded_and_large_input_still_fits() {
     let commands = vec![Command::Stop {
         units: (0..u32::try_from(MAX_UNITS_PER_COMMAND).unwrap())
             .map(|offset| UnitId(u32::MAX - offset))
@@ -487,44 +537,63 @@ fn turn_fan_in_accepts_every_players_independently_valid_large_input() {
     }];
     let client = ClientMessage::Input {
         tick: u32::MAX,
-        commands: commands.clone(),
+        commands,
     };
     let client_text = encode_client(&client).unwrap();
     assert!(client_text.len() < MAX_MESSAGE_BYTES);
     assert_eq!(decode_client(&client_text).unwrap(), client);
-    let message = ServerMessage::Turn {
-        turn: Turn {
-            tick: u32::MAX,
-            inputs: (0..u8::try_from(rts_base::MAX_PLAYERS).unwrap())
-                .map(|slot| PlayerInput {
-                    player: PlayerId(slot),
-                    commands: commands.clone(),
-                })
-                .collect(),
-        },
-        hash: u64::MAX,
-    };
+    let mut large = frame();
+    let unit = large.units[0].clone();
+    while text_frame(&ServerMessage::View {
+        frame: large.clone(),
+    })
+    .len()
+        <= MAX_MESSAGE_BYTES
+    {
+        large.units.extend(std::iter::repeat_n(unit.clone(), 256));
+    }
+    let message = ServerMessage::View { frame: large };
     let encoded = text_frame(&message);
-    assert!(encoded.len() > MAX_MESSAGE_BYTES);
-    assert!(encoded.len() <= rts_net::MAX_TURN_MESSAGE_BYTES);
+    assert!(encoded.len() <= rts_net::MAX_VIEW_MESSAGE_BYTES);
     assert_eq!(decode_server(&encoded).unwrap(), message);
-    let oversized = format!("{encoded}{}", " ".repeat(rts_net::MAX_TURN_MESSAGE_BYTES));
+    let oversized = format!("{encoded}{}", " ".repeat(rts_net::MAX_VIEW_MESSAGE_BYTES));
     assert!(decode_server(&oversized).is_err());
     let large = ServerMessage::Error {
         message: "x".repeat(MAX_MESSAGE_BYTES),
     };
     assert!(decode_server(&ron::to_string(&large).unwrap()).is_err());
+    let started = ServerMessage::Started {
+        players: 2,
+        input_delay: INPUT_DELAY_TICKS,
+        view: intro(),
+    };
     assert!(
         decode_server(&format!(
             "{}{}",
-            text_frame(&ServerMessage::Started {
-                players: 2,
-                input_delay: INPUT_DELAY_TICKS,
-            }),
+            text_frame(&started),
             " ".repeat(MAX_MESSAGE_BYTES)
         ))
         .is_err()
     );
+    for view in [
+        rts_base::ViewIntro {
+            players: 3,
+            ..intro()
+        },
+        rts_base::ViewIntro {
+            player: PlayerId(2),
+            ..intro()
+        },
+    ] {
+        assert!(
+            encode_server(&ServerMessage::Started {
+                players: 2,
+                input_delay: INPUT_DELAY_TICKS,
+                view,
+            })
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -586,26 +655,32 @@ fn command_work_bounds_reject_duplicate_selections_and_repeated_orders() {
 fn minified_compressed_setup_preserves_literals_checksum_and_simulation() {
     let mut original = setup();
     original.rules = original.rules.replace("speed: 2.5", "speed: 2.500000");
-    original.map = original.map.replace(
-        "\"network\"",
-        r###"r##"Mod // keep /* literals */ \"quoted\" 🚀"##"###,
-    );
     original
         .rules
         .push_str("\n/* outer /* nested */ comment */\n");
-    let compact = original.minified();
+    let content = LobbySetup {
+        rules: original.rules.clone(),
+        map: "Mod // keep /* literals */ \"quoted\" 🚀".to_owned(),
+        players: 2,
+    };
+    let compact = content.minified();
     assert!(compact.rules.contains("speed:2.500000"));
     assert!(compact.rules.len() < original.rules.len());
-    assert!(compact.map.contains("Mod // keep /* literals */"));
-    assert_eq!(compact.checksum(), original.checksum());
-    let encoded = binary_frame(&ServerMessage::Setup(original.clone()));
-    assert!(encoded.len() < compact.rules.len() + compact.map.len());
+    assert_eq!(compact.checksum(), content.checksum());
+    let encoded = binary_frame(&ServerMessage::Setup(content));
+    assert!(encoded.len() < compact.rules.len());
     let ServerMessage::Setup(decoded) = decode_server_binary(&encoded).unwrap() else {
         panic!("expected setup")
     };
     assert_eq!(decoded, compact);
+    assert_eq!(decoded.map, "Mod // keep /* literals */ \"quoted\" 🚀");
     let mut source_sim = original.simulation().unwrap();
-    let mut received_sim = decoded.simulation().unwrap();
+    let mut received_sim = MatchSetup {
+        rules: decoded.rules,
+        ..original
+    }
+    .simulation()
+    .unwrap();
     for tick in 1..=20 {
         let turn = turn(
             tick,
@@ -623,8 +698,6 @@ fn minified_compressed_setup_preserves_literals_checksum_and_simulation() {
             "tick {tick}"
         );
     }
-    let replay = Replay::new(decoded).unwrap();
-    assert_eq!(Replay::from_ron(&replay.to_ron().unwrap()).unwrap(), replay);
 }
 
 #[test]
@@ -648,13 +721,12 @@ fn setup_checksum_ignores_comments_and_formatting_but_preserves_literal_spelling
 fn binary_setup_rejects_forged_frames_before_client_readiness() {
     use miniz_oxide::deflate::compress_to_vec_zlib;
 
-    let compact = setup().minified();
+    let compact = lobby().minified();
     let map = compress_to_vec_zlib(compact.map.as_bytes(), 6);
     let wire = |rules_len: u32, rules: &[u8]| {
         let rules = compress_to_vec_zlib(rules, 6);
         let mut bytes = b"RTSS".to_vec();
         bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&42_u64.to_le_bytes());
         bytes.push(2);
         bytes.extend_from_slice(&rules_len.to_le_bytes());
         bytes.extend_from_slice(&u32::try_from(rules.len()).unwrap().to_le_bytes());
@@ -668,7 +740,7 @@ fn binary_setup_rejects_forged_frames_before_client_readiness() {
         u32::try_from(compact.rules.len()).unwrap(),
         compact.rules.as_bytes(),
     );
-    assert_eq!(binary_frame(&ServerMessage::Setup(setup())), valid);
+    assert_eq!(binary_frame(&ServerMessage::Setup(lobby())), valid);
     assert_eq!(
         decode_server_binary(&valid).unwrap(),
         ServerMessage::Setup(compact.clone())
@@ -679,12 +751,12 @@ fn binary_setup_rejects_forged_frames_before_client_readiness() {
             "accepted truncation {end}"
         );
     }
-    for offset in [17, 21, 25, 29] {
+    for offset in [9, 13, 17, 21] {
         let mut invalid = valid.clone();
         invalid[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(decode_server_binary(&invalid).is_err());
     }
-    for (offset, value) in [(0, b'?'), (4, 0), (16, 0), (16, 9)] {
+    for (offset, value) in [(0, b'?'), (4, 0), (8, 0), (8, 9)] {
         let mut invalid = valid.clone();
         invalid[offset] = value;
         assert!(decode_server_binary(&invalid).is_err());
@@ -897,7 +969,7 @@ fn lobby_validates_host_receiver_slot_count_names_and_unknown_fields() {
 fn version_7_is_rejected_on_live_wire() {
     assert!(decode_client("Rooms(version:7)").is_err());
 
-    let mut bytes = binary_frame(&ServerMessage::Setup(setup()));
+    let mut bytes = binary_frame(&ServerMessage::Setup(lobby()));
     bytes[4..8].copy_from_slice(&7_u32.to_le_bytes());
     assert!(decode_server_binary(&bytes).is_err());
 }

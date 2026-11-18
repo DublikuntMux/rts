@@ -8,13 +8,14 @@ use miniz_oxide::{
     },
 };
 
-use super::{MAX_SETUP_BYTES, MatchSetup};
+use super::{LobbySetup, MAX_SETUP_BYTES};
 use crate::{
-    NetError, PROTOCOL_VERSION, check_size, minify::minify_ron, validate_players, validate_version,
+    MAX_MAP_NAME_CHARS, NetError, PROTOCOL_VERSION, check_size, minify::minify_ron,
+    validate_map_name, validate_players, validate_version,
 };
 
 const TAG: &[u8; 4] = b"RTSS";
-const HEADER_BYTES: usize = 33;
+const HEADER_BYTES: usize = 25;
 // Zlib's worst-case expansion is much smaller than this, even on incompressible input.
 const MAX_COMPRESSED_BYTES: usize = MAX_SETUP_BYTES * 2;
 pub const MAX_FRAME_BYTES: usize = HEADER_BYTES + MAX_COMPRESSED_BYTES * 2;
@@ -25,9 +26,13 @@ struct Document {
 }
 
 impl Document {
-    fn compress(source: &str) -> Result<Self, NetError> {
+    fn compress(source: &str, minify: bool) -> Result<Self, NetError> {
         check_size(source.len(), MAX_SETUP_BYTES)?;
-        let compact = minify_ron(source);
+        let compact = if minify {
+            minify_ron(source)
+        } else {
+            source.to_owned()
+        };
         let zlib = compress_to_vec_zlib(compact.as_bytes(), 6);
         check_size(zlib.len(), MAX_COMPRESSED_BYTES)?;
         Ok(Self {
@@ -58,13 +63,12 @@ fn inflate(len: u32, compressed: &[u8]) -> Result<String, NetError> {
     String::from_utf8(output).map_err(|_| NetError::invalid("setup document is not valid UTF-8"))
 }
 
-pub fn encode(setup: &MatchSetup) -> Result<Vec<u8>, NetError> {
-    let rules = Document::compress(&setup.rules)?;
-    let map = Document::compress(&setup.map)?;
+pub fn encode(setup: &LobbySetup) -> Result<Vec<u8>, NetError> {
+    let rules = Document::compress(&setup.rules, true)?;
+    let map = Document::compress(&setup.map, false)?;
     let mut frame = Vec::with_capacity(HEADER_BYTES + rules.zlib.len() + map.zlib.len());
     frame.extend_from_slice(TAG);
     frame.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-    frame.extend_from_slice(&setup.seed.to_le_bytes());
     frame.push(setup.players);
     for document in [&rules, &map] {
         frame.extend_from_slice(&document.len.to_le_bytes());
@@ -77,7 +81,7 @@ pub fn encode(setup: &MatchSetup) -> Result<Vec<u8>, NetError> {
     Ok(frame)
 }
 
-pub fn decode(bytes: &[u8]) -> Result<MatchSetup, NetError> {
+pub fn decode(bytes: &[u8]) -> Result<LobbySetup, NetError> {
     check_size(bytes.len(), MAX_FRAME_BYTES)?;
     let (mut header, payload) = bytes
         .split_at_checked(HEADER_BYTES)
@@ -86,26 +90,32 @@ pub fn decode(bytes: &[u8]) -> Result<MatchSetup, NetError> {
         return Err(NetError::invalid("unknown binary server message"));
     }
     validate_version(u32::from_le_bytes(take(&mut header)?))?;
-    let seed = u64::from_le_bytes(take(&mut header)?);
     let players = take::<1>(&mut header)?[0];
     validate_players(players)?;
     let rules_len = u32::from_le_bytes(take(&mut header)?);
     let rules_compressed_len = read_length(&mut header, MAX_COMPRESSED_BYTES)?;
     let map_len = u32::from_le_bytes(take(&mut header)?);
     let map_compressed_len = read_length(&mut header, MAX_COMPRESSED_BYTES)?;
-    for len in [rules_len, map_len] {
-        check_size(usize::try_from(len).unwrap_or(usize::MAX), MAX_SETUP_BYTES)?;
-    }
+    check_size(
+        usize::try_from(rules_len).unwrap_or(usize::MAX),
+        MAX_SETUP_BYTES,
+    )?;
+    // A display name: at most four UTF-8 bytes per character.
+    check_size(
+        usize::try_from(map_len).unwrap_or(usize::MAX),
+        MAX_MAP_NAME_CHARS * 4,
+    )?;
     let (rules, map) = payload
         .split_at_checked(rules_compressed_len)
         .ok_or_else(|| NetError::invalid("truncated binary setup payload"))?;
     if map.len() != map_compressed_len {
         return Err(NetError::invalid("binary setup payload length mismatch"));
     }
-    Ok(MatchSetup {
+    let map = inflate(map_len, map)?;
+    validate_map_name(&map)?;
+    Ok(LobbySetup {
         rules: inflate(rules_len, rules)?,
-        map: inflate(map_len, map)?,
-        seed,
+        map,
         players,
     })
 }

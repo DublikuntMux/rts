@@ -61,9 +61,15 @@ pub async fn serve_with_config(listener: TcpListener, config: Config) -> io::Res
     }
     // Setup is immutable for the lifetime of the server. Validate and compress it
     // once, rather than rebuilding a simulation on the coordinator task per join.
-    let setup_frame = encode_message(&ServerMessage::Setup(config.setup.clone()))
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let mut coordinator = Coordinator::new(config.clone(), rand::make_rng());
+    if !coordinator.can_host() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the server rules and map cannot start a match",
+        ));
+    }
+    let setup_frame = encode_message(&ServerMessage::Setup(coordinator.lobby_setup().clone()))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let config = Arc::new(config);
     let (events_tx, mut events_rx) = mpsc::channel(config.event_queue_capacity);
     let mut outbound = BTreeMap::new();
@@ -226,9 +232,9 @@ mod tests {
     #[test]
     fn setup_deliveries_share_the_cached_frame() {
         let config = Config::default();
-        let setup_frame = encode_message(&ServerMessage::Setup(config.setup.clone())).unwrap();
-        let mut coordinator =
-            Coordinator::new(config.clone(), rand::rngs::StdRng::seed_from_u64(0));
+        let mut coordinator = Coordinator::new(config, rand::rngs::StdRng::seed_from_u64(0));
+        let lobby = coordinator.lobby_setup().clone();
+        let setup_frame = encode_message(&ServerMessage::Setup(lobby.clone())).unwrap();
         assert!(coordinator.connect(1, Duration::ZERO));
         let (tx, mut rx) = mpsc::channel(2);
         let mut outbound = BTreeMap::from([(1, tx)]);
@@ -236,7 +242,7 @@ mod tests {
             (0..2)
                 .map(|_| Delivery {
                     client: 1,
-                    message: ServerMessage::Setup(config.setup.clone()),
+                    message: ServerMessage::Setup(lobby.clone()),
                 })
                 .collect(),
             &mut coordinator,
@@ -257,9 +263,10 @@ mod tests {
 
     #[test]
     fn outbound_overflow_disconnects_host_and_notifies_guest_in_the_same_pass() {
-        let config = Config::default();
-        let setup_frame = encode_message(&ServerMessage::Setup(config.setup.clone())).unwrap();
-        let mut coordinator = Coordinator::new(config, rand::rngs::StdRng::seed_from_u64(0));
+        let mut coordinator =
+            Coordinator::new(Config::default(), rand::rngs::StdRng::seed_from_u64(0));
+        let setup_frame =
+            encode_message(&ServerMessage::Setup(coordinator.lobby_setup().clone())).unwrap();
         for id in 1..=2 {
             assert!(coordinator.connect(id, Duration::ZERO));
         }

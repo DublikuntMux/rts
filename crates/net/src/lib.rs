@@ -6,21 +6,25 @@ mod setup;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rts_base::{Command, MAX_PLAYERS, PlayerId, Sim};
+use rts_base::{Command, MAX_PLAYERS, PlayerId, Sim, ViewFrame, ViewIntro};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-pub use replay::{MAX_REPLAY_BYTES, MAX_REPLAY_TURNS, Replay};
+pub use replay::{
+    MAX_REPLAY_BYTES, MAX_REPLAY_TURNS, REPLAY_VERSION, Recording, Replay, VIEW_REPLAY_VERSION,
+    ViewReplay,
+};
 pub use rts_base::INPUT_DELAY_TICKS;
-pub use setup::{MAX_SETUP_BYTES, MatchSetup};
+pub use setup::{LobbySetup, MAX_SETUP_BYTES, MatchSetup};
 
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 pub const MAX_NAME_CHARS: usize = 24;
 pub const MAX_MAP_NAME_CHARS: usize = 64;
 pub const MAX_LISTED_ROOMS: usize = 64;
 /// Maximum client message and small server message size.
 pub const MAX_MESSAGE_BYTES: usize = 65_536;
-/// One bounded input per player, plus turn framing and authoritative hash overhead.
-pub const MAX_TURN_MESSAGE_BYTES: usize = MAX_MESSAGE_BYTES * (MAX_PLAYERS + 1);
+/// One player's view frame. A frame lists every tile explored on that tick and every unit in
+/// sight that changed, so it is larger than a client message.
+pub const MAX_VIEW_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 /// Bounds the binary setup header and both compressed RON documents.
 pub const MAX_SERVER_MESSAGE_BYTES: usize = setup::wire::MAX_FRAME_BYTES;
 /// Maximum commands in each player's batch for a turn.
@@ -165,8 +169,9 @@ pub struct LobbySlot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ServerMessage {
+    /// Public rules and map name for a room. Sent as a compressed binary frame.
     #[serde(skip)]
-    Setup(MatchSetup),
+    Setup(LobbySetup),
     Rooms {
         rooms: Vec<RoomInfo>,
     },
@@ -176,14 +181,16 @@ pub enum ServerMessage {
         public: bool,
         slots: Vec<Option<LobbySlot>>,
     },
+    /// The match started. `view` describes the recipient's own perspective.
     Started {
         players: u8,
         input_delay: u32,
+        view: ViewIntro,
     },
-    Turn {
-        turn: Turn,
-        /// Authoritative simulation hash after applying this turn.
-        hash: u64,
+    /// The recipient's knowledge after one authoritative tick. Frames start at tick 0 and
+    /// follow every tick in order.
+    View {
+        frame: ViewFrame,
     },
     Ended {
         reason: String,
@@ -247,6 +254,13 @@ pub(crate) fn validate_players(players: u8) -> Result<(), NetError> {
 pub(crate) fn validate_version(version: u32) -> Result<(), NetError> {
     if version != PROTOCOL_VERSION {
         return Err(NetError::invalid("protocol version does not match"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_map_name(name: &str) -> Result<(), NetError> {
+    if name.chars().count() > MAX_MAP_NAME_CHARS || name.chars().any(char::is_control) {
+        return Err(NetError::invalid("invalid map name"));
     }
     Ok(())
 }
@@ -317,14 +331,14 @@ impl ServerMessage {
     const fn wire_limit(&self) -> usize {
         match self {
             Self::Setup(_) => MAX_SERVER_MESSAGE_BYTES,
-            Self::Turn { .. } => MAX_TURN_MESSAGE_BYTES,
+            Self::View { .. } => MAX_VIEW_MESSAGE_BYTES,
             _ => MAX_MESSAGE_BYTES,
         }
     }
 
     fn validate(&self) -> Result<(), NetError> {
         match self {
-            Self::Setup(setup) => setup.simulation().map(|_| ()),
+            Self::Setup(setup) => setup.rules().map(|_| ()),
             Self::Rooms { rooms } => {
                 if rooms.len() > MAX_LISTED_ROOMS {
                     return Err(NetError::invalid("too many listed rooms"));
@@ -336,11 +350,7 @@ impl ServerMessage {
                     if room.players == 0 || room.players > room.capacity {
                         return Err(NetError::invalid("invalid listed room players"));
                     }
-                    if room.map.chars().count() > MAX_MAP_NAME_CHARS
-                        || room.map.chars().any(char::is_control)
-                    {
-                        return Err(NetError::invalid("invalid map name"));
-                    }
+                    validate_map_name(&room.map)?;
                 }
                 Ok(())
             }
@@ -367,19 +377,19 @@ impl ServerMessage {
             Self::Started {
                 players,
                 input_delay,
+                view,
             } => {
                 validate_players(*players)?;
                 if *input_delay != INPUT_DELAY_TICKS {
                     return Err(NetError::invalid("unsupported input delay"));
                 }
+                if view.players != *players || view.player.0 >= *players {
+                    return Err(NetError::invalid("invalid view perspective"));
+                }
                 Ok(())
             }
-            Self::Turn { turn, .. } => {
-                let players = u8::try_from(turn.inputs.len())
-                    .map_err(|_| NetError::invalid("too many turn inputs"))?;
-                turn.validate(turn.tick, players)
-            }
-            Self::Ended { .. } | Self::Error { .. } => Ok(()),
+            // The receiving view validates frames against everything it already knows.
+            Self::View { .. } | Self::Ended { .. } | Self::Error { .. } => Ok(()),
         }
     }
 }
@@ -445,7 +455,7 @@ pub fn decode_client(text: &str) -> Result<ClientMessage, NetError> {
 /// # Errors
 /// Returns an error for malformed, incompatible, or oversized messages.
 pub fn decode_server(text: &str) -> Result<ServerMessage, NetError> {
-    let message: ServerMessage = decode(text, MAX_TURN_MESSAGE_BYTES)?;
+    let message: ServerMessage = decode(text, MAX_VIEW_MESSAGE_BYTES)?;
     check_size(text.len(), message.wire_limit())?;
     message.validate()?;
     Ok(message)
