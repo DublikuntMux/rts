@@ -66,26 +66,30 @@ enum EconomyAction {
     Barracks,
     Worker,
     RifleSquad,
+    Scout,
 }
 
 impl EconomyAction {
-    const ALL: [Self; 3] = [Self::Barracks, Self::Worker, Self::RifleSquad];
+    const ALL: [Self; 4] = [Self::Barracks, Self::Worker, Self::RifleSquad, Self::Scout];
 
     const fn label(self) -> &'static str {
         match self {
             Self::Barracks => "Build barracks",
             Self::Worker => "Train worker",
             Self::RifleSquad => "Rifle squad",
+            Self::Scout => "Train scout",
         }
     }
 
+    /// The price, or `None` when the rules do not offer this action.
     fn cost(self, game: &Match) -> Option<Resources> {
         let rules = game.sim.rules().economy()?;
-        Some(match self {
-            Self::Barracks => rules.barracks_cost,
-            Self::Worker => rules.worker_cost,
-            Self::RifleSquad => rules.rifle_cost,
-        })
+        match self {
+            Self::Barracks => Some(rules.barracks_cost),
+            Self::Worker => Some(rules.worker_cost),
+            Self::RifleSquad => Some(rules.rifle_cost),
+            Self::Scout => rules.scout.map(|scout| scout.cost),
+        }
     }
 
     fn units<'a>(
@@ -99,9 +103,10 @@ impl EconomyAction {
             match self {
                 Self::Barracks => "worker",
                 Self::Worker => "headquarters",
-                Self::RifleSquad => "barracks",
+                Self::RifleSquad | Self::Scout => "barracks",
             },
         )
+        .filter(move |_| self.cost(game).is_some())
     }
 
     fn ready_units<'a>(
@@ -319,6 +324,7 @@ fn spawn_economy_button(
                 EconomyAction::Barracks => "Barracks",
                 EconomyAction::Worker => "Worker",
                 EconomyAction::RifleSquad => "Rifles",
+                EconomyAction::Scout => "Scout",
             }
         } else {
             action.label()
@@ -383,6 +389,9 @@ fn activate_economy(
         }
         EconomyAction::RifleSquad => {
             game.queue_command(Command::TrainRifleSquad { units });
+        }
+        EconomyAction::Scout => {
+            game.queue_command(Command::TrainScout { units });
         }
     }
 }
@@ -552,7 +561,14 @@ pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -
             .next()
             .is_some()
     {
-        return Some("Train rifle squads at the barracks.".into());
+        return Some(
+            if EconomyAction::Scout.units(game, selection).next().is_some() {
+                "Train rifle squads and scouts at the barracks."
+            } else {
+                "Train rifle squads at the barracks."
+            }
+            .into(),
+        );
     }
     None
 }
@@ -735,7 +751,7 @@ fn actions_bottom(hud: &HudLayout) -> f32 {
     8.0 + hud.commands.map_or(0.0, |rect| rect.height() + 8.0)
 }
 
-#[expect(clippy::cast_precision_loss, reason = "only three actions")]
+#[expect(clippy::cast_precision_loss, reason = "only four actions")]
 fn action_width(screen_width: f32, count: usize) -> f32 {
     let gaps = count.saturating_sub(1) as f32;
     let count = count.max(1) as f32;
@@ -755,7 +771,7 @@ pub fn actions_bounds(
     if count == 0 {
         return None;
     }
-    #[expect(clippy::cast_precision_loss, reason = "only three actions")]
+    #[expect(clippy::cast_precision_loss, reason = "only four actions")]
     let width = (action_width(size.x, count) + ACTION_GAP).mul_add(count as f32, -ACTION_GAP);
     let y = size.y - actions_bottom(hud);
     Some(Rect::from_corners(
@@ -776,6 +792,8 @@ pub fn test_setup() -> rts_net::MatchSetup {
                 (id: "barracks", sprite: "barracks.png", size: 4, max_health: 50, radius: 0.5, speed: 0, building: true),
                 (id: "soldier", sprite: "soldier.png", size: 2, max_health: 10, radius: 0.4, speed: 2,
                  weapon: Some((range: 2, damage: 10, cooldown: 0.5))),
+                (id: "scout", sprite: "scout.png", size: 1, max_health: 10, radius: 0.3, speed: 4, sight: 8,
+                 weapon: Some((range: 2, damage: 1, cooldown: 1))),
             ],
             economy: Some((
                 initial: (wood: 80, gold: 80),
@@ -783,6 +801,7 @@ pub fn test_setup() -> rts_net::MatchSetup {
                 barracks_cost: (wood: 10, gold: 12),
                 rifle_cost: (wood: 14, gold: 12),
                 worker_ticks: 4, barracks_ticks: 5, rifle_ticks: 6, harvest_ticks: 3, carry_capacity: 8,
+                scout: Some((cost: (wood: 3, gold: 2), ticks: 4)),
             )),
         )"##.into(),
         map: r#"(
@@ -862,8 +881,13 @@ mod tests {
                 .all(|(label, text)| text.0 == format!("{} 80", resource_label(label.0)))
         );
 
+        assert_eq!(
+            visible_actions(app.world().resource(), app.world().resource()),
+            3
+        );
         activate(&mut app, EconomyAction::Worker);
         activate(&mut app, EconomyAction::RifleSquad);
+        activate(&mut app, EconomyAction::Scout);
         let mut game = app.world_mut().resource_mut::<Match>();
         let commands = std::mem::take(&mut game.pending);
         assert_eq!(
@@ -873,6 +897,9 @@ mod tests {
                     units: vec![UnitId(0)]
                 },
                 Command::TrainRifleSquad {
+                    units: vec![UnitId(4)]
+                },
+                Command::TrainScout {
                     units: vec![UnitId(4)]
                 },
             ]
@@ -887,12 +914,12 @@ mod tests {
         assert!(
             labels
                 .iter(app.world())
-                .any(|(label, text)| label.0 == ResourceKind::Wood && text.0 == "Wood 62")
+                .any(|(label, text)| label.0 == ResourceKind::Wood && text.0 == "Wood 59")
         );
         assert!(
             labels
                 .iter(app.world())
-                .any(|(label, text)| label.0 == ResourceKind::Gold && text.0 == "Gold 63")
+                .any(|(label, text)| label.0 == ResourceKind::Gold && text.0 == "Gold 61")
         );
         let hint = app
             .world_mut()
@@ -912,5 +939,35 @@ mod tests {
         activate(&mut app, EconomyAction::Barracks);
         assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
         assert_eq!(app.world().resource::<Match>().pending, []);
+    }
+
+    #[test]
+    fn scout_action_follows_the_rules() {
+        let sim = test_setup().simulation().unwrap();
+        let mut selection = Selection::default();
+        selection.units.extend([UnitId(4)]);
+        let game = Match::new(sim, rts_base::PlayerId(0), true);
+        assert_eq!(
+            EconomyAction::Scout
+                .units(&game, &selection)
+                .collect::<Vec<_>>(),
+            [UnitId(4)]
+        );
+        assert_eq!(
+            economy_hint(&game, &selection, Targeting::None).as_deref(),
+            Some("Train rifle squads and scouts at the barracks.")
+        );
+
+        let mut setup = test_setup();
+        setup.rules = setup
+            .rules
+            .replace("scout: Some((cost: (wood: 3, gold: 2), ticks: 4)),", "");
+        let game = Match::new(setup.simulation().unwrap(), rts_base::PlayerId(0), true);
+        assert_eq!(EconomyAction::Scout.units(&game, &selection).next(), None);
+        assert_eq!(visible_actions(&game, &selection), 1);
+        assert_eq!(
+            economy_hint(&game, &selection, Targeting::None).as_deref(),
+            Some("Train rifle squads at the barracks.")
+        );
     }
 }

@@ -97,6 +97,41 @@ fn desktop_skirmish_training_uses_the_existing_command_grid_and_reports_activity
     );
 }
 
+#[test]
+fn desktop_barracks_offer_scouts_in_the_next_command_slot() {
+    let mut app = app_with_setup(skirmish::test_setup());
+    let barracks = UnitId(4);
+    app.world_mut().resource_mut::<Selection>().units = [barracks].into();
+    app.update();
+
+    let world = app.world_mut();
+    let (button, slot) = world
+        .query::<(Entity, &Name, &Node, &ChildOf)>()
+        .iter(world)
+        .find_map(|(entity, name, node, parent)| {
+            (name.as_str() == "Train scout" && node.display == Display::Flex)
+                .then_some((entity, parent.parent()))
+        })
+        .unwrap();
+    assert_eq!(world.get::<CommandSlot>(slot).unwrap().0, 6);
+    world.trigger(Activate { entity: button });
+    app.update();
+    let mut game = app.world_mut().resource_mut::<Match>();
+    let commands = std::mem::take(&mut game.pending);
+    assert_eq!(
+        commands,
+        [rts_base::Command::TrainScout {
+            units: vec![barracks]
+        }]
+    );
+    game.sim
+        .step_with_commands(commands.into_iter().map(|command| (PlayerId(0), command)));
+    assert_eq!(
+        game.sim.production(barracks).unwrap()[0].kind,
+        rts_base::TrainingKind::Scout
+    );
+}
+
 fn order(app: &mut App, order: Order) {
     let entity = app
         .world_mut()
