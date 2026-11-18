@@ -201,3 +201,15 @@ Planned controls
    * - Control groups
      - M9
      - Save and recall selections.
+
+
+Skirmish controls
+-----------------
+
+* With workers selected, right-click or tap a resource deposit to gather
+  there.
+* With a worker selected, choose **Build barracks**, then click or tap a
+  clear tile. Escape or the targeting cancel button backs out.
+* Select the headquarters for **Train worker** or a barracks for
+  **Rifle squad**. The command shows its wood and gold cost.
+* Right-click or tap an enemy building with armed units selected to attack.

@@ -26,6 +26,7 @@ Content
            ++ maps/ | .
            +++ proving_grounds.map.ron | Two-player map, 48×32 tiles
            +++ crossroads.map.ron | Four-player map, 40×40 tiles
+           +++ frontier.map.ron | Two-player skirmish, 34×24 tiles
            ++ textures/terrain/ | 128×128 PNG per terrain type, wood and gold deposit overlays
            ++ textures/units/ | Transparent PNG sprites for units and buildings
            ++ fonts/ | .

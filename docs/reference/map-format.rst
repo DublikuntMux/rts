@@ -4,7 +4,8 @@ Map file format
 A map file (``*.map.ron``) describes the terrain grid, player starts, and
 starting units of one match. Bundled maps live under ``assets/maps/``:
 ``proving_grounds.map.ron`` has two players on 48×32 tiles, and
-``crossroads.map.ron`` has four on 40×40 tiles. Valid ``*.map.ron`` files in
+``crossroads.map.ron`` has four on 40×40 tiles. ``frontier.map.ron`` is a
+two-player skirmish on a 34×24 grid. Valid ``*.map.ron`` files in
 that folder appear in **Singleplayer → New game** automatically.
 A map is parsed by
 ``rts_base::MapData::from_ron`` and validated against a rules file by
@@ -61,6 +62,18 @@ Fields
    * - ``units``
      - list, optional
      - Units present at the start. Defaults to empty.
+   * - ``skirmish``
+     - optional structure
+     - Enables the economy and headquarters objective. Defaults to ``None``.
+
+Give a skirmish map exactly two player slots and put one
+``headquarters`` per player in ``units``. Supply both deposit kinds in
+``skirmish: Some((deposits: [...] ))``. Each deposit has a ``kind``
+(``Wood`` or ``Gold``), a world position ``pos`` written in tiles, and a
+positive integer ``remaining``. Deposits occupy distinct passable tiles
+without buildings, and receive IDs in file order. Each player's initial
+stockpile plus the total available stock of a resource must fit in a
+32-bit unsigned integer.
 
 Each ``units`` entry has:
 

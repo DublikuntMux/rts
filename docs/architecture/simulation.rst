@@ -30,6 +30,10 @@ Modules
      - ``MoveOrder``: routes, replanning, and the per-tick movement budget.
    * - ``combat.rs``
      - Attack-order pursuit, volleys, target choice, and casualties.
+   * - ``economy/``
+     - Stockpiles, deposits, worker orders, construction, and training queues.
+   * - ``skirmish.rs``
+     - Headquarters setup and match outcomes.
    * - ``path.rs``
      - Travel-time A* over the tile grid.
    * - ``occupancy.rs``
@@ -139,6 +143,9 @@ The tick step
    skinparam backgroundColor transparent
    start
    :tick += 1;
+   if (skirmish already ended?) then (yes)
+     stop
+   endif
    :take local commands queued for this tick;
    :apply queued commands, then supplied commands,\nin order;
    :pursue attack targets: drop orders whose target died,\nstop attackers in range, re-route the rest;
@@ -148,7 +155,9 @@ The tick step
      :drop orders that finished\nor whose unit no longer exists;
    else (no)
    endif
+   :advance skirmish work and training;
    :fire every ready, stationary weapon in UnitId order;\nremove units whose last soldier fell;
+   :check headquarters for a skirmish outcome;
    stop
    @enduml
 
@@ -166,6 +175,10 @@ Commands
        Move { units: Vec<UnitId>, target: IVec2 },
        Stop { units: Vec<UnitId> },
        Attack { units: Vec<UnitId>, target: UnitId },
+       Gather { units: Vec<UnitId>, deposit: DepositId },
+       BuildBarracks { units: Vec<UnitId>, target: IVec2 },
+       TrainWorker { units: Vec<UnitId> },
+       TrainRifleSquad { units: Vec<UnitId> },
    }
 
 A command names units by stable ID and a target in world units. Applying a
@@ -260,3 +273,22 @@ Loading returns ``rts_base::LoadError``: ``Parse`` wraps a RON error with its
 position, and ``Invalid`` carries a message naming the offending tile, unit
 index, or type. Runtime operations never fail; invalid commands are ignored
 by design so that a bad command cannot stop the match on one peer only.
+
+
+Skirmish economy and objectives
+--------------------------------
+
+An opt-in map starts two players with one headquarters each. Its economy
+runs after movement and before combat. Workers gather and deliver one
+resource at a time. Construction reserves one tile when the command is
+accepted, then completes once the worker has spent the required ticks
+beside it. Interrupted work releases the reservation and refunds the cost.
+Paid training jobs complete in queue order. A finished job waits until a
+neighboring tile can fit the new unit.
+
+Buildings use the same unit IDs, ownership checks, health, and targeting
+as squads. They stay on their tiles and give no soldier kills for veterancy.
+After combat, the last standing headquarters determines the winner.
+Losing both headquarters in one tick is a draw. Subsequent turns advance
+the tick counter with gameplay frozen so turn validation and recordings
+remain sequential.

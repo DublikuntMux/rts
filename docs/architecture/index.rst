@@ -83,6 +83,7 @@ Repository layout
            +++ base/ | rts_base: deterministic core
            +++ net/ | rts_net: protocol, turns, replays
            +++ server/ | rts_server: authoritative server, binary rts-server
+           +++ ai/ | rts_ai: skirmish opponent
            +++ assets/ | rts_assets: asset pack and data loaders
            +++ client/ | rts_client: the game, binary rts
            +++ android/ | rts_android: Android entry point
@@ -126,7 +127,10 @@ Crates
    * - ``rts_client``
      - The game: rendering, input, camera, scene-based menu, match sessions,
        saved games, replay library, and settings. Binary ``rts``; ``cargo run`` starts it.
-     - base, assets, net
+     - base, ai, assets, net
+   * - ``rts_ai``
+     - Skirmish opponent that reads the simulation and submits player commands.
+     - base
    * - ``rts_android``
      - Android ``cdylib`` entry point.
      - client
@@ -145,6 +149,7 @@ Crates
    component rts_assets
    component rts_net
    component rts_base
+   component rts_ai
    component Bevy
    component "Tokio\ntokio-tungstenite" as tokio
    component ewebsock
@@ -152,6 +157,8 @@ Crates
    rts_client --> rts_assets
    rts_client --> rts_net
    rts_client --> rts_base
+   rts_client --> rts_ai
+   rts_ai --> rts_base
    rts_client --> Bevy
    rts_client --> ewebsock
    rts_assets --> rts_base
@@ -169,7 +176,7 @@ Crates
 Dependency rules:
 
 * ``rts_base`` never depends on Bevy or any other workspace crate.
-* The server and the future AI never depend on the client.
+* The server and the AI never depend on the client.
 * Protocol code in ``rts_net`` has no socket or renderer dependency, so the
   same turn and replay logic runs in the server, the client, and tests.
 * Dependency versions live in ``[workspace.dependencies]``; crates use
@@ -193,10 +200,6 @@ placeholders:
      - M7
      - Map editor mode plugged into the client. See
        :doc:`../project/map-editor`.
-   * - ``rts_ai``
-     - M8
-     - Skirmish AI player that reads state and emits commands. See
-       :doc:`../project/skirmish-ai`.
 
 How a match runs
 ----------------

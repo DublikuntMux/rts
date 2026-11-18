@@ -86,6 +86,20 @@ strict Sphinx build passed. The workflows have not yet run on GitHub-hosted
 runners, and the Windows, macOS, Linux, Android, and Pages packaging and
 deployment steps were not executed end to end here.
 
+Frontier skirmish
+-----------------
+
+Base tests verify deliveries for both resources, mixed prices, production
+from both building types, contested construction reservations, cancellation
+refunds, and headquarters victory and draw outcomes. Network tests round-trip
+the economy commands, verify sequential terminal turns through replay
+playback, and resume a recording created by the original v7 sandbox encoder.
+The live protocol rejects v7 handshakes and binary setup frames. Frontier
+loads with mirrored headquarters and valid building sprite paths. Tests
+on the bundled map verify that either AI slot gathers both local resources,
+builds and deploys, and defeats a passive opponent. Two active opponents
+both develop and reach a terminal result within 4,000 ticks.
+
 M4 — Combat
 -----------
 

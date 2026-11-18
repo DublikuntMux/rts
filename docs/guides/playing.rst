@@ -11,9 +11,10 @@ The game opens on **Singleplayer**. The sidebar also offers **Multiplayer**,
 **Replays**, **Settings**, and **Quit**. Browsers hide **Quit**.
 
 * **Singleplayer → New game** lists bundled maps with previews. Choose
-  *Crossroads* (four players, 40×40 tiles) or *Proving Grounds* (two players,
-  48×32 tiles), then **Start game**. You control player 1; other players'
-  units stand still.
+  *Frontier* (two players, 34×24 tiles) for a skirmish against the AI.
+  *Crossroads* (four players, 40×40 tiles) and *Proving Grounds* (two players,
+  48×32 tiles) are sandbox maps. You control player 1. Other players on
+  sandbox maps have no automated commander.
 * **Singleplayer → Load game** lists saved solo matches. Filter by map or
   choose **Most recent** / **Oldest first**, select a save, then **Load save**.
   **Delete…** asks for confirmation.
@@ -31,6 +32,25 @@ also affects this threshold. Escape goes back or closes a dialog or dropdown.
 
 On touch screens, tapping **Server address**, **Invite code**, or
 **Player name** focuses the field and opens the platform keyboard.
+
+Frontier skirmish
+-----------------
+
+* Select workers and right-click or tap a wood or gold deposit. Workers
+  collect a load and deliver it to your headquarters, then return for more.
+  The stockpile display shows delivered resources. Move a worker carrying
+  resources next to the headquarters to deliver its load after changing orders.
+* Select a worker and choose **Build barracks**. Place it on a clear,
+  traversable tile. The worker travels next to the tile and constructs the
+  building. The order reserves the ground and charges both resources.
+  Interrupting construction releases the tile and returns the cost.
+* Select the headquarters to **Train worker** or select a barracks to train a
+  **Rifle squad**. Training charges the displayed cost and adds a job to the
+  selected building's queue. Finished units emerge on a neighboring tile
+  with room for them.
+* Select rifle squads and right-click or tap the enemy headquarters to
+  attack. Destroying it wins the skirmish. Your opponent uses the same
+  gathering, construction, and training rules.
 
 The match screen
 ----------------

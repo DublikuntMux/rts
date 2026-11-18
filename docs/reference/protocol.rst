@@ -116,7 +116,7 @@ Example text frames:
 
 .. code-block:: text
 
-   Join(version:7,code:"K7Q2PX",name:"Ada")
+   Join(version:8,code:"K7Q2PX",name:"Ada")
    Input(tick:42,commands:[Move(units:[(0),(1)],target:(11147,14223))])
    Turn(turn:(tick:40,inputs:[(player:(0),commands:[]),(player:(1),commands:[Stop(units:[(7)])])]),hash:17134265448149945174)
 
@@ -133,9 +133,9 @@ Message sequence
    hide footbox
    participant Client as C
    participant Server as S
-   C -> S : Rooms { version: 7 }
+   C -> S : Rooms { version: 8 }
    S --> C : Rooms { rooms }
-   C -> S : Create { version: 7, name, public }\nor Join { version: 7, code, name }
+   C -> S : Create { version: 8, name, public }\nor Join { version: 8, code, name }
    S --> C : Setup (binary)
    S --> C : Lobby { code, player, public, slots }
    C -> C : validate setup,\ncompute checksum

@@ -123,6 +123,11 @@ of ``std::hash::Hasher``:
    * - ``move_orders``
      - Every active order: move-group identity, target, remaining waypoints, segment start,
        segment progress, and speed remainder.
+   * - ``attack_orders``
+     - Active attack targets by attacker ID.
+   * - Skirmish state
+     - Headquarters IDs, outcome, stockpiles, deposits, worker jobs and
+       cargo, and training queues. Present only for opted-in maps.
 
 Rules and terrain are fixed at setup and are not hashed; the setup checksum
 covers them instead. Fractional movement state is hashed, so two peers that

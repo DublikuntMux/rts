@@ -37,8 +37,8 @@ All fields are required; unknown fields are rejected. Colors are sRGB
            gap: 3.0,
        ),
        terrain_detail: (
-           colors_below: 40.0,
-           textures_at: 48.0,
+           colors_below: 12.0,
+           textures_at: 16.0,
        ),
    )
 

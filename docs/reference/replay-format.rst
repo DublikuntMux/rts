@@ -11,7 +11,7 @@ Structure
 .. code-block:: rust
 
    struct Replay {
-       version: u32,          // protocol version, currently 7
+       version: u32,          // replay version (8 for new recordings)
        setup: MatchSetup,     // rules and map text, seed, players
        turns: Vec<Turn>,      // tick 1, 2, 3, ... in order
        final_hash: u64,       // state hash after the last turn
@@ -24,7 +24,7 @@ wrapped for reading:
 
 .. code-block:: text
 
-   (version:7,
+   (version:8,
     setup:(rules:"(tile_capacity:4,terrain:[...],units:[...])",
            map:"(name:\"Proving Grounds\",players:[...],tiles:[...],units:[...])",
            seed:0,players:2),
@@ -45,7 +45,9 @@ Validation
 run a full playback, which checks:
 
 * The text is at most 32 MiB and RON nesting is at most 64 levels.
-* ``version`` equals the current protocol version.
+* ``version`` is 8 for current recordings. Original version 7 sandbox replays
+  are accepted when they are not skirmish matches and contain only ``Move``,
+  ``Stop``, and ``Attack`` commands.
 * There are at most 1,000,000 turns (about 13.9 hours at 20 ticks per second).
 * The setup is valid and the map has exactly ``players`` starts.
 * Each turn is the next tick, with one ascending input per player, and

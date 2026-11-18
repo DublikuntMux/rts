@@ -55,6 +55,9 @@ Top level
      - list
      - Veterancy ranks above the starting rank. Defaults to none. See
        :ref:`ranks`.
+   * - ``economy``
+     - optional structure
+     - Starting resources, prices, capacity, and timings for skirmish maps.
 
 Unknown fields are errors in every structure, so a typo never silently falls
 back to a default.
@@ -138,7 +141,10 @@ Unit types
        for packing and preserves circular selection.
    * - ``speed``
      - decimal tiles/second
-     - Positive speed on terrain with modifier 1.0.
+     - Speed on terrain with modifier 1.0. Positive for mobile units.
+   * - ``building``
+     - boolean, optional
+     - Stationary unit with one health pool and no weapon. Defaults to false.
    * - ``weapon``
      - optional weapon
      - ``Some((range, damage, cooldown))``, or ``None`` (the default) for a
@@ -369,3 +375,20 @@ deals 24 damage per volley.
 
 The bundled sprites are ``textures/units/worker.png`` and
 ``textures/units/soldier.png``, relative to the asset pack root.
+
+
+Skirmish economy
+----------------
+
+A skirmish requires ``worker``, armed ``soldier``, ``headquarters``,
+and ``barracks`` unit kinds. Both buildings set ``building: true``, use
+the full tile capacity, and have one health pool and no weapon. They remain
+stationary and can have zero speed.
+
+In ``economy: Some((...))``, specify ``initial``, ``worker_cost``,
+``barracks_cost``, and ``rifle_cost`` as ``(wood: u32, gold: u32)``
+pairs. Each cost must be positive for both resources. Specify
+``worker_ticks``, ``barracks_ticks``, ``rifle_ticks``, and
+``harvest_ticks`` in whole simulation ticks (20 per second).
+``carry_capacity`` is the stock one worker can carry per trip. Timings
+and carry capacity must be positive.

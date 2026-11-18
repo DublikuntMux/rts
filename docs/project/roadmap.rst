@@ -38,8 +38,8 @@ Status
      - Squads, health, weapons, attack orders, death, veterancy.
    * - M5
      - Economy and production
-     - Not started
-     - Resources, buildings, production, command card.
+     - Partial
+     - Wood, gold, gathering, barracks, training, and skirmish controls.
    * - M6
      - Scripting
      - Not started
@@ -50,8 +50,8 @@ Status
      - In-game editor for ``*.map.ron``.
    * - M8
      - Skirmish AI
-     - Not started
-     - Server-side AI player.
+     - Partial
+     - Solo AI opponent on Frontier.
    * - M9
      - Fog of war, minimap, UX polish
      - Partial
@@ -182,6 +182,13 @@ Veterancy ranks
    rules restores the whole squad once and adds damage per shot; chevrons and
    the details line show the rank.
 
+Frontier skirmish
+   A mirrored two-player map with wood and gold deposits, worker gathering,
+   headquarters and barracks, training, and headquarters victory. The solo
+   AI uses the same command and turn pipeline as the human player. Protocol
+   v8 carries the new commands and setup. Version 7 sandbox replays still
+   load. New pixel art covers terrain, units, buildings, and deposits.
+
 Upcoming
 --------
 
@@ -189,10 +196,7 @@ M4 — Combat
    Attack-move and patrol orders, with a long-press context menu on touch.
 
 M5 — Economy and production
-   Resources and gathering, buildings with placement validation,
-   construction, production queues, rally points, and a supply cap. A HUD with
-   resources and a touch command card. Building visuals and command-card
-   widgets use scene composition.
+   Rally points, a supply cap, and an expanded building and unit roster.
 
 M6 — Scripting
    omnilua in the simulation, deterministic math and random numbers, map
