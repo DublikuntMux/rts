@@ -129,7 +129,8 @@ Crates
        saved games, replay library, and settings. Binary ``rts``; ``cargo run`` starts it.
      - base, ai, assets, net
    * - ``rts_ai``
-     - Skirmish opponent that reads the simulation and submits player commands.
+     - Skirmish opponent that reads its player's fog-of-war view and returns
+       player commands, at Easy, Normal, or Hard difficulty.
      - base
    * - ``rts_android``
      - Android ``cdylib`` entry point.

@@ -74,7 +74,8 @@ Library records and saved games
 The client stores replay RON in ``replays/<id>.data.ron`` and a companion
 ``<id>.meta.ron`` with the name, map, player count, tick count, save time in
 Unix milliseconds, and setup. Saved solo games use the same pair under
-``saves/``. Metadata supports listing and previews; the data document is the
+``saves/``; their metadata also records the opponent's ``difficulty``
+(``Easy``, ``Normal``, or ``Hard``; Normal when absent). Metadata supports listing and previews; the data document is the
 replay format above. Browsers store compressed documents in ``localStorage``
 under ``rts/<path>`` keys and export plain RON as ``match.replay.ron``.
 See :doc:`../guides/replays` for platform paths.

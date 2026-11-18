@@ -48,8 +48,9 @@ Actions
 
    * - Action
      - Effect
-   * - ``NewGame { map }``, ``LoadGame { id }``, ``SaveGame``
-     - Start a catalog map, resume a save, or save a running solo match.
+   * - ``NewGame { map, difficulty }``, ``LoadGame { id }``, ``SaveGame``
+     - Start a catalog map against an opponent of that difficulty, resume a
+       save at its stored difficulty, or save a running solo match.
    * - ``Connect { url }``, ``Disconnect``, ``RefreshRooms``
      - Open or close the server connection, or request its public rooms.
    * - ``CreateRoom { name, public }``, ``JoinRoom { name, code }``
@@ -251,7 +252,9 @@ turns append to it. Online matches cannot be saved as games.
 ``library.rs`` keeps two shelves: ``saves/`` and ``replays/``. Each record
 contains ``<id>.meta.ron`` and ``<id>.data.ron``. The data is replay RON;
 ``RecordMeta`` contains ``name``, ``map``, ``players``, ``ticks``,
-``saved_at`` (Unix milliseconds), and ``setup`` for previews. IDs use
+``saved_at`` (Unix milliseconds), ``setup`` for previews, and, for saved
+games, the opponent's ``difficulty`` (absent in older saves, which resume at
+Normal). IDs use
 13-digit millisecond stamps, incremented when necessary to avoid collisions.
 Names use one more than the highest automatic number in use, such as
 **Save 01** or **Replay 03**. Data is written before metadata. Unreadable

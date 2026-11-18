@@ -51,7 +51,7 @@ Status
    * - M8
      - Skirmish AI
      - Partial
-     - Solo AI opponent on Frontier.
+     - Fog-aware solo opponent with Easy, Normal, and Hard levels.
    * - M9
      - Fog of war, minimap, UX polish
      - Partial
@@ -195,6 +195,14 @@ Scout
    war. The optional ``economy.scout`` entry keeps earlier rules, v8 replays,
    and state hashes valid.
 
+Fog-aware skirmish AI
+   The solo opponent decides only from its player's fog-of-war view. It
+   trains scouts at the barracks, sends them to unexplored cells, remembers
+   enemy buildings it has seen, and attacks what it knows. Easy, Normal, and
+   Hard share sight and economy and differ in scout pattern, reaction cadence,
+   and attack timing. The skirmish New game page chooses the level (Normal by
+   default); restarts and saved games keep it. See :doc:`skirmish-ai`.
+
 Upcoming
 --------
 
@@ -214,8 +222,8 @@ M7 — Map editor
    :doc:`map-editor`.
 
 M8 — Skirmish AI
-   A server-side AI player that uses the command API. See
-   :doc:`skirmish-ai`.
+   AI players in online rooms, run by the server through the same view and
+   command API. See :doc:`skirmish-ai`.
 
 M9 — Fog of war, minimap, UX polish
    The terrain minimap with tap and drag camera navigation is implemented in

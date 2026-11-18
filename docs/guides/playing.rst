@@ -14,7 +14,11 @@ The game opens on **Singleplayer**. The sidebar also offers **Multiplayer**,
   *Frontier* (two players, 34×24 tiles) for a skirmish against the AI.
   *Crossroads* (four players, 40×40 tiles) and *Proving Grounds* (two players,
   48×32 tiles) are sandbox maps. You control player 1. Other players on
-  sandbox maps have no automated commander.
+  sandbox maps have no automated commander. For a skirmish, choose the
+  opponent's difficulty below the preview: **Easy**, **Normal** (the
+  default), or **Hard**. Every level sees and earns the same as you; harder
+  opponents scout toward you sooner, react faster, and attack earlier.
+  Saved games keep their difficulty.
 * **Singleplayer → Load game** lists saved solo matches. Filter by map or
   choose **Most recent** / **Oldest first**, select a save, then **Load save**.
   **Delete…** asks for confirmation.
@@ -53,7 +57,8 @@ Frontier skirmish
   with room for them.
 * Select rifle squads and right-click or tap the enemy headquarters to
   attack. Destroying it wins the skirmish. Your opponent uses the same
-  gathering, construction, and training rules.
+  gathering, construction, and training rules, and the same fog of war: it
+  must scout to find you.
 
 The match screen
 ----------------

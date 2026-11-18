@@ -116,8 +116,8 @@ playback, and resume a recording created by the original v7 sandbox encoder.
 The live protocol rejects v7 handshakes and binary setup frames. Frontier
 loads with mirrored headquarters and valid building sprite paths. Tests
 on the bundled map verify that either AI slot gathers both local resources,
-builds and deploys, and defeats a passive opponent. Two active opponents
-both develop and reach a terminal result within 4,000 ticks.
+builds and deploys, and defeats a passive opponent. The fog-aware opponent
+tests below replace the original full-knowledge checks.
 
 Scout
 -----
@@ -137,6 +137,30 @@ workspace ``wasm32`` check, and the strict Sphinx build passed. The
 fails intermittently, on the base commit as well. No native window was driven,
 because this desktop had no input-automation tool, so the art was checked only
 as a PNG.
+
+Fog-aware skirmish AI
+---------------------
+
+**Opponent and difficulty (2026-11-18).** ``rts_ai`` tests run Frontier with
+``Sim::enforce_fog``, so fog-limited routing, sight-checked targets, and
+gather visibility all apply to the opponent's translated commands. A
+hidden-world test runs each difficulty on Frontier and on a variant that
+differs only where the AI player has not looked: the enemy headquarters and
+start, a deposit's stock, and far terrain. Its decisions are identical on
+every tick until its frames differ, and it trains and dispatches a scout
+before then. Every difficulty, from either slot, trains a scout, sends it into
+unexplored ground, builds, attacks, and defeats a passive opponent. Each level
+issues orders only on its cadence. Hard's first scout target is nearest the
+enemy start and Easy's is farthest, and attacks start in Hard, Normal, Easy
+order. Hard against Easy, Normal against Normal, and Easy against Hard all
+reach a result within 30 minutes, and Hard wins from either slot. Client
+tests check that the New game page defaults to Normal and sends the chosen
+level. Session tests check that a Hard save loads at Hard even after the
+session moves to another level, and that Restart keeps the level. Library
+tests check that metadata round-trips the level and that metadata without it
+still lists. Workspace tests (354), workspace Clippy with all targets, and
+the ``wasm32-unknown-unknown`` check passed on the shared working tree. No
+interactive desktop, browser, or Android session was run.
 
 M4 — Combat
 -----------
