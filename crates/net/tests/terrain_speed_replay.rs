@@ -24,8 +24,8 @@ fn mixed_terrain_replay_roundtrips_commands_and_fractional_movement() {
         seed: 23,
         players: 1,
     };
-    let mut sim = setup.simulation().unwrap();
     let mut replay = Replay::new(setup).unwrap();
+    let mut sim = replay.simulation().unwrap();
     let mut hashes = Vec::new();
     for tick in 1..=160 {
         let commands = match tick {
@@ -76,7 +76,7 @@ fn mixed_terrain_replay_roundtrips_commands_and_fractional_movement() {
     assert_eq!(sim.move_target(UnitId(0)), Some(center(0, 0)));
     let loaded = Replay::from_ron(&replay.to_ron().unwrap()).unwrap();
     assert_eq!(loaded, replay);
-    let mut reconstructed = loaded.setup.simulation().unwrap();
+    let mut reconstructed = loaded.simulation().unwrap();
     for (turn, hash) in loaded.turns.iter().zip(hashes) {
         turn.apply(&mut reconstructed).unwrap();
         assert_eq!(reconstructed.state_hash(), hash, "tick {}", turn.tick);

@@ -44,8 +44,8 @@ fn replay_verifies_convergence_and_blockers_moved_by_commands() {
         seed: 17,
         players: 1,
     };
-    let mut sim = setup.simulation().unwrap();
     let mut replay = Replay::new(setup).unwrap();
+    let mut sim = replay.simulation().unwrap();
     let goal = center(2, 0);
     for tick in 1..=8 {
         let commands = match tick {
@@ -107,8 +107,8 @@ fn mixed_speed_group_replay_reproduces_every_hash_through_membership_changes() {
         seed: 17,
         players: 1,
     };
-    let mut sim = setup.simulation().unwrap();
     let mut replay = Replay::new(setup).unwrap();
+    let mut sim = replay.simulation().unwrap();
     let mut hashes = Vec::new();
     for tick in 1..=180 {
         let commands = match tick {
@@ -153,7 +153,7 @@ fn mixed_speed_group_replay_reproduces_every_hash_through_membership_changes() {
         assert_eq!(sim.move_target(id), None);
     }
     let loaded = Replay::from_ron(&replay.to_ron().unwrap()).unwrap();
-    let mut playback = loaded.setup.simulation().unwrap();
+    let mut playback = loaded.simulation().unwrap();
     for (turn, hash) in loaded.turns.iter().zip(hashes) {
         turn.apply(&mut playback).unwrap();
         assert_eq!(playback.state_hash(), hash, "tick {}", turn.tick);

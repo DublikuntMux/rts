@@ -407,8 +407,8 @@ fn setup_rejects_malformed_oversized_invalid_and_different_slot_count() {
 #[test]
 fn replay_moves_stops_roundtrips_and_reproduces_every_hash() {
     let setup = setup();
-    let mut sim = setup.simulation().unwrap();
     let mut replay = Replay::new(setup).unwrap();
+    let mut sim = replay.simulation().unwrap();
     assert_eq!(replay.playback().unwrap().state_hash(), sim.state_hash());
     for tick in 1..=10 {
         let commands = match tick {
@@ -433,7 +433,7 @@ fn replay_rejects_invalid_continuity_versions_players_and_corruption() {
     let mut replay = Replay::new(setup()).unwrap();
     assert!(replay.push(turn(2, vec![]), 0).is_err());
     assert_eq!(replay.turns, []);
-    let mut sim = replay.setup.simulation().unwrap();
+    let mut sim = replay.simulation().unwrap();
     let first = turn(1, vec![move_command()]);
     first.apply(&mut sim).unwrap();
     replay.push(first.clone(), sim.state_hash()).unwrap();

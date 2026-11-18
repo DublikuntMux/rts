@@ -77,7 +77,7 @@ fn corrupt_view_replays_are_rejected() {
 #[test]
 fn full_replays_still_load_as_recordings() {
     let mut replay = Replay::new(setup()).unwrap();
-    let mut sim = setup().simulation().unwrap();
+    let mut sim = replay.simulation().unwrap();
     for tick in 1..=5 {
         let turn = rts_net::Turn {
             tick,

@@ -39,8 +39,8 @@ fn terminal_skirmish_turns_advance_in_order_and_replay_with_frozen_gameplay() {
         players: 2,
         seed: 0,
     };
-    let mut replay = Replay::new(setup.clone()).unwrap();
-    let mut sim = setup.simulation().unwrap();
+    let mut replay = Replay::new(setup).unwrap();
+    let mut sim = replay.simulation().unwrap();
     let winner = PlayerId(0);
     let hq = sim.headquarters(winner).unwrap();
     let initial = sim.resources(winner).unwrap();

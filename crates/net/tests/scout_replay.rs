@@ -23,8 +23,8 @@ fn record(rules: &str) -> (Replay, rts_base::Sim) {
         players: 2,
         seed: 0,
     };
-    let mut replay = Replay::new(setup.clone()).unwrap();
-    let mut sim = setup.simulation().unwrap();
+    let mut replay = Replay::new(setup).unwrap();
+    let mut sim = replay.simulation().unwrap();
     let barracks = UnitId(2);
     for tick in 1..=200 {
         let commands = match tick {
