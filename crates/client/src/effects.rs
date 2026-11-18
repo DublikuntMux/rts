@@ -145,7 +145,7 @@ fn spawn_shots(
         .iter()
         .map(|(visual, transform)| (visual.0, transform))
         .collect();
-    let current = game.sim.tick();
+    let current = game.view.tick();
     let now = time.elapsed_secs();
     let mut room = MAX_SHOTS.saturating_sub(live.iter().count());
     // Newest volleys first, so catch-up keeps the shots that are still visible.
@@ -189,7 +189,7 @@ fn shot_lines<'a>(
     volley: &'a Volley,
     roots: &'a HashMap<UnitId, &Transform>,
 ) -> impl Iterator<Item = (Vec2, Vec2)> + 'a {
-    let rules = game.sim.rules();
+    let rules = game.view.rules();
     let shooter = rules.unit(volley.shooter_kind);
     let target = rules.unit(volley.target_kind);
     // A unit without a visual yet stands exactly on its simulation position.
@@ -313,8 +313,7 @@ mod tests {
     fn step(app: &mut App, ticks: u32) {
         let mut game = app.world_mut().resource_mut::<Match>();
         for _ in 0..ticks {
-            game.sim.step();
-            game.record_volleys();
+            game.step();
         }
     }
 
@@ -337,7 +336,7 @@ mod tests {
         assert_eq!(shots.len(), 4);
         assert_eq!(app.world().resource::<Match>().volleys.len(), 0);
         // Lone units stand on their simulation positions, so soldiers are drawn from there.
-        let rules = app.world().resource::<Match>().sim.rules().clone();
+        let rules = app.world().resource::<Match>().view.rules().clone();
         let definition = rules.unit(rts_base::UnitKind(0));
         let soldiers: Vec<Vec2> = [64.0, 320.0]
             .into_iter()

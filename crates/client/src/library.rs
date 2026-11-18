@@ -1,13 +1,12 @@
 //! Saved games and the replay library.
 //!
-//! Both shelves store recorded matches ([`Replay`]): a replay is watched, and a saved game is a
+//! Both shelves store recorded matches ([`Recording`]): a replay is watched, and a saved game is a
 //! solo match that continues after its recorded turns are played back. Each record has a small
 //! metadata document for listing and previews and a data document with the replay itself.
 
 use bevy::prelude::*;
 use rts_ai::Difficulty;
-use rts_base::Sim;
-use rts_net::{MatchSetup, Replay};
+use rts_net::{MatchSetup, Recording};
 use serde::{Deserialize, Serialize};
 
 use crate::storage::{Store, now_millis};
@@ -51,7 +50,9 @@ pub struct RecordMeta {
     pub ticks: u32,
     /// Milliseconds since the Unix epoch.
     pub saved_at: u64,
-    /// Rules and map, for the preview.
+    /// Rules and map, for the preview. Empty for a player-perspective recording, which never
+    /// holds the whole map.
+    #[serde(default, skip_serializing_if = "is_empty")]
     pub setup: MatchSetup,
     /// The opponent's difficulty in a saved game. Saves from before difficulty levels
     /// resume at the default level.
@@ -60,14 +61,18 @@ pub struct RecordMeta {
 }
 
 impl RecordMeta {
-    fn new(name: String, replay: &Replay, difficulty: Option<Difficulty>) -> Self {
+    fn new(name: String, recording: &Recording, difficulty: Option<Difficulty>) -> Self {
+        let (map, setup) = match recording {
+            Recording::Match(replay) => (map_name(&replay.setup), replay.setup.clone()),
+            Recording::View(replay) => (replay.map.clone(), MatchSetup::default()),
+        };
         Self {
             name,
-            map: map_name(&replay.setup),
-            players: replay.setup.players,
-            ticks: u32::try_from(replay.turns.len()).unwrap_or(u32::MAX),
+            map,
+            players: recording.players(),
+            ticks: recording.ticks(),
             saved_at: now_millis(),
-            setup: replay.setup.clone(),
+            setup,
             difficulty,
         }
     }
@@ -131,9 +136,12 @@ impl Library {
     pub fn add(
         &mut self,
         kind: Shelf,
-        replay: &Replay,
+        replay: &Recording,
         difficulty: Option<Difficulty>,
     ) -> Result<Record, String> {
+        if kind == Shelf::Saves && !matches!(replay, Recording::Match(_)) {
+            return Err("Only local matches can be saved.".into());
+        }
         let data = replay
             .to_ron()
             .map_err(|error| format!("Cannot save: {error}"))?;
@@ -157,16 +165,18 @@ impl Library {
         Ok(record)
     }
 
-    /// Reads and verifies a stored recording. Also returns the simulation after its last turn.
+    /// Reads and verifies a stored recording.
     ///
     /// # Errors
     /// Returns an error for a missing, unreadable, or corrupt record.
-    pub fn load(&self, kind: Shelf, id: &str) -> Result<(Replay, Sim), String> {
+    pub fn load(&self, kind: Shelf, id: &str) -> Result<Recording, String> {
         let text = self
             .store
             .read(&format!("{}/{id}{DATA}", kind.folder()))?
             .ok_or("This file no longer exists.")?;
-        Replay::from_ron_with_sim(&text).map_err(|error| format!("Cannot load: {error}"))
+        Recording::from_ron(&text)
+            .map(|(recording, _)| recording)
+            .map_err(|error| format!("Cannot load: {error}"))
     }
 
     /// Reads a stored recording's text without verifying it, for export.
@@ -261,6 +271,10 @@ impl Library {
 }
 
 /// The map's display name from its setup, or a placeholder.
+fn is_empty(setup: &MatchSetup) -> bool {
+    *setup == MatchSetup::default()
+}
+
 pub fn map_name(setup: &MatchSetup) -> String {
     rts_base::MapData::from_ron(&setup.map).map_or_else(|_| "Unknown map".into(), |map| map.name)
 }
@@ -278,21 +292,21 @@ pub fn duration(ticks: u32) -> String {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use rts_base::PlayerId;
-    use rts_net::{PlayerInput, Turn};
+    use rts_base::{PlayerId, PlayerKnowledge};
+    use rts_net::{PlayerInput, Replay, Turn, ViewReplay};
 
     use super::*;
     use crate::storage::tests::temporary_store;
 
-    pub fn replay(turns: u32) -> Replay {
+    pub fn replay(turns: u32) -> Recording {
         let setup = MatchSetup {
             rules: include_str!("../../../assets/data/core.rules.ron").into(),
             map: include_str!("../../../assets/maps/proving_grounds.map.ron").into(),
             seed: 0,
             players: 2,
         };
-        let mut sim = setup.simulation().unwrap();
         let mut replay = Replay::new(setup).unwrap();
+        let mut sim = replay.simulation().unwrap();
         for tick in 1..=turns {
             let turn = Turn {
                 tick,
@@ -306,7 +320,48 @@ mod tests {
             turn.apply(&mut sim).unwrap();
             replay.push(turn, sim.state_hash()).unwrap();
         }
-        replay
+        Recording::Match(replay)
+    }
+
+    fn view_replay(turns: u32) -> Recording {
+        let setup = MatchSetup {
+            rules: include_str!("../../../assets/data/core.rules.ron").into(),
+            map: include_str!("../../../assets/maps/frontier.map.ron").into(),
+            seed: 0,
+            players: 2,
+        };
+        let mut sim = setup.simulation().unwrap();
+        let mut knowledge = PlayerKnowledge::new(&sim, PlayerId(1));
+        let mut replay =
+            ViewReplay::new("Frontier".into(), setup.rules, knowledge.intro(&sim)).unwrap();
+        replay.push(knowledge.observe(&sim)).unwrap();
+        for _ in 0..turns {
+            sim.step();
+            replay.push(knowledge.observe(&sim)).unwrap();
+        }
+        Recording::View(replay)
+    }
+
+    #[test]
+    fn player_perspective_replays_keep_no_map_and_cannot_be_saves() {
+        let store = temporary_store("perspective");
+        let mut library = Library::new(store.clone());
+        let recording = view_replay(4);
+        assert!(library.add(Shelf::Saves, &recording, None).is_err());
+        let record = library.add(Shelf::Replays, &recording, None).unwrap();
+        assert_eq!(record.meta.map, "Frontier");
+        assert_eq!(record.meta.ticks, 4);
+        assert_eq!(record.meta.setup, MatchSetup::default());
+        let meta = store
+            .read(&format!("replays/{}.meta.ron", record.id))
+            .unwrap()
+            .unwrap();
+        assert!(!meta.contains("setup") && !meta.contains("tiles"));
+        assert_eq!(
+            Library::new(store).records(Shelf::Replays),
+            std::slice::from_ref(&record)
+        );
+        assert_eq!(library.load(Shelf::Replays, &record.id).unwrap(), recording);
     }
 
     #[test]
@@ -338,9 +393,7 @@ mod tests {
                 .difficulty,
             Some(Difficulty::Hard)
         );
-        let (loaded, sim) = reopened.load(Shelf::Saves, &first.id).unwrap();
-        assert_eq!(loaded, replay(3));
-        assert_eq!(sim.tick(), 3);
+        assert_eq!(reopened.load(Shelf::Saves, &first.id).unwrap(), replay(3));
 
         library.delete(Shelf::Saves, &second.id).unwrap();
         assert_eq!(library.records(Shelf::Saves).len(), 1);

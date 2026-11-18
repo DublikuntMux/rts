@@ -11,7 +11,7 @@ use bevy::{
     },
 };
 use rts_assets::{Graphics, TerrainDetail};
-use rts_base::{IVec2 as SimPos, Rules, TILE};
+use rts_base::{IVec2 as SimPos, PlayerView, Rules, TILE, TileVisibility};
 
 use crate::{
     camera::{CameraControl, RtsCamera},
@@ -56,6 +56,7 @@ impl Plugin for MapPlugin {
                     .in_set(UpdateZoomDetail)
                     .run_if(in_state(AppState::InGame)),
             )
+            .add_systems(Update, update_fog.run_if(in_state(AppState::InGame)))
             .add_systems(
                 Update,
                 finish_terrain_textures.run_if(resource_exists::<PendingTerrainTextures>),
@@ -111,17 +112,12 @@ fn spawn_terrain(
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let terrain = game.sim.terrain();
-    let tiles = terrain
-        .tiles()
-        .iter()
-        .map(|id| Some(TileData::from_tileset_index(u16::from(id.0))))
-        .collect();
-    let chunk_size = terrain.size().as_uvec2();
-    let bounds = Rect::from_corners(Vec2::ZERO, to_world(terrain.world_size()));
-    let colors = images.add(terrain_colors(game.sim.rules()));
+    let tiles = fog_tiles(&game.view);
+    let chunk_size = game.view.size().as_uvec2();
+    let bounds = Rect::from_corners(Vec2::ZERO, to_world(game.view.world_size()));
+    let colors = images.add(terrain_colors(game.view.rules()));
     let textures = game
-        .sim
+        .view
         .rules()
         .terrain_types()
         .iter()
@@ -155,6 +151,53 @@ fn spawn_terrain(
     });
     commands.insert_resource(PendingTerrainTextures(textures));
     commands.insert_resource(MapBounds(bounds));
+}
+
+/// Tint of explored terrain out of sight.
+const REMEMBERED_TINT: Color = Color::srgb(0.42, 0.42, 0.48);
+
+/// Terrain as the local player knows it: unexplored tiles are black, remembered tiles are dim.
+pub fn fog_tiles(view: &PlayerView) -> Vec<Option<TileData>> {
+    let size = view.size();
+    view.terrain_tiles()
+        .iter()
+        .enumerate()
+        .map(|(index, terrain)| {
+            let index = i32::try_from(index).expect("bounded map size");
+            let tile = SimPos::new(index % size.x, index / size.x);
+            Some(terrain.map_or_else(
+                || TileData {
+                    color: Color::BLACK,
+                    ..TileData::from_tileset_index(0)
+                },
+                |terrain| TileData {
+                    color: if view.visibility(tile) == TileVisibility::Visible {
+                        Color::WHITE
+                    } else {
+                        REMEMBERED_TINT
+                    },
+                    ..TileData::from_tileset_index(u16::from(terrain.0))
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Redraws fog after each applied tick.
+fn update_fog(
+    game: Res<Match>,
+    mut drawn: Local<Option<u32>>,
+    mut chunks: Query<&mut TilemapChunkTileData, With<TerrainChunk>>,
+) {
+    let tick = game.view.tick();
+    if *drawn == Some(tick) && !game.is_added() {
+        return;
+    }
+    *drawn = Some(tick);
+    let size = game.view.size().as_uvec2();
+    for mut data in &mut chunks {
+        *data = TilemapChunkTileData::from_y_down_tiles(size, fog_tiles(&game.view));
+    }
 }
 
 fn clear_map(mut commands: Commands, mut detail: ResMut<ZoomDetail>) {
@@ -236,7 +279,7 @@ fn finish_terrain_textures(
         .iter()
         .map(|handle| handle.as_ref().and_then(|handle| images.get(handle)))
         .collect();
-    match textured_tileset(game.sim.rules(), &sources) {
+    match textured_tileset(game.view.rules(), &sources) {
         Ok(image) => tilesets.detailed = Some(images.add(image)),
         Err(error) => error!("cannot build terrain tileset: {error}"),
     }
@@ -410,6 +453,37 @@ mod tests {
         let data = tileset.data.unwrap();
         assert_eq!(&data[..16], &[0x4a, 0x7a, 0x3e, 255].repeat(4));
         assert_eq!(&data[16..32], source.data.as_ref().unwrap());
+    }
+
+    #[test]
+    fn fog_paints_unexplored_black_and_remembered_terrain_dim() {
+        let row = ".".repeat(30);
+        let map = rts_base::MapData::from_ron(&format!(
+            r#"(name: "fog", players: [(start: (1.5, 0.5))], tiles: ["{row}"],
+            units: [(kind: "worker", owner: 0, pos: (1.5, 0.5))])"#
+        ))
+        .unwrap();
+        let mut sim = rts_base::Sim::new(rules(), &map).unwrap();
+        let (mut knowledge, mut view) = PlayerView::observe(&sim, rts_base::PlayerId(0));
+        let tiles = fog_tiles(&view);
+        assert_eq!(tiles.len(), 30);
+        assert_eq!(tiles[1].unwrap().color, Color::WHITE);
+        assert_eq!(tiles[29].unwrap().color, Color::BLACK);
+        sim.step_with_commands([(
+            rts_base::PlayerId(0),
+            rts_base::Command::Move {
+                units: vec![rts_base::UnitId(0)],
+                target: SimPos::new(28 * TILE + TILE / 2, TILE / 2),
+            },
+        )]);
+        view.apply(knowledge.observe(&sim)).unwrap();
+        for _ in 0..200 {
+            sim.step();
+            view.apply(knowledge.observe(&sim)).unwrap();
+        }
+        let tiles = fog_tiles(&view);
+        assert_eq!(tiles[1].unwrap().color, REMEMBERED_TINT);
+        assert_eq!(tiles[29].unwrap().color, Color::WHITE);
     }
 
     #[test]

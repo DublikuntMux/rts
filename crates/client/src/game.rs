@@ -4,7 +4,8 @@ use bevy::{
     asset::{LoadState, LoadedFolder},
     prelude::*,
 };
-use rts_base::{Command, PlayerId, Sim, TICK_RATE, Volley};
+use rts_ai::{Difficulty, Opponent};
+use rts_base::{Command, PlayerId, PlayerKnowledge, PlayerView, Sim, TICK_RATE, Volley};
 use rts_net::{MAX_COMMANDS_PER_TURN, MatchSetup};
 
 use rts_assets::{Graphics, MapAsset, RulesAsset};
@@ -24,22 +25,80 @@ pub enum AppState {
     InGame,
 }
 
-/// The running match.
+/// The running match as this client knows it.
+///
+/// Everything the interface draws comes from [`Match::view`], the local player's fog-filtered
+/// knowledge. Local matches also hold the authoritative simulation in [`LocalAuthority`]; online
+/// matches never see it.
 #[derive(Resource)]
 pub struct Match {
-    pub sim: Sim,
+    pub view: PlayerView,
+    local: Option<LocalAuthority>,
     /// The player this client controls.
     pub local_player: PlayerId,
     pub accepts_orders: bool,
+    /// Orders in view IDs, waiting for the next delayed batch.
     pub pending: Vec<Command>,
     /// Volleys of stepped ticks, by tick, until the effects layer draws them.
     pub volleys: Vec<(u32, Volley)>,
 }
 
-impl Match {
-    pub const fn new(sim: Sim, local_player: PlayerId, accepts_orders: bool) -> Self {
+/// The authoritative simulation of a local match and what each player knows of it.
+pub struct LocalAuthority {
+    pub sim: Sim,
+    /// The local player's knowledge; it produces [`Match::view`]'s frames.
+    pub knowledge: PlayerKnowledge,
+    /// Computer opponents, each limited to its own knowledge.
+    pub opponents: Vec<Seat>,
+}
+
+/// A computer opponent and the view it plays from.
+pub struct Seat {
+    pub knowledge: PlayerKnowledge,
+    pub view: PlayerView,
+    pub opponent: Opponent,
+}
+
+impl Seat {
+    pub fn new(sim: &Sim, player: PlayerId, difficulty: Difficulty) -> Self {
+        let (knowledge, view) = PlayerView::observe(sim, player);
+        let opponent = Opponent::new(&view, difficulty);
         Self {
+            knowledge,
+            view,
+            opponent,
+        }
+    }
+
+    /// This tick's orders, bound to the authority.
+    pub fn commands(&mut self, sim: &Sim) -> Vec<Command> {
+        self.opponent
+            .commands(&self.view)
+            .iter()
+            .filter_map(|command| self.knowledge.translate_command(sim, command))
+            .collect()
+    }
+}
+
+impl Match {
+    /// A local match on `sim`, seen by `local_player`.
+    pub fn new(sim: Sim, local_player: PlayerId, accepts_orders: bool) -> Self {
+        let (knowledge, view) = PlayerView::observe(&sim, local_player);
+        let mut game = Self::online(view, accepts_orders);
+        game.local = Some(LocalAuthority {
             sim,
+            knowledge,
+            opponents: Vec::new(),
+        });
+        game
+    }
+
+    /// A match whose frames come from elsewhere: a server or a player-perspective replay.
+    pub const fn online(view: PlayerView, accepts_orders: bool) -> Self {
+        let local_player = view.player();
+        Self {
+            view,
+            local: None,
             local_player,
             accepts_orders,
             pending: Vec::new(),
@@ -47,12 +106,83 @@ impl Match {
         }
     }
 
-    /// Keeps the volleys of the tick just stepped. Several ticks may run before a frame
+    pub const fn local_mut(&mut self) -> Option<&mut LocalAuthority> {
+        self.local.as_mut()
+    }
+
+    /// The authoritative simulation of a local match.
+    pub fn local_sim(&self) -> Option<&Sim> {
+        self.local.as_ref().map(|local| &local.sim)
+    }
+
+    /// Updates every view after the local simulation stepped.
+    pub fn observe_local(&mut self) {
+        let Some(local) = &mut self.local else {
+            return;
+        };
+        let frame = local.knowledge.observe(&local.sim);
+        for seat in &mut local.opponents {
+            seat.view
+                .apply(seat.knowledge.observe(&local.sim))
+                .expect("frames from the local authority");
+        }
+        self.view
+            .apply(frame)
+            .expect("frames from the local authority");
+        self.record_volleys();
+    }
+
+    /// Steps a local match with no orders.
+    #[cfg(test)]
+    pub fn step(&mut self) {
+        if let Some(local) = &mut self.local {
+            local.sim.step();
+        }
+        self.observe_local();
+    }
+
+    /// Steps a local match with orders in view IDs. For tests.
+    #[cfg(test)]
+    pub fn step_with(&mut self, commands: impl IntoIterator<Item = (PlayerId, Command)>) {
+        if let Some(local) = &mut self.local {
+            let bound: Vec<_> = commands
+                .into_iter()
+                .filter_map(|(player, command)| {
+                    let command = if player == local.knowledge.player() {
+                        local.knowledge.translate_command(&local.sim, &command)?
+                    } else {
+                        command
+                    };
+                    Some((player, command))
+                })
+                .collect();
+            local.sim.step_with_commands(bound);
+        }
+        self.observe_local();
+    }
+
+    /// Removes a unit from a local match and steps, so every view sees it vanish. For tests.
+    #[cfg(test)]
+    pub fn remove_unit(&mut self, id: rts_base::UnitId) {
+        if let Some(local) = &mut self.local {
+            local.sim.remove_unit(id);
+        }
+        self.step();
+    }
+
+    /// Restarts a local match on another simulation. For tests.
+    #[cfg(test)]
+    pub fn replace_sim(&mut self, sim: Sim) {
+        let accepts_orders = self.accepts_orders;
+        *self = Self::new(sim, self.local_player, accepts_orders);
+    }
+
+    /// Keeps the volleys of the tick just applied. Several ticks may run before a frame
     /// draws them; only the newest are kept if nothing drains them.
     pub fn record_volleys(&mut self) {
         const LIMIT: usize = 256;
-        let tick = self.sim.tick();
-        let volleys = self.sim.volleys().iter().cloned();
+        let tick = self.view.tick();
+        let volleys = self.view.volleys().iter().cloned();
         self.volleys.extend(volleys.map(|volley| (tick, volley)));
         let excess = self.volleys.len().saturating_sub(LIMIT);
         self.volleys.drain(..excess);

@@ -71,7 +71,7 @@ impl Plugin for HudPlugin {
             )
             .add_systems(
                 PostUpdate,
-                minimap::update_minimap
+                (minimap::update_minimap, minimap::update_minimap_fog)
                     .before(UiSystems::Layout)
                     .run_if(in_state(AppState::InGame)),
             );
@@ -558,29 +558,29 @@ fn update_selection(
     let units: Vec<_> = selection
         .units
         .iter()
-        .filter_map(|id| game.sim.unit(*id).map(|unit| (*id, unit)))
+        .filter_map(|id| game.view.unit(*id).map(|unit| (*id, unit)))
         .collect();
     let title = match units.as_slice() {
         [] => "No units selected".into(),
-        [(_, unit)] => unit_name(&game.sim.rules().unit(unit.kind).id),
+        [(_, unit)] => unit_name(&game.view.rules().unit(unit.kind).id),
         units => format!("{} units selected", units.len()),
     };
     let total_health: i64 = units.iter().map(|(_, unit)| unit.health()).sum();
     let max_health: i64 = units
         .iter()
         .map(|(_, unit)| {
-            let definition = game.sim.rules().unit(unit.kind);
+            let definition = game.view.rules().unit(unit.kind);
             i64::from(definition.max_health) * i64::from(definition.squad)
         })
         .sum();
     let soldiers: usize = units.iter().map(|(_, unit)| unit.alive()).sum();
     let veterancy = match units.as_slice() {
-        [(_, unit)] => match game.sim.rules().rank(unit.kills) {
+        [(_, unit)] => match game.view.rules().rank(unit.kills) {
             0 if unit.kills == 0 => String::new(),
             0 => format!("  ·  {} kills", unit.kills),
             rank => format!(
                 "  ·  {}, {} kills",
-                game.sim.rules().ranks()[rank - 1].name,
+                game.view.rules().ranks()[rank - 1].name,
                 unit.kills
             ),
         },
@@ -616,7 +616,7 @@ fn update_selection(
     }
     for mut image in &mut portrait_image {
         if let Some((_, unit)) = units.first() {
-            image.image = assets.load(game.sim.rules().unit(unit.kind).sprite.clone());
+            image.image = assets.load(game.view.rules().unit(unit.kind).sprite.clone());
             image.color = graphics.player_color(unit.owner.0);
         }
     }
@@ -677,7 +677,7 @@ fn spawn_roster(
                 BorderColor::all(EDGE),
                 observe(select_portrait),
                 children![unit_image(
-                    assets.load(game.sim.rules().unit(unit.kind).sprite.clone()),
+                    assets.load(game.view.rules().unit(unit.kind).sprite.clone()),
                     graphics.player_color(unit.owner.0),
                 )],
             ));
@@ -741,7 +741,7 @@ fn selection_state(game: &Match, units: &[(UnitId, &Unit)]) -> &'static str {
     }
     if units
         .iter()
-        .any(|(id, _)| game.sim.move_target(*id).is_some())
+        .any(|(id, _)| game.view.move_target(*id).is_some())
     {
         "Moving"
     } else if units

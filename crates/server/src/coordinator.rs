@@ -561,7 +561,7 @@ impl Coordinator {
             return Err("invalid server setup");
         }
         let mut sim = sim;
-        sim.enforce_combat_sight();
+        sim.enforce_fog();
         let players = u8::try_from(room.slots.len()).expect("bounded player count");
         let mut knowledge: Vec<_> = (0..players)
             .map(|player| PlayerKnowledge::new(&sim, PlayerId(player)))

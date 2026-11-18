@@ -1,4 +1,4 @@
-//! A terrain image built once, with live unit markers and a camera footprint.
+//! The known terrain, redrawn as fog changes, with live unit markers and a camera footprint.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -16,7 +16,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use rts_assets::Graphics;
-use rts_base::{Sim, UnitId};
+use rts_base::{IVec2, PlayerView, TileVisibility, UnitId};
 
 use super::{HUD_HEIGHT, HudLayout, PhoneHud, PhonePanel, hud_inset};
 use crate::{
@@ -38,8 +38,8 @@ pub(super) struct CameraFootprint;
 pub(super) struct UnitMarker(UnitId);
 
 pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<Image>) -> Entity {
-    let image = images.add(terrain_image(&game.sim));
-    let aspect = game.sim.terrain().size().as_vec2();
+    let image = images.add(terrain_image(&game.view));
+    let aspect = game.view.size().as_vec2();
     let root = commands
         .spawn((
             Minimap,
@@ -89,24 +89,10 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
     root
 }
 
-fn terrain_image(sim: &Sim) -> Image {
-    let size = sim.terrain().size();
-    let colors: Vec<_> = sim
-        .rules()
-        .terrain_types()
-        .iter()
-        .map(|terrain| {
-            Srgba::hex(&terrain.color)
-                .unwrap_or(Srgba::rgb(1.0, 0.0, 1.0))
-                .to_u8_array()
-        })
-        .collect();
-    let pixels = sim
-        .terrain()
-        .tiles()
-        .iter()
-        .flat_map(|tile| colors[usize::from(tile.0)])
-        .collect();
+/// Known terrain colors: black where unexplored and darker where out of sight.
+fn terrain_image(view: &PlayerView) -> Image {
+    let size = view.size();
+    let pixels = terrain_pixels(view);
     let mut image = Image::new(
         Extent3d {
             width: u32::try_from(size.x).unwrap_or(1),
@@ -120,6 +106,53 @@ fn terrain_image(sim: &Sim) -> Image {
     );
     image.sampler = ImageSampler::nearest();
     image
+}
+
+fn terrain_pixels(view: &PlayerView) -> Vec<u8> {
+    let colors: Vec<_> = view
+        .rules()
+        .terrain_types()
+        .iter()
+        .map(|terrain| {
+            Srgba::hex(&terrain.color)
+                .unwrap_or(Srgba::rgb(1.0, 0.0, 1.0))
+                .to_u8_array()
+        })
+        .collect();
+    let width = view.size().x;
+    view.terrain_tiles()
+        .iter()
+        .enumerate()
+        .flat_map(|(index, terrain)| {
+            let index = i32::try_from(index).expect("bounded map size");
+            let tile = IVec2::new(index % width, index / width);
+            terrain.map_or([0, 0, 0, 255], |terrain| {
+                let [r, g, b, a] = colors[usize::from(terrain.0)];
+                if view.visibility(tile) == TileVisibility::Visible {
+                    [r, g, b, a]
+                } else {
+                    [r / 5 * 2, g / 5 * 2, b / 5 * 2, a]
+                }
+            })
+        })
+        .collect()
+}
+
+/// Redraws the terrain image after each applied tick.
+pub(super) fn update_minimap_fog(
+    game: Res<Match>,
+    map: Single<&ImageNode, With<MapImage>>,
+    mut images: ResMut<Assets<Image>>,
+    mut drawn: Local<Option<u32>>,
+) {
+    let tick = game.view.tick();
+    if *drawn == Some(tick) && !game.is_added() {
+        return;
+    }
+    *drawn = Some(tick);
+    if let Some(mut image) = images.get_mut(&map.image) {
+        image.data = Some(terrain_pixels(&game.view));
+    }
 }
 
 type MapNodes<'a> = (
@@ -155,7 +188,7 @@ pub(super) fn update_minimap(
 ) {
     let size = window.size() / scale.0;
     let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
-    let dimensions = game.sim.terrain().size().as_vec2();
+    let dimensions = game.view.size().as_vec2();
     let available = layout.minimap.size() - Vec2::splat(16.0);
     let image_size = dimensions * (available / dimensions).min_element();
     commands.entity(*root).insert(GlobalZIndex(
@@ -215,7 +248,7 @@ pub(super) fn update_minimap(
     }
     existing.clear();
     existing.extend(markers.iter().map(|(entity, marker)| (marker.0, entity)));
-    for (id, unit) in game.sim.units() {
+    for (id, unit) in game.view.units() {
         let position = map_fraction(to_world(unit.pos), bounds.0);
         let node = Node {
             position_type: PositionType::Absolute,

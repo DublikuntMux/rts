@@ -10,7 +10,7 @@ pub mod wire;
 /// Maximum bytes in each original rules/map document.
 pub const MAX_SETUP_BYTES: usize = 4 * 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatchSetup {
     pub rules: String,

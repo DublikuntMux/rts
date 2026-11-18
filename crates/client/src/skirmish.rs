@@ -83,7 +83,7 @@ impl EconomyAction {
 
     /// The price, or `None` when the rules do not offer this action.
     fn cost(self, game: &Match) -> Option<Resources> {
-        let rules = game.sim.rules().economy()?;
+        let rules = game.view.rules().economy()?;
         match self {
             Self::Barracks => Some(rules.barracks_cost),
             Self::Worker => Some(rules.worker_cost),
@@ -117,7 +117,7 @@ impl EconomyAction {
         self.units(game, selection).filter(move |&id| {
             self == Self::Barracks
                 || game
-                    .sim
+                    .view
                     .production(id)
                     .is_some_and(|queue| queue.len() < PRODUCTION_QUEUE_LIMIT)
         })
@@ -125,7 +125,7 @@ impl EconomyAction {
 
     fn affordable(self, game: &Match) -> bool {
         self.cost(game)
-            .zip(game.sim.resources(game.local_player))
+            .zip(game.view.resources())
             .is_some_and(|(cost, funds)| funds.can_afford(cost))
     }
 }
@@ -150,21 +150,8 @@ fn spawn_skirmish(
     font: Res<GameFont>,
     assets: Res<AssetServer>,
 ) {
-    if !game.sim.is_skirmish() {
+    if !game.view.is_skirmish() {
         return;
-    }
-    for (id, deposit) in game.sim.deposits() {
-        commands.spawn((
-            Name::new(resource_label(deposit.kind)),
-            DespawnOnExit(AppState::InGame),
-            DepositSprite(id),
-            Sprite {
-                image: assets.load(resource_icon(deposit.kind)),
-                custom_size: Some(Vec2::splat(DEPOSIT_SIZE)),
-                ..default()
-            },
-            Transform::from_translation(to_world(deposit.pos).extend(0.5)),
-        ));
     }
     spawn_balances(&mut commands, &font.0, &assets);
     spawn_economy_card(&mut commands, &font.0, &game);
@@ -280,7 +267,7 @@ pub fn spawn_desktop_action(
     font: &Handle<Font>,
     game: &Match,
 ) {
-    if game.sim.is_skirmish()
+    if game.view.is_skirmish()
         && let Some(&action) = index
             .checked_sub(3)
             .and_then(|offset| EconomyAction::ALL.get(offset))
@@ -430,7 +417,7 @@ fn update_skirmish(
     mut hints: Query<&mut Text, With<EconomyHint>>,
     mut inks: Query<(&mut TextColor, Has<ActionCost>)>,
 ) {
-    let Some(resources) = game.sim.resources(game.local_player) else {
+    let Some(resources) = game.view.resources() else {
         return;
     };
     for (label, mut text) in &mut balances {
@@ -537,7 +524,7 @@ pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -
     {
         return Some(work.description());
     }
-    if workers(game, selection).next().is_some() && game.sim.is_skirmish() {
+    if workers(game, selection).next().is_some() && game.view.is_skirmish() {
         return Some(
             if selection.touch_mode {
                 "Tap a deposit to gather"
@@ -547,7 +534,7 @@ pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -
             .into(),
         );
     }
-    if game.sim.is_skirmish()
+    if game.view.is_skirmish()
         && EconomyAction::Worker
             .units(game, selection)
             .next()
@@ -555,7 +542,7 @@ pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -
     {
         return Some("Train workers at headquarters.".into());
     }
-    if game.sim.is_skirmish()
+    if game.view.is_skirmish()
         && EconomyAction::RifleSquad
             .units(game, selection)
             .next()
@@ -629,18 +616,18 @@ impl EconomicActivity {
 }
 
 fn economic_activity(game: &Match, unit: UnitId) -> Option<EconomicActivity> {
-    if let Some(remaining) = game.sim.construction_remaining(unit) {
-        return Some(if game.sim.move_target(unit).is_some() {
+    if let Some(remaining) = game.view.construction_remaining(unit) {
+        return Some(if game.view.move_target(unit).is_some() {
             EconomicActivity::ApproachingSite
         } else {
             EconomicActivity::Building(remaining)
         });
     }
     let gathering = game
-        .sim
+        .view
         .gather_target(unit)
-        .and_then(|id| game.sim.deposit(id));
-    if let Some((kind, amount)) = game.sim.cargo(unit) {
+        .and_then(|id| game.view.deposit(id));
+    if let Some((kind, amount)) = game.view.cargo(unit) {
         return Some(if gathering.is_some() {
             EconomicActivity::Delivering(kind, amount)
         } else {
@@ -650,23 +637,56 @@ fn economic_activity(game: &Match, unit: UnitId) -> Option<EconomicActivity> {
     if let Some(deposit) = gathering {
         return Some(EconomicActivity::Gathering(deposit.kind));
     }
-    let queue = game.sim.production(unit)?;
+    let queue = game.view.production(unit)?;
     queue
         .first()
         .map(|job| EconomicActivity::Training(*job, queue.len()))
 }
 
-fn update_deposits(game: Res<Match>, mut sprites: Query<(&DepositSprite, &mut Visibility)>) {
-    for (sprite, mut visibility) in &mut sprites {
-        let visible = game
-            .sim
-            .deposit(sprite.0)
-            .is_some_and(|deposit| deposit.remaining > 0);
-        visibility.set_if_neq(if visible {
+/// Shows deposits once discovered, with the stock last seen, dimmed while out of sight.
+fn update_deposits(
+    mut commands: Commands,
+    game: Res<Match>,
+    assets: Res<AssetServer>,
+    mut sprites: Query<(&DepositSprite, &mut Visibility, &mut Sprite)>,
+    mut shown: Local<Vec<DepositId>>,
+) {
+    if game.is_added() {
+        shown.clear();
+    }
+    for (id, deposit) in game.view.deposits() {
+        if !shown.contains(&id) {
+            shown.push(id);
+            commands.spawn((
+                Name::new(resource_label(deposit.kind)),
+                DespawnOnExit(AppState::InGame),
+                DepositSprite(id),
+                Sprite {
+                    image: assets.load(resource_icon(deposit.kind)),
+                    custom_size: Some(Vec2::splat(DEPOSIT_SIZE)),
+                    ..default()
+                },
+                Transform::from_translation(to_world(deposit.pos).extend(0.5)),
+            ));
+        }
+    }
+    for (sprite, mut visibility, mut image) in &mut sprites {
+        let Some(deposit) = game.view.deposit(sprite.0) else {
+            continue;
+        };
+        visibility.set_if_neq(if deposit.remaining > 0 {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         });
+        let color = if game.view.fog().sees(deposit.pos) {
+            Color::WHITE
+        } else {
+            Color::srgb(0.5, 0.5, 0.55)
+        };
+        if image.color != color {
+            image.color = color;
+        }
     }
 }
 
@@ -675,9 +695,9 @@ fn selected_kind<'a>(
     selection: &'a Selection,
     kind: &'a str,
 ) -> impl Iterator<Item = UnitId> + 'a {
-    let kind = game.sim.rules().unit_kind(kind);
+    let kind = game.view.rules().unit_kind(kind);
     selection.units.iter().copied().filter(move |&id| {
-        game.sim
+        game.view
             .unit(id)
             .is_some_and(|unit| Some(unit.kind) == kind && unit.owner == game.local_player)
     })
@@ -689,7 +709,7 @@ pub fn workers<'a>(game: &'a Match, selection: &'a Selection) -> impl Iterator<I
 
 pub fn deposit_at(game: &Match, position: Vec2, scale: f32) -> Option<DepositId> {
     let radius = (DEPOSIT_SIZE / 2.0).max(14.0 * scale);
-    game.sim
+    game.view
         .deposits()
         .filter(|(_, deposit)| deposit.remaining > 0)
         .map(|(id, deposit)| (id, position.distance_squared(to_world(deposit.pos))))
@@ -707,8 +727,7 @@ pub fn place_barracks(game: &mut Match, selection: &Selection, target: SimPos) -
 }
 
 fn can_place_barracks(game: &Match, target: SimPos) -> bool {
-    EconomyAction::Barracks.affordable(game)
-        && game.sim.can_place_barracks(game.local_player, target)
+    EconomyAction::Barracks.affordable(game) && game.view.can_place_barracks(target)
 }
 
 pub fn draw_construction(
@@ -718,11 +737,11 @@ pub fn draw_construction(
     style: &SelectionStyle,
     preview: Option<SimPos>,
 ) {
-    if !game.sim.is_skirmish() {
+    if !game.view.is_skirmish() {
         return;
     }
     let size = Vec2::splat(to_world_distance(rts_base::TILE));
-    for site in workers(game, selection).filter_map(|worker| game.sim.build_target(worker)) {
+    for site in workers(game, selection).filter_map(|worker| game.view.build_target(worker)) {
         gizmos.rect_2d(Isometry2d::from_translation(to_world(site)), size, SIGNAL);
     }
     if let Some(target) = preview {
@@ -738,7 +757,7 @@ pub fn draw_construction(
 }
 
 fn visible_actions(game: &Match, selection: &Selection) -> usize {
-    if !game.sim.is_skirmish() {
+    if !game.view.is_skirmish() {
         return 0;
     }
     EconomyAction::ALL
@@ -904,7 +923,7 @@ mod tests {
                 },
             ]
         );
-        game.sim.step_with_commands(
+        game.step_with(
             commands
                 .into_iter()
                 .map(|command| (rts_base::PlayerId(0), command)),

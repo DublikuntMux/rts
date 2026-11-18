@@ -78,8 +78,7 @@ fn desktop_skirmish_training_uses_the_existing_command_grid_and_reports_activity
                 units: vec![headquarters]
             }]
         );
-        game.sim
-            .step_with_commands(commands.into_iter().map(|command| (PlayerId(0), command)));
+        game.step_with(commands.into_iter().map(|command| (PlayerId(0), command)));
     }
     app.update();
     let world = app.world_mut();
@@ -124,10 +123,9 @@ fn desktop_barracks_offer_scouts_in_the_next_command_slot() {
             units: vec![barracks]
         }]
     );
-    game.sim
-        .step_with_commands(commands.into_iter().map(|command| (PlayerId(0), command)));
+    game.step_with(commands.into_iter().map(|command| (PlayerId(0), command)));
     assert_eq!(
-        game.sim.production(barracks).unwrap()[0].kind,
+        game.view.production(barracks).unwrap()[0].kind,
         rts_base::TrainingKind::Scout
     );
 }
@@ -152,7 +150,7 @@ fn console_selection_and_orders_keep_simulation_authoritative() {
     let ids: Vec<_> = app
         .world()
         .resource::<Match>()
-        .sim
+        .view
         .units()
         .filter(|(_, unit)| unit.owner == PlayerId(0))
         .take(2)
@@ -163,7 +161,12 @@ fn console_selection_and_orders_keep_simulation_authoritative() {
         .units
         .extend(&ids);
     app.update();
-    let hash = app.world().resource::<Match>().sim.state_hash();
+    let hash = app
+        .world()
+        .resource::<Match>()
+        .local_sim()
+        .unwrap()
+        .state_hash();
     assert_eq!(
         app.world_mut()
             .query::<&RosterUnit>()
@@ -179,7 +182,14 @@ fn console_selection_and_orders_keep_simulation_authoritative() {
         app.world().resource::<Match>().pending,
         vec![rts_base::Command::Stop { units: ids.clone() }]
     );
-    assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+    assert_eq!(
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash(),
+        hash
+    );
     let (portrait, id) = app
         .world_mut()
         .query::<(Entity, &RosterUnit)>()
@@ -443,7 +453,7 @@ fn unit_images_keep_their_aspect_ratio_in_square_frames() {
     let id = app
         .world()
         .resource::<Match>()
-        .sim
+        .view
         .units()
         .find(|(_, unit)| unit.owner == PlayerId(0))
         .unwrap()
@@ -481,7 +491,7 @@ fn unit_images_keep_their_aspect_ratio_in_square_frames() {
 #[test]
 fn minimap_markers_track_removal_and_recreated_hud_without_duplicates() {
     let mut app = app();
-    let expected = app.world().resource::<Match>().sim.units().count();
+    let expected = app.world().resource::<Match>().view.units().count();
     let mut markers = app
         .world_mut()
         .query_filtered::<Entity, With<minimap::UnitMarker>>();
@@ -489,15 +499,12 @@ fn minimap_markers_track_removal_and_recreated_hud_without_duplicates() {
     let removed = app
         .world()
         .resource::<Match>()
-        .sim
+        .view
         .units()
         .next()
         .unwrap()
         .0;
-    app.world_mut()
-        .resource_mut::<Match>()
-        .sim
-        .remove_unit(removed);
+    app.world_mut().resource_mut::<Match>().remove_unit(removed);
     app.update();
     assert_eq!(markers.iter(app.world()).count(), expected - 1);
     app.update();

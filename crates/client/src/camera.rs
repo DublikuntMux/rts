@@ -79,13 +79,10 @@ fn focus_on_start(
     window: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Option<Res<UiScale>>,
 ) {
-    let Some(player) = game.sim.players().get(usize::from(game.local_player.0)) else {
-        return;
-    };
-    let start = to_world(player.start);
+    let start = to_world(game.view.start());
     let (settings, mut transform, mut projection) = camera.into_inner();
     transform.translation = start.extend(transform.translation.z);
-    if game.sim.is_skirmish()
+    if game.view.is_skirmish()
         && let Ok(window) = window.single()
         && let Projection::Orthographic(ortho) = projection.as_mut()
         && let Some(view) = skirmish_start_view(
@@ -124,7 +121,7 @@ fn skirmish_start_view(
     let viewport = Rect::from_corners(min, max);
     let tile = to_world_distance(rts_base::TILE);
     let nearby_units = game
-        .sim
+        .view
         .units()
         .filter(|(_, unit)| unit.owner == game.local_player)
         .map(|(_, unit)| to_world(unit.pos))
@@ -132,7 +129,7 @@ fn skirmish_start_view(
     let deposits = [ResourceKind::Wood, ResourceKind::Gold]
         .into_iter()
         .filter_map(|kind| {
-            game.sim
+            game.view
                 .deposits()
                 .filter(|(_, deposit)| deposit.kind == kind)
                 .map(|(_, deposit)| to_world(deposit.pos))
@@ -148,7 +145,7 @@ fn skirmish_start_view(
         });
     let padding = Vec2::splat(tile * 0.75);
     let region = Rect::from_corners(min - padding, max + padding);
-    let bounds = Rect::from_corners(Vec2::ZERO, to_world(game.sim.terrain().world_size()));
+    let bounds = Rect::from_corners(Vec2::ZERO, to_world(game.view.world_size()));
     let playable_size = Vec2::new(window_size.x, (window_size.y - bottom_inset).max(1.0));
     let max_scale = max_projection_scale(settings, bounds, playable_size);
     let scale = (region.size() / viewport.size())
@@ -501,13 +498,13 @@ mod tests {
             players: 2,
         };
         let game = Match::new(setup.simulation().unwrap(), rts_base::PlayerId(0), true);
-        let start = to_world(game.sim.players()[0].start);
+        let start = to_world(game.view.start());
         let positions: Vec<_> = game
-            .sim
+            .view
             .units()
             .filter(|(_, unit)| unit.owner == game.local_player)
             .map(|(_, unit)| unit.pos)
-            .chain(game.sim.deposits().take(2).map(|(_, deposit)| deposit.pos))
+            .chain(game.view.deposits().take(2).map(|(_, deposit)| deposit.pos))
             .collect();
         for size in [
             Vec2::new(1280.0, 720.0),

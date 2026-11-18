@@ -30,9 +30,9 @@ pub struct Selection {
 impl Selection {
     pub fn mobile_units<'a>(&'a self, game: &'a Match) -> impl Iterator<Item = UnitId> + 'a {
         self.units.iter().copied().filter(|&id| {
-            game.sim
+            game.view
                 .unit(id)
-                .is_some_and(|unit| !game.sim.rules().unit(unit.kind).building)
+                .is_some_and(|unit| !game.view.rules().unit(unit.kind).building)
         })
     }
 
@@ -267,7 +267,7 @@ fn control_units(
         return;
     };
     selection.units.retain(|id| {
-        game.sim
+        game.view
             .unit(*id)
             .is_some_and(|unit| unit.owner == game.local_player)
     });
@@ -458,13 +458,13 @@ fn finish_press(
         selection
             .units
             .extend(visuals.iter().filter_map(|(visual, transform)| {
-                game.sim
+                game.view
                     .unit(visual.0)
                     .filter(|unit| {
                         if unit.owner != game.local_player {
                             return false;
                         }
-                        let definition = game.sim.rules().unit(unit.kind);
+                        let definition = game.view.rules().unit(unit.kind);
                         let bounds = UnitBounds::from_definition(definition).world_rect(transform);
                         if definition.visual_bounds.is_some() {
                             rect.min.cmple(bounds.max).all() && rect.max.cmpge(bounds.min).all()
@@ -509,11 +509,11 @@ fn unit_at(
     visuals
         .iter()
         .filter_map(|(visual, transform)| {
-            let unit = game.sim.unit(visual.0)?;
+            let unit = game.view.unit(visual.0)?;
             if !owners(unit.owner) {
                 return None;
             }
-            let definition = game.sim.rules().unit(unit.kind);
+            let definition = game.view.rules().unit(unit.kind);
             let bounds = UnitBounds::from_definition(definition).world_rect(transform);
             let distance = position.distance_squared(bounds.center());
             let minimum = if touch { 24.0 } else { 8.0 } * scale;
@@ -549,9 +549,9 @@ fn issue_move(
         .iter()
         .copied()
         .filter(|&id| {
-            game.sim
+            game.view
                 .unit(id)
-                .is_some_and(|unit| game.sim.rules().unit(unit.kind).weapon.is_some())
+                .is_some_and(|unit| game.view.rules().unit(unit.kind).weapon.is_some())
         })
         .collect();
     let enemy = (!armed.is_empty())
@@ -603,7 +603,9 @@ fn move_to(
         return;
     }
     let target = sim_position(position);
-    let traversable = game.sim.terrain().speed_modifier(target, game.sim.rules()) > 0;
+    // Unexplored ground may be open; the authority decides.
+    let inside = target.cmpge(SimPos::ZERO).all() && target.cmplt(game.view.world_size()).all();
+    let traversable = inside && game.view.speed_modifier(target) != Some(0);
     if !traversable {
         feedback.0 = Some((position, Marker::Blocked, now));
     } else if game.queue_command(Command::Move {
@@ -634,8 +636,8 @@ fn draw_selection(
     };
     let style = &graphics.selection;
     for (visual, transform) in &visuals {
-        if let Some(unit) = game.sim.unit(visual.0) {
-            let definition = game.sim.rules().unit(unit.kind);
+        if let Some(unit) = game.view.unit(visual.0) {
+            let definition = game.view.rules().unit(unit.kind);
             draw_health_bar(
                 &mut gizmos,
                 &graphics.health_bar,
@@ -648,7 +650,7 @@ fn draw_selection(
             draw_rank(
                 &mut gizmos,
                 &graphics.health_bar,
-                game.sim.rules().rank(unit.kills),
+                game.view.rules().rank(unit.kills),
                 definition,
                 transform,
                 projection.scale,
@@ -657,9 +659,9 @@ fn draw_selection(
     }
     for (visual, transform) in &visuals {
         if selection.units.contains(&visual.0)
-            && let Some(unit) = game.sim.unit(visual.0)
+            && let Some(unit) = game.view.unit(visual.0)
         {
-            let definition = game.sim.rules().unit(unit.kind);
+            let definition = game.view.rules().unit(unit.kind);
             let bounds = UnitBounds::from_definition(definition).world_rect(transform);
             if definition.visual_bounds.is_some() {
                 gizmos.rect_2d(
@@ -874,7 +876,7 @@ mod tests {
         let units: Vec<_> = app
             .world()
             .resource::<Match>()
-            .sim
+            .view
             .units()
             .map(|(id, unit)| {
                 (
@@ -1024,7 +1026,12 @@ mod tests {
     #[test]
     fn selection_uses_displayed_offset_and_scaled_radius() {
         let mut app = test_app();
-        let hash = app.world().resource::<Match>().sim.state_hash();
+        let hash = app
+            .world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash();
         for (visual, mut transform) in app
             .world_mut()
             .query::<(&UnitVisual, &mut Transform)>()
@@ -1053,7 +1060,14 @@ mod tests {
             app.world().resource::<Selection>().units,
             BTreeSet::from([UnitId(0)])
         );
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
     }
 
     #[test]
@@ -1071,8 +1085,15 @@ mod tests {
             units: [(kind:"worker",owner:0,pos:(1.5,1.5))])"#,
         )
         .unwrap();
-        app.world_mut().resource_mut::<Match>().sim = Sim::new(rules, &map).unwrap();
-        let hash = app.world().resource::<Match>().sim.state_hash();
+        app.world_mut()
+            .resource_mut::<Match>()
+            .replace_sim(Sim::new(rules, &map).unwrap());
+        let hash = app
+            .world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash();
         // Root: (336,236), footprint center: (368,220), half-size: (48,8).
         click(&mut app, Vec2::new(411.0, 220.0));
         assert_eq!(
@@ -1088,7 +1109,14 @@ mod tests {
             app.world().resource::<Selection>().units,
             BTreeSet::from([UnitId(0)])
         );
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
     }
 
     #[test]
@@ -1098,7 +1126,7 @@ mod tests {
         mouse_event(&mut app, Vec2::new(400.0, 300.0), MouseButton::Right, true);
         {
             let mut game = app.world_mut().resource_mut::<Match>();
-            assert_eq!(game.sim.tick(), 0);
+            assert_eq!(game.view.tick(), 0);
             assert_eq!(
                 game.pending,
                 vec![Command::Move {
@@ -1122,7 +1150,7 @@ mod tests {
                 units: vec![UnitId(0)]
             }]
         );
-        assert_eq!(game.sim.move_target(UnitId(0)), None);
+        assert_eq!(game.view.move_target(UnitId(0)), None);
     }
 
     #[test]
@@ -1200,7 +1228,7 @@ mod tests {
         tap(&mut app, Vec2::new(400.0, 300.0));
         {
             let game = app.world().resource::<Match>();
-            assert_eq!(game.sim.move_target(UnitId(0)), None);
+            assert_eq!(game.view.move_target(UnitId(0)), None);
             assert_eq!(
                 game.pending,
                 vec![Command::Move {
@@ -1209,16 +1237,33 @@ mod tests {
                 }]
             );
         }
-        let hash = app.world().resource::<Match>().sim.state_hash();
+        let hash = app
+            .world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash();
         tap(&mut app, Vec2::new(700.0, 570.0));
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
     }
 
     #[test]
     fn pinch_cancels_selection_and_remaining_finger_cannot_issue_an_order() {
         let mut app = test_app();
         tap(&mut app, Vec2::new(336.0, 236.0));
-        let hash = app.world().resource::<Match>().sim.state_hash();
+        let hash = app
+            .world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash();
         touch(
             &mut app,
             &[(1, TouchPhase::Started, Vec2::new(400.0, 300.0))],
@@ -1229,7 +1274,14 @@ mod tests {
         );
         touch(&mut app, &[(2, TouchPhase::Ended, Vec2::new(500.0, 300.0))]);
         touch(&mut app, &[(1, TouchPhase::Ended, Vec2::new(450.0, 350.0))]);
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
         assert_eq!(
             app.world().resource::<Selection>().units,
             BTreeSet::from([UnitId(0)])
@@ -1249,7 +1301,12 @@ mod tests {
             app.world().resource::<Selection>().units,
             BTreeSet::from([UnitId(0)])
         );
-        let hash = app.world().resource::<Match>().sim.state_hash();
+        let hash = app
+            .world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash();
         touch(
             &mut app,
             &[(1, TouchPhase::Started, Vec2::new(400.0, 300.0))],
@@ -1258,7 +1315,14 @@ mod tests {
             &mut app,
             &[(1, TouchPhase::Canceled, Vec2::new(400.0, 300.0))],
         );
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
     }
     #[test]
     fn desktop_exclusion_tracks_interface_scale_and_only_the_pause_button() {
@@ -1356,7 +1420,7 @@ mod tests {
                 assert!(
                     matches!(app.world().resource::<Match>().pending.as_slice(), [Command::Move { units, .. }] if units == &[UnitId(0)])
                 );
-                assert_eq!(app.world().resource::<Match>().sim.tick(), 0);
+                assert_eq!(app.world().resource::<Match>().view.tick(), 0);
                 app.world_mut().resource_mut::<Match>().pending.clear();
                 app.world_mut().resource_mut::<Selection>().units.clear();
                 let former_dock = hud.commands.unwrap().center() * ui_scale;
@@ -1402,7 +1466,7 @@ mod tests {
                         app.world().resource::<Selection>().units,
                         BTreeSet::from([UnitId(0)])
                     );
-                    assert_eq!(app.world().resource::<Match>().sim.tick(), 0);
+                    assert_eq!(app.world().resource::<Match>().view.tick(), 0);
                 }
             }
         }

@@ -496,9 +496,9 @@ pub(super) fn update_controls(
     mut count: Query<&mut Text, (With<SelectionCount>, Without<PanelTitle>)>,
     mut title: Query<&mut Text, (With<PanelTitle>, Without<SelectionCount>)>,
 ) {
-    if let Some(unit) = selection.units.first().and_then(|id| game.sim.unit(*id)) {
+    if let Some(unit) = selection.units.first().and_then(|id| game.view.unit(*id)) {
         for mut image in &mut image {
-            image.image = assets.load(game.sim.rules().unit(unit.kind).sprite.clone());
+            image.image = assets.load(game.view.rules().unit(unit.kind).sprite.clone());
             image.color = graphics.player_color(unit.owner.0);
         }
     }

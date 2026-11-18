@@ -1,6 +1,39 @@
-use rts_base::{IVec2, TILE, UnitId};
+use rts_base::{IVec2, PlayerKnowledge, TILE, UnitId};
 
 use super::*;
+
+/// The public setup a server shares for `setup()`, and an authority to produce its frames.
+fn online(session: &mut Session, player: PlayerId) -> (Match, Sim, PlayerKnowledge) {
+    let lobby = LobbySetup {
+        rules: setup().rules,
+        map: "Proving Grounds".into(),
+        players: 2,
+    };
+    let mut authority = setup().simulation().unwrap();
+    authority.enforce_fog();
+    let knowledge = PlayerKnowledge::new(&authority, player);
+    let game = session
+        .begin_online(&lobby, knowledge.intro(&authority), 0.0)
+        .unwrap();
+    (game, authority, knowledge)
+}
+
+/// Buffers authoritative frames as the network would.
+fn receive_frames(
+    session: &mut Session,
+    authority: &mut Sim,
+    knowledge: &mut PlayerKnowledge,
+    ticks: u32,
+) {
+    for _ in 0..ticks {
+        if session.received_tick.is_some() {
+            authority.step();
+        }
+        let frame = knowledge.observe(authority);
+        session.received_tick = Some(frame.tick);
+        session.frames.insert(frame.tick, frame);
+    }
+}
 
 fn setup() -> MatchSetup {
     MatchSetup {
@@ -14,9 +47,7 @@ fn setup() -> MatchSetup {
 #[test]
 fn local_input_delay_and_replay_share_the_same_turns() {
     let mut session = Session::default();
-    let mut game = session
-        .begin(setup(), Mode::Offline, PlayerId(0), 0.0)
-        .unwrap();
+    let mut game = session.begin(setup(), 0.0).unwrap();
     let mut status = SessionStatus::default();
     let mut network = Network::default();
     let target = IVec2::new(5 * TILE, TILE * 10);
@@ -25,21 +56,21 @@ fn local_input_delay_and_replay_share_the_same_turns() {
         target,
     });
     advance(&mut game, &mut session, &mut status, &mut network, 0.05).unwrap();
-    assert!(game.sim.move_target(UnitId(0)).is_none());
+    assert!(game.view.move_target(UnitId(0)).is_none());
     advance(&mut game, &mut session, &mut status, &mut network, 0.10).unwrap();
-    assert_eq!(game.sim.move_target(UnitId(0)), Some(target));
+    assert_eq!(game.view.move_target(UnitId(0)), Some(target));
     game.queue_command(Command::Stop {
         units: vec![UnitId(0)],
     });
     advance(&mut game, &mut session, &mut status, &mut network, 0.15).unwrap();
-    assert!(game.sim.move_target(UnitId(0)).is_some());
+    assert!(game.view.move_target(UnitId(0)).is_some());
     advance(&mut game, &mut session, &mut status, &mut network, 0.20).unwrap();
-    assert!(game.sim.move_target(UnitId(0)).is_none());
-    let replay = session.replay().unwrap();
+    assert!(game.view.move_target(UnitId(0)).is_none());
+    let replay = session.local_replay().unwrap();
     assert_eq!(replay.turns.len(), 4);
     assert_eq!(
         replay.playback().unwrap().state_hash(),
-        game.sim.state_hash()
+        game.local_sim().unwrap().state_hash()
     );
 }
 
@@ -68,7 +99,7 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
             difficulty: rts_ai::Difficulty::Hard,
         },
     );
-    assert!(app.world().resource::<Match>().sim.is_skirmish());
+    assert!(app.world().resource::<Match>().view.is_skirmish());
     assert_eq!(
         app.world().resource::<Session>().difficulty,
         rts_ai::Difficulty::Hard
@@ -87,7 +118,7 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
     assert!(
         app.world()
             .resource::<Session>()
-            .replay()
+            .local_replay()
             .unwrap()
             .turns
             .iter()
@@ -98,7 +129,12 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
                     Command::TrainWorker { units } if units == &[UnitId(1)]
                 )))
     );
-    let saved_hash = app.world().resource::<Match>().sim.state_hash();
+    let saved_hash = app
+        .world()
+        .resource::<Match>()
+        .local_sim()
+        .unwrap()
+        .state_hash();
     send(&mut app, SessionAction::SaveGame);
     let saved = app.world().resource::<Library>().records(Shelf::Saves)[0]
         .id
@@ -111,7 +147,14 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
         rts_ai::Difficulty::Hard,
         "a saved game resumes at its own difficulty"
     );
-    assert_eq!(app.world().resource::<Match>().sim.state_hash(), saved_hash);
+    assert_eq!(
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash(),
+        saved_hash
+    );
 
     assert!(
         app.world_mut()
@@ -128,7 +171,7 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
     assert!(app.world().resource::<PauseMenu>().open);
     let game = app.world().resource::<Match>();
     assert!(!game.accepts_orders);
-    let victory_hash = game.sim.state_hash();
+    let victory_hash = game.local_sim().unwrap().state_hash();
     send(&mut app, SessionAction::SaveReplay);
     let replay = app.world().resource::<Library>().records(Shelf::Replays)[0]
         .id
@@ -147,8 +190,12 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
     let game = app.world().resource::<Match>();
     assert!(game.accepts_orders);
     assert_eq!(
-        game.sim.state_hash(),
-        setup.simulation().unwrap().state_hash()
+        game.local_sim().unwrap().state_hash(),
+        Replay::new(setup)
+            .unwrap()
+            .simulation()
+            .unwrap()
+            .state_hash()
     );
 
     // PauseMenuPlugin owns clearing the overlay when state changes in the actual app.
@@ -161,14 +208,18 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
     assert_eq!(status(&app).result, Some(MatchResult::Victory));
     assert!(status(&app).stopped);
     assert_eq!(
-        app.world().resource::<Match>().sim.state_hash(),
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash(),
         victory_hash
     );
 }
 
 #[test]
 fn playback_keeps_the_original_recording_available_after_finishing_and_leaving() {
-    let replay = Replay::new(setup()).unwrap();
+    let replay = Recording::Match(Replay::new(setup()).unwrap());
     let mut session = Session::default();
     let mut game = session.begin_replay(replay.clone(), 0.0).unwrap();
     let mut status = SessionStatus::default();
@@ -184,9 +235,7 @@ fn playback_keeps_the_original_recording_available_after_finishing_and_leaving()
     assert_eq!(session.replay(), Some(&replay));
     session.archive();
     assert_eq!(session.replay(), Some(&replay));
-    let _ = session
-        .begin(setup(), Mode::Offline, PlayerId(0), 0.1)
-        .unwrap();
+    let _ = session.begin(setup(), 0.1).unwrap();
     assert_eq!(session.last_replay.as_ref(), Some(&replay));
 }
 
@@ -211,27 +260,42 @@ fn duplicate_import_actions_do_not_replace_an_in_progress_picker() {
 }
 
 #[test]
-fn absent_network_turn_stalls_without_consuming_input_or_changing_state() {
+fn absent_network_frame_stalls_without_consuming_input_or_changing_state() {
     let mut session = Session::default();
-    let mut game = session
-        .begin(setup(), Mode::Online, PlayerId(0), 0.0)
-        .unwrap();
+    let (mut game, mut authority, mut knowledge) = online(&mut session, PlayerId(0));
+    receive_frames(&mut session, &mut authority, &mut knowledge, 1);
+    session.submitted_tick = INPUT_DELAY_TICKS;
+    let mut status = SessionStatus::default();
+    let mut network = Network::default();
+    advance(&mut game, &mut session, &mut status, &mut network, 0.05).unwrap();
+    assert_eq!(game.view.units().count(), 7);
     game.queue_command(Command::Stop {
         units: vec![UnitId(0)],
     });
-    let mut status = SessionStatus::default();
-    let mut network = Network::default();
-    let hash = game.sim.state_hash();
     let pending = game.pending.clone();
+    let units: Vec<_> = game
+        .view
+        .units()
+        .map(|(id, unit)| (id, unit.clone()))
+        .collect();
     for now in [0.1, 0.3, 0.4] {
         advance(&mut game, &mut session, &mut status, &mut network, now).unwrap();
-        assert_eq!(game.sim.state_hash(), hash);
+        assert_eq!(game.view.tick(), 0);
         assert_eq!(game.pending, pending);
-        assert_eq!(session.replay().unwrap().turns.len(), 0);
+        let Some(Recording::View(replay)) = session.replay() else {
+            panic!("online matches record the player's view")
+        };
+        assert_eq!(replay.frames.len(), 1);
     }
     assert_eq!(status.message, "Waiting for the server…");
     assert!(advance(&mut game, &mut session, &mut status, &mut network, 16.0).is_err());
-    assert_eq!(game.sim.state_hash(), hash);
+    assert_eq!(
+        game.view
+            .units()
+            .map(|(id, unit)| (id, unit.clone()))
+            .collect::<Vec<_>>(),
+        units
+    );
     assert_eq!(game.pending, pending);
 }
 
@@ -310,10 +374,15 @@ fn saved_solo_game_continues_from_its_recorded_state() {
     for _ in 0..6 {
         app.world_mut().run_schedule(FixedUpdate);
     }
-    let saved_hash = app.world().resource::<Match>().sim.state_hash();
-    let saved_tick = app.world().resource::<Match>().sim.tick();
+    let saved_hash = app
+        .world()
+        .resource::<Match>()
+        .local_sim()
+        .unwrap()
+        .state_hash();
+    let saved_tick = app.world().resource::<Match>().view.tick();
     assert_eq!(
-        app.world().resource::<Match>().sim.move_target(UnitId(0)),
+        app.world().resource::<Match>().view.move_target(UnitId(0)),
         Some(target)
     );
     app.world_mut().write_message(SessionAction::SaveGame);
@@ -336,17 +405,21 @@ fn saved_solo_game_continues_from_its_recorded_state() {
         .write_message(SessionAction::LoadGame { id: record.id });
     app.update();
     let game = app.world().resource::<Match>();
-    assert_eq!(game.sim.tick(), saved_tick);
-    assert_eq!(game.sim.state_hash(), saved_hash);
+    assert_eq!(game.view.tick(), saved_tick);
+    assert_eq!(game.local_sim().unwrap().state_hash(), saved_hash);
     assert!(game.accepts_orders);
     app.update();
     app.world_mut().run_schedule(FixedUpdate);
     let session = app.world().resource::<Session>();
-    let replay = session.replay().unwrap();
+    let replay = session.local_replay().unwrap();
     assert_eq!(replay.turns.len(), saved_tick as usize + 1);
     assert_eq!(
         replay.playback().unwrap().state_hash(),
-        app.world().resource::<Match>().sim.state_hash()
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash()
     );
 }
 
@@ -354,9 +427,9 @@ fn saved_solo_game_continues_from_its_recorded_state() {
 #[tokio::test(flavor = "current_thread")]
 #[expect(
     clippy::too_many_lines,
-    reason = "one scripted real-socket match from the room list through replay verification"
+    reason = "one scripted real-socket match from the room list through private replays"
 )]
-async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
+async fn real_client_sessions_play_private_views_of_a_server_mod() {
     use std::time::Duration;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -376,10 +449,9 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
             .replace("Proving Grounds", "Server mod"),
         ..setup()
     };
-    assert_ne!(mod_setup.checksum(), setup().checksum());
-    let initial_hash = mod_setup.simulation().unwrap().state_hash();
     let config = rts_server::Config {
         setup: mod_setup.clone(),
+        random_layout: false,
         ..default()
     };
     let server = tokio::spawn(rts_server::serve_with_config(listener, config));
@@ -396,12 +468,6 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     let mut started = false;
     let mut moved = false;
     let mut stopped = false;
-    let mut host_hashes = BTreeMap::new();
-    let mut guest_hashes = BTreeMap::new();
-    host_hashes.insert(0, initial_hash);
-    guest_hashes.insert(0, initial_hash);
-    let mut host_audit = mod_setup.simulation().unwrap();
-    let mut guest_audit = mod_setup.simulation().unwrap();
     for _ in 0..1000 {
         host.update();
         guest.update();
@@ -448,13 +514,13 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
             let tick = app
                 .world()
                 .get_resource::<Match>()
-                .map_or(0, |game| game.sim.tick());
+                .map_or(0, |game| game.view.tick());
             if tick < 40 {
                 app.world_mut().run_schedule(FixedUpdate);
             }
         }
         if let Some(game) = host.world().get_resource::<Match>() {
-            let tick = game.sim.tick();
+            let tick = game.view.tick();
             if tick >= 3 && !moved {
                 host.world_mut()
                     .resource_mut::<Match>()
@@ -473,64 +539,78 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
                 stopped = true;
             }
         }
-        for (app, audit, hashes) in [
-            (&host, &mut host_audit, &mut host_hashes),
-            (&guest, &mut guest_audit, &mut guest_hashes),
-        ] {
-            if let Some(replay) = app.world().resource::<Session>().recording.as_ref() {
-                for turn in replay.turns.iter().skip(audit.tick() as usize) {
-                    turn.apply(audit).unwrap();
-                    hashes.insert(audit.tick(), audit.state_hash());
-                }
-            }
-        }
-        if host_hashes.contains_key(&40) && guest_hashes.contains_key(&40) {
+        let done = |app: &App| {
+            app.world()
+                .get_resource::<Match>()
+                .is_some_and(|game| game.view.tick() >= 40)
+        };
+        if done(&host) && done(&guest) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert!(moved && stopped, "{:?}", status(&host));
-    for tick in 0..=40 {
-        assert_eq!(
-            host_hashes.get(&tick),
-            guest_hashes.get(&tick),
-            "tick {tick}"
-        );
-    }
     let game = host.world().resource::<Match>();
-    assert!(game.sim.tick() >= 40, "{}", status(&host).message);
+    let other = guest.world().resource::<Match>();
+    assert!(game.view.tick() >= 40, "{}", status(&host).message);
+    assert!(
+        game.local_sim().is_none(),
+        "online clients never hold the match"
+    );
     assert_ne!(
-        game.sim.unit(UnitId(0)).unwrap().pos,
+        game.view.unit(UnitId(0)).unwrap().pos,
         IVec2::new(TILE * 9 / 2, TILE * 8)
     );
     assert!(
-        game.sim.move_target(UnitId(0)).is_none(),
+        game.view.move_target(UnitId(0)).is_none(),
         "Stop must be applied by the server"
+    );
+    // Opposite corners: each player sees only its own units and its own part of the map.
+    for (view, player) in [(&game.view, PlayerId(0)), (&other.view, PlayerId(1))] {
+        assert_eq!(view.player(), player);
+        assert!(view.units().all(|(_, unit)| unit.owner == player));
+        assert!(
+            view.terrain_tiles()
+                .iter()
+                .filter(|tile| tile.is_none())
+                .count()
+                > view.terrain_tiles().len() / 2
+        );
+    }
+    assert_ne!(game.view.start(), other.view.start());
+    assert_eq!(
+        game.view
+            .rules()
+            .unit(game.view.unit(UnitId(0)).unwrap().kind)
+            .id,
+        "mod_worker",
+        "the server's rules mod reaches the client"
     );
     assert_eq!(status(&host).kind, MatchKind::Online);
     assert!(
         !status(&host).can_save_game(),
         "online matches are not saved games"
     );
-    let replay = host.world().resource::<Session>().replay().unwrap();
-    assert_eq!(replay.setup, mod_setup.minified());
-    assert_eq!(
-        guest.world().resource::<Session>().replay().unwrap().setup,
-        mod_setup.minified()
-    );
+    for app in [&host, &guest] {
+        let Some(Recording::View(replay)) = app.world().resource::<Session>().replay() else {
+            panic!("online matches record the player's own view")
+        };
+        assert_eq!(replay.map, "Server mod");
+        let text = Recording::View(replay.clone()).to_ron().unwrap();
+        assert!(!text.contains("seed") && !text.contains("tiles"));
+        let view = replay.playback().unwrap();
+        let live = &app.world().resource::<Match>().view;
+        assert_eq!(view.tick(), live.tick());
+        assert_eq!(view.terrain_tiles(), live.terrain_tiles());
+        assert_eq!(
+            view.units().collect::<Vec<_>>(),
+            live.units().collect::<Vec<_>>()
+        );
+    }
     assert_eq!(
         host.world().resource::<MapCatalog>().0[0].setup,
         setup(),
         "solo configuration stays local"
-    );
-    let text = replay.to_ron().unwrap();
-    assert_eq!(
-        Replay::from_ron(&text)
-            .unwrap()
-            .playback()
-            .unwrap()
-            .state_hash(),
-        game.sim.state_hash()
     );
     guest.world_mut().write_message(SessionAction::Leave);
     guest.update();
@@ -552,6 +632,23 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     host.world_mut().write_message(SessionAction::SaveReplay);
     host.update();
     assert_eq!(status(&host).message, "Replay saved as Replay 01.");
+    // The private replay plays back from the library.
+    let id = host.world().resource::<Library>().records(Shelf::Replays)[0]
+        .id
+        .clone();
+    host.world_mut().write_message(SessionAction::Leave);
+    host.update();
+    host.update();
+    host.world_mut()
+        .write_message(SessionAction::WatchReplay { id });
+    host.update();
+    host.update();
+    for _ in 0..60 {
+        host.world_mut().run_schedule(FixedUpdate);
+    }
+    assert!(status(&host).stopped);
+    assert_eq!(status(&host).message, "Replay finished.");
+    assert!(host.world().resource::<Match>().view.tick() >= 40);
     server.abort();
 }
 
@@ -605,19 +702,18 @@ fn lobby_message(ready: [bool; 2]) -> ServerMessage {
 fn setup_acknowledges_server_content_and_start_requires_readiness() {
     let mut app = headless();
     app.world_mut().resource_mut::<SessionStatus>().joining = true;
-    assert!(
-        deliver(
-            &mut app,
-            ServerMessage::Started {
-                players: 2,
-                input_delay: INPUT_DELAY_TICKS
-            }
-        )
-        .is_err()
-    );
-    let server_setup = MatchSetup {
+    let mut authority = setup().simulation().unwrap();
+    let mut knowledge = PlayerKnowledge::new(&authority, PlayerId(0));
+    let started = ServerMessage::Started {
+        players: 2,
+        input_delay: INPUT_DELAY_TICKS,
+        view: knowledge.intro(&authority),
+    };
+    assert!(deliver(&mut app, started.clone()).is_err());
+    let server_setup = LobbySetup {
         rules: setup().rules.replace("max_health: 40", "max_health: 900"),
-        ..setup()
+        map: "Proving Grounds".into(),
+        players: 2,
     };
     assert_eq!(
         deliver(&mut app, ServerMessage::Setup(server_setup.clone())).unwrap(),
@@ -632,28 +728,51 @@ fn setup_acknowledges_server_content_and_start_requires_readiness() {
     assert_eq!(lobby.host(), "Host");
     deliver(&mut app, lobby_message([true, true])).unwrap();
     assert!(status(&app).lobby.as_ref().unwrap().can_start());
+    deliver(&mut app, started).unwrap();
+    assert!(status(&app).lobby.is_none());
+    // Frames must arrive in order, starting at tick 0.
+    authority.step();
+    let early = knowledge.observe(&authority);
+    let mut late = early;
+    late.tick = 1;
+    assert!(deliver(&mut app, ServerMessage::View { frame: late }).is_err());
+    let mut app = headless();
+    app.world_mut().resource_mut::<SessionStatus>().joining = true;
+    deliver(&mut app, ServerMessage::Setup(server_setup.clone())).unwrap();
+    deliver(&mut app, lobby_message([true, true])).unwrap();
+    let authority = MatchSetup {
+        rules: server_setup.rules.clone(),
+        ..setup()
+    }
+    .simulation()
+    .unwrap();
+    let mut knowledge = PlayerKnowledge::new(&authority, PlayerId(0));
     deliver(
         &mut app,
         ServerMessage::Started {
             players: 2,
             input_delay: INPUT_DELAY_TICKS,
+            view: knowledge.intro(&authority),
         },
     )
     .unwrap();
-    assert!(status(&app).lobby.is_none());
-    assert_eq!(
-        app.world()
-            .resource::<Match>()
-            .sim
-            .unit(UnitId(0))
-            .unwrap()
-            .health(),
-        900
-    );
-    assert_eq!(
-        app.world().resource::<Session>().replay().unwrap().setup,
-        server_setup
-    );
+    deliver(
+        &mut app,
+        ServerMessage::View {
+            frame: knowledge.observe(&authority),
+        },
+    )
+    .unwrap();
+    app.world_mut().resource_mut::<Session>().submitted_tick = INPUT_DELAY_TICKS;
+    app.update();
+    app.world_mut().run_schedule(FixedUpdate);
+    let game = app.world().resource::<Match>();
+    assert_eq!(game.view.unit(UnitId(0)).unwrap().health(), 900);
+    let Some(Recording::View(replay)) = app.world().resource::<Session>().replay() else {
+        panic!("expected a view replay")
+    };
+    assert_eq!(replay.rules, server_setup.rules);
+    assert_eq!(replay.map, "Proving Grounds");
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -724,25 +843,14 @@ fn refusal_while_connecting_fails_the_connection_and_later_errors_do_not() {
 }
 
 #[test]
-fn divergent_server_turn_is_rejected_before_recording() {
+fn invalid_server_frame_is_rejected_before_recording() {
     let mut session = Session::default();
-    let mut game = session
-        .begin(setup(), Mode::Online, PlayerId(0), 0.0)
-        .unwrap();
-    let turn = Turn {
-        tick: 1,
-        inputs: (0..2)
-            .map(|player| PlayerInput {
-                player: PlayerId(player),
-                commands: vec![],
-            })
-            .collect(),
-    };
-    let mut authority = setup().simulation().unwrap();
-    turn.apply(&mut authority).unwrap();
-    session.turns.insert(1, (turn, authority.state_hash() ^ 1));
-    session.received_tick = 1;
-    session.submitted_tick = 3;
+    let (mut game, mut authority, mut knowledge) = online(&mut session, PlayerId(0));
+    receive_frames(&mut session, &mut authority, &mut knowledge, 1);
+    let mut bad = session.frames[&0].clone();
+    bad.removed.push(UnitId(500));
+    session.frames.insert(0, bad);
+    session.submitted_tick = INPUT_DELAY_TICKS;
     let error = advance(
         &mut game,
         &mut session,
@@ -751,8 +859,11 @@ fn divergent_server_turn_is_rejected_before_recording() {
         0.05,
     )
     .unwrap_err();
-    assert!(error.contains("authoritative server"));
-    assert_eq!(session.replay().unwrap().turns, []);
+    assert!(error.contains("Invalid server view"), "{error}");
+    let Some(Recording::View(replay)) = session.replay() else {
+        panic!("expected a view replay")
+    };
+    assert_eq!(replay.frames, []);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -773,97 +884,104 @@ fn rejected_request_does_not_terminate_an_authoritative_match() {
 }
 
 #[test]
-fn online_backlog_catches_up_with_bounded_work_and_verified_replay() {
+fn online_backlog_catches_up_with_bounded_work_and_a_private_replay() {
     let mut session = Session::default();
-    let mut game = session
-        .begin(setup(), Mode::Online, PlayerId(0), 0.0)
-        .unwrap();
-    let mut authority = setup().simulation().unwrap();
-    for tick in 1..=20 {
-        let turn = Turn {
-            tick,
-            inputs: (0..2)
-                .map(|player| PlayerInput {
-                    player: PlayerId(player),
-                    commands: vec![],
-                })
-                .collect(),
-        };
-        turn.apply(&mut authority).unwrap();
-        session.turns.insert(tick, (turn, authority.state_hash()));
-    }
-    session.received_tick = 20;
+    let (mut game, mut authority, mut knowledge) = online(&mut session, PlayerId(1));
+    receive_frames(&mut session, &mut authority, &mut knowledge, 21);
     session.submitted_tick = 22;
     let mut status = SessionStatus::default();
     let mut network = Network::default();
     advance_buffered(&mut game, &mut session, &mut status, &mut network, 1.0).unwrap();
-    assert_eq!(game.sim.tick(), 8, "one update has a fixed catch-up budget");
+    assert_eq!(
+        game.view.tick(),
+        7,
+        "one update has a fixed catch-up budget"
+    );
     for _ in 0..2 {
         advance_buffered(&mut game, &mut session, &mut status, &mut network, 1.0).unwrap();
     }
-    assert!(session.turns.is_empty());
-    assert_eq!(game.sim.state_hash(), authority.state_hash());
+    assert!(session.frames.is_empty());
+    assert_eq!(game.view.tick(), 20);
+    assert!(game.view.units().all(|(_, unit)| unit.owner == PlayerId(1)));
+    let Some(Recording::View(replay)) = session.replay() else {
+        panic!("expected a view replay")
+    };
+    assert_eq!(replay.ticks(), 20);
     assert_eq!(
-        session.replay().unwrap().playback().unwrap().state_hash(),
-        authority.state_hash()
+        replay.playback().unwrap().units().collect::<Vec<_>>(),
+        game.view.units().collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn websocket_message_decoder_accepts_binary_setup_and_text_turns() {
+fn websocket_message_decoder_accepts_binary_setup_and_text_views() {
     use rts_net::{ServerFrame, encode_server};
 
-    let ServerFrame::Binary(bytes) = encode_server(&ServerMessage::Setup(setup())).unwrap() else {
+    let lobby = LobbySetup {
+        rules: setup().rules,
+        map: "Proving Grounds".into(),
+        players: 2,
+    };
+    let ServerFrame::Binary(bytes) = encode_server(&ServerMessage::Setup(lobby.clone())).unwrap()
+    else {
         panic!("setup must be binary")
     };
     assert_eq!(
         decode_message(WsMessage::Binary(bytes)).unwrap(),
-        Some(ServerMessage::Setup(setup().minified()))
+        Some(ServerMessage::Setup(lobby.minified()))
     );
-    let message = ServerMessage::Started {
-        players: 2,
-        input_delay: INPUT_DELAY_TICKS,
-    };
-    let ServerFrame::Text(text) = encode_server(&message).unwrap() else {
-        panic!("gameplay messages must be text")
-    };
-    assert_eq!(
-        decode_message(WsMessage::Text(text.clone())).unwrap(),
-        Some(message)
-    );
-    assert!(decode_message(WsMessage::Binary(text.into_bytes())).is_err());
+    let sim = setup().simulation().unwrap();
+    let mut knowledge = PlayerKnowledge::new(&sim, PlayerId(0));
+    for message in [
+        ServerMessage::Started {
+            players: 2,
+            input_delay: INPUT_DELAY_TICKS,
+            view: knowledge.intro(&sim),
+        },
+        ServerMessage::View {
+            frame: knowledge.observe(&sim),
+        },
+    ] {
+        let ServerFrame::Text(text) = encode_server(&message).unwrap() else {
+            panic!("gameplay messages must be text")
+        };
+        assert_eq!(
+            decode_message(WsMessage::Text(text.clone())).unwrap(),
+            Some(message)
+        );
+        assert!(decode_message(WsMessage::Binary(text.into_bytes())).is_err());
+    }
     assert!(decode_message(WsMessage::Text("Setup(())".into())).is_err());
     assert_eq!(decode_message(WsMessage::Ping(vec![])).unwrap(), None);
 }
 
 #[test]
-fn pause_freezes_solo_and_replay_ticks_but_online_still_applies_authoritative_turns() {
+fn pause_freezes_solo_and_replay_ticks_but_online_still_applies_authoritative_frames() {
     for mode in [Mode::Offline, Mode::Playback, Mode::Online] {
         let mut session = Session::default();
-        let mut game = session
-            .begin(setup(), Mode::Offline, PlayerId(0), 0.0)
-            .unwrap();
-        let mut reference = setup().simulation().unwrap();
-        let turn = Turn {
-            tick: 1,
-            inputs: (0..2)
-                .map(|player| PlayerInput {
-                    player: PlayerId(player),
-                    commands: vec![],
-                })
-                .collect(),
-        };
-        turn.apply(&mut reference).unwrap();
-        let hash = reference.state_hash();
+        let mut game = session.begin(setup(), 0.0).unwrap();
         if mode == Mode::Playback {
+            let mut reference = setup().simulation().unwrap();
+            reference.enforce_fog();
+            let turn = Turn {
+                tick: 1,
+                inputs: (0..2)
+                    .map(|player| PlayerInput {
+                        player: PlayerId(player),
+                        commands: vec![],
+                    })
+                    .collect(),
+            };
+            turn.apply(&mut reference).unwrap();
             let mut replay = Replay::new(setup()).unwrap();
-            replay.push(turn.clone(), hash).unwrap();
-            game = session.begin_replay(replay, 0.0).unwrap();
+            replay.push(turn, reference.state_hash()).unwrap();
+            game = session.begin_replay(Recording::Match(replay), 0.0).unwrap();
         } else if mode == Mode::Online {
-            session.mode = Mode::Online;
-            // No socket is needed for an already-buffered turn with no new input submission.
-            session.turns.insert(1, (turn, hash));
-            session.submitted_tick = INPUT_DELAY_TICKS;
+            let (online_game, mut authority, mut knowledge) = online(&mut session, PlayerId(0));
+            game = online_game;
+            // No socket is needed for already-buffered frames with no new input submission.
+            receive_frames(&mut session, &mut authority, &mut knowledge, 2);
+            session.submitted_tick = 3;
         }
         game.pending.push(Command::Stop {
             units: vec![UnitId(0)],
@@ -878,14 +996,13 @@ fn pause_freezes_solo_and_replay_ticks_but_online_still_applies_authoritative_tu
             .add_systems(FixedUpdate, advance_session);
         app.world_mut().run_schedule(FixedUpdate);
         if mode == Mode::Online {
-            assert_eq!(app.world().resource::<Match>().sim.tick(), 1);
-            assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+            assert_eq!(app.world().resource::<Session>().applied_frames, 2);
         } else {
-            assert_eq!(app.world().resource::<Match>().sim.tick(), 0);
+            assert_eq!(app.world().resource::<Match>().view.tick(), 0);
             assert_eq!(app.world().resource::<Match>().pending.len(), 1);
             app.world_mut().resource_mut::<PauseMenu>().open = false;
             app.world_mut().run_schedule(FixedUpdate);
-            assert_eq!(app.world().resource::<Match>().sim.tick(), 1);
         }
+        assert_eq!(app.world().resource::<Match>().view.tick(), 1);
     }
 }

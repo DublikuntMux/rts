@@ -16,15 +16,15 @@ use std::{
 use bevy::prelude::*;
 use ewebsock::{WsEvent, WsMessage, WsSender};
 use rts_ai::Difficulty;
-use rts_base::{Command, MatchOutcome, PlayerId, Sim};
+use rts_base::{Command, MatchOutcome, PlayerId, PlayerView, Sim, ViewFrame, ViewIntro};
 use rts_net::{
-    ClientMessage, INPUT_DELAY_TICKS, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
-    PROTOCOL_VERSION, PlayerInput, Replay, RoomInfo, ServerMessage, Turn, decode_server,
-    decode_server_binary, encode_client,
+    ClientMessage, INPUT_DELAY_TICKS, LobbySetup, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
+    PROTOCOL_VERSION, PlayerInput, Recording, Replay, RoomInfo, ServerMessage, Turn, ViewReplay,
+    decode_server, decode_server_binary, encode_client,
 };
 
 use crate::{
-    game::{AppState, MapCatalog, Match},
+    game::{AppState, MapCatalog, Match, Seat},
     input::Selection,
     library::{Library, Shelf},
     menu::Menu,
@@ -280,22 +280,34 @@ enum Mode {
 #[derive(Resource, Default)]
 pub struct Session {
     mode: Mode,
+    /// Local orders in view IDs by the tick they execute.
     local_frames: BTreeMap<u32, Vec<Command>>,
-    turns: BTreeMap<u32, (Turn, u64)>,
-    received_tick: u32,
-    online_setup: Option<MatchSetup>,
-    online_players: u8,
+    /// Server frames received but not yet applied, by tick.
+    frames: BTreeMap<u32, ViewFrame>,
+    /// Tick of the newest server frame received.
+    received_tick: Option<u32>,
+    /// Frames applied from a server or a player-perspective replay.
+    applied_frames: usize,
+    online_setup: Option<LobbySetup>,
     submitted_tick: u32,
-    recording: Option<Replay>,
-    last_replay: Option<Replay>,
+    recording: Option<Recording>,
+    last_replay: Option<Recording>,
     last_step: f64,
     /// The solo opponent's difficulty, kept by restarts and saved games.
     pub difficulty: Difficulty,
 }
 
 impl Session {
-    fn replay(&self) -> Option<&Replay> {
+    fn replay(&self) -> Option<&Recording> {
         self.recording.as_ref().or(self.last_replay.as_ref())
+    }
+
+    /// The full replay of the current or last local match.
+    fn local_replay(&self) -> Option<&Replay> {
+        match self.replay()? {
+            Recording::Match(replay) => Some(replay),
+            Recording::View(_) => None,
+        }
     }
 
     fn archive(&mut self) {
@@ -303,51 +315,109 @@ impl Session {
             self.last_replay = Some(replay);
         }
         self.local_frames.clear();
-        self.turns.clear();
+        self.frames.clear();
         self.online_setup = None;
         self.submitted_tick = 0;
-        self.received_tick = 0;
+        self.received_tick = None;
+        self.applied_frames = 0;
     }
 
-    fn begin(
-        &mut self,
-        setup: MatchSetup,
-        mode: Mode,
-        player: PlayerId,
-        now: f64,
-    ) -> Result<Match, String> {
-        let sim = setup
+    /// Starts a solo match on `setup`, played by the local player against computer opponents.
+    fn begin(&mut self, setup: MatchSetup, now: f64) -> Result<Match, String> {
+        let recording =
+            Replay::new(setup).map_err(|error| format!("Cannot start this map: {error}"))?;
+        let sim = recording
             .simulation()
             .map_err(|error| format!("Cannot start this map: {error}"))?;
-        let recording =
-            Replay::new(setup).map_err(|error| format!("Cannot record match: {error}"))?;
+        let game = self.local_match(sim);
         self.archive();
-        self.recording = Some(recording);
-        self.mode = mode;
-        self.last_step = now;
-        Ok(Match::new(sim, player, true))
-    }
-
-    /// Continues a saved solo match from `sim`, its verified state after the recorded turns.
-    fn resume(&mut self, saved: Replay, sim: Sim, now: f64) -> Match {
-        self.archive();
-        self.recording = Some(saved);
+        self.recording = Some(Recording::Match(recording));
         self.mode = Mode::Offline;
         self.last_step = now;
-        Match::new(sim, PlayerId(0), true)
+        Ok(game)
     }
 
-    /// Watches a replay that is known to be valid: recorded here or verified by the library.
-    fn begin_replay(&mut self, replay: Replay, now: f64) -> Result<Match, String> {
-        let sim = replay
-            .setup
-            .simulation()
-            .map_err(|error| format!("Cannot load replay map: {error}"))?;
+    fn local_match(&self, sim: Sim) -> Match {
+        let players = u8::try_from(sim.players().len()).expect("bounded player count");
+        let opponents = if sim.is_skirmish() {
+            (1..players)
+                .map(|player| Seat::new(&sim, PlayerId(player), self.difficulty))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut game = Match::new(sim, PlayerId(0), true);
+        game.local_mut().expect("local match").opponents = opponents;
+        game
+    }
+
+    /// Continues a saved solo match. Replays its turns so every player's knowledge and the
+    /// opponents' memory match the live match.
+    fn resume(&mut self, saved: Replay, now: f64) -> Result<Match, String> {
+        let invalid = |error: rts_net::NetError| format!("Cannot load: {error}");
+        let mut game = self.local_match(saved.simulation().map_err(invalid)?);
+        for turn in &saved.turns {
+            let local = game.local_mut().expect("local match");
+            for seat in &mut local.opponents {
+                seat.commands(&local.sim);
+            }
+            turn.apply(&mut local.sim).map_err(invalid)?;
+            game.observe_local();
+        }
+        if game.local_sim().map(Sim::state_hash) != Some(saved.final_hash) {
+            return Err("Cannot load: the saved match does not verify.".into());
+        }
+        game.volleys.clear();
+        self.archive();
+        self.recording = Some(Recording::Match(saved));
+        self.mode = Mode::Offline;
+        self.last_step = now;
+        Ok(game)
+    }
+
+    /// Joins a started online match from the local player's perspective.
+    fn begin_online(
+        &mut self,
+        setup: &LobbySetup,
+        view: ViewIntro,
+        now: f64,
+    ) -> Result<Match, String> {
+        let invalid =
+            |error: rts_net::NetError| format!("Server started an invalid match: {error}");
+        let rules = setup.rules().map_err(invalid)?;
+        let recording =
+            ViewReplay::new(setup.map.clone(), setup.rules.clone(), view).map_err(invalid)?;
+        let view = PlayerView::new(rules, view)
+            .map_err(|error| format!("Server started an invalid match: {error}"))?;
+        self.archive();
+        self.recording = Some(Recording::View(recording));
+        self.mode = Mode::Online;
+        self.last_step = now;
+        Ok(Match::online(view, true))
+    }
+
+    /// Watches a recording that is known to be valid: recorded here or verified by the library.
+    fn begin_replay(&mut self, replay: Recording, now: f64) -> Result<Match, String> {
+        let game = match &replay {
+            Recording::Match(replay) => Match::new(
+                replay
+                    .simulation()
+                    .map_err(|error| format!("Cannot load replay map: {error}"))?,
+                PlayerId(0),
+                false,
+            ),
+            Recording::View(replay) => Match::online(
+                replay
+                    .view()
+                    .map_err(|error| format!("Cannot load replay: {error}"))?,
+                false,
+            ),
+        };
         self.archive();
         self.last_replay = Some(replay);
         self.mode = Mode::Playback;
         self.last_step = now;
-        Ok(Match::new(sim, PlayerId(0), false))
+        Ok(game)
     }
 }
 
@@ -517,7 +587,7 @@ fn handle_actions(
                 .ok_or_else(|| "This map is not available.".to_owned())
                 .and_then(|map| {
                     session.difficulty = *difficulty;
-                    let game = session.begin(map.setup.clone(), Mode::Offline, PlayerId(0), now);
+                    let game = session.begin(map.setup.clone(), now);
                     play(
                         game,
                         MatchKind::Solo,
@@ -531,12 +601,11 @@ fn handle_actions(
                     )
                 }),
             SessionAction::Restart if status.can_restart() => session
-                .recording
-                .as_ref()
+                .local_replay()
                 .map(|replay| replay.setup.clone())
                 .ok_or_else(|| "The previous match setup is unavailable.".to_owned())
                 .and_then(|setup| {
-                    let game = session.begin(setup, Mode::Offline, PlayerId(0), now)?;
+                    let game = session.begin(setup, now)?;
                     commands.insert_resource(RestartMatch(game));
                     next.set(AppState::Restarting);
                     status.start_match(
@@ -546,22 +615,23 @@ fn handle_actions(
                     Ok(())
                 }),
             SessionAction::Restart => Err("Complete a solo skirmish before restarting.".into()),
-            SessionAction::LoadGame { id } => {
-                library.load(Shelf::Saves, id).and_then(|(saved, sim)| {
-                    session.difficulty = library
-                        .get(Shelf::Saves, id)
-                        .and_then(|record| record.meta.difficulty)
-                        .unwrap_or_default();
-                    let game = Ok(session.resume(saved, sim, now));
-                    play(
-                        game,
-                        MatchKind::Solo,
-                        "Saved game loaded.",
-                        &mut status,
-                        &mut network,
-                    )
-                })
-            }
+            SessionAction::LoadGame { id } => library.load(Shelf::Saves, id).and_then(|saved| {
+                let Recording::Match(saved) = saved else {
+                    return Err("This save is not a local match.".into());
+                };
+                session.difficulty = library
+                    .get(Shelf::Saves, id)
+                    .and_then(|record| record.meta.difficulty)
+                    .unwrap_or_default();
+                let game = session.resume(saved, now);
+                play(
+                    game,
+                    MatchKind::Solo,
+                    "Saved game loaded.",
+                    &mut status,
+                    &mut network,
+                )
+            }),
             SessionAction::SaveGame => {
                 if status.can_save_game() {
                     session
@@ -668,7 +738,7 @@ fn handle_actions(
                 Ok(())
             }
             SessionAction::WatchReplay { id } => {
-                library.load(Shelf::Replays, id).and_then(|(replay, _)| {
+                library.load(Shelf::Replays, id).and_then(|replay| {
                     let game = session.begin_replay(replay, now);
                     play(
                         game,
@@ -835,7 +905,7 @@ fn receive_message(
                 return Err("Unexpected match configuration.".into());
             }
             setup
-                .simulation()
+                .rules()
                 .map_err(|error| format!("Invalid server configuration: {error}"))?;
             let checksum = setup.checksum();
             session.online_setup = Some(setup);
@@ -871,6 +941,7 @@ fn receive_message(
         ServerMessage::Started {
             players,
             input_delay,
+            view,
         } => {
             let setup = session
                 .online_setup
@@ -880,11 +951,14 @@ fn receive_message(
                 .lobby
                 .take()
                 .ok_or("Server started a match outside a room.")?;
-            if status.running || players != setup.players || input_delay != INPUT_DELAY_TICKS {
+            if status.running
+                || players != setup.players
+                || input_delay != INPUT_DELAY_TICKS
+                || view.player != PlayerId(lobby.player)
+            {
                 return Err("Server started an incompatible match.".into());
             }
-            let game = session.begin(setup, Mode::Online, PlayerId(lobby.player), now)?;
-            session.online_players = players;
+            let game = session.begin_online(&setup, view, now)?;
             commands.insert_resource(game);
             next.set(AppState::InGame);
             status.start_match(
@@ -892,14 +966,18 @@ fn receive_message(
                 &format!("You are player {}.", lobby.player + 1),
             );
         }
-        ServerMessage::Turn { turn, hash } => {
-            if session.mode != Mode::Online || session.turns.len() >= 128 {
-                return Err("Unexpected or excessive turn data.".into());
+        ServerMessage::View { frame } => {
+            if session.mode != Mode::Online || session.frames.len() >= 128 {
+                return Err("Unexpected or excessive view data.".into());
             }
-            turn.validate(session.received_tick + 1, session.online_players)
-                .map_err(|error| format!("Invalid turn: {error}"))?;
-            session.received_tick = turn.tick;
-            session.turns.insert(turn.tick, (turn, hash));
+            let expected = session
+                .received_tick
+                .map_or(Some(0), |tick| tick.checked_add(1));
+            if Some(frame.tick) != expected {
+                return Err("The server sent a view out of order.".into());
+            }
+            session.received_tick = Some(frame.tick);
+            session.frames.insert(frame.tick, frame);
         }
         ServerMessage::Ended { reason } => {
             if session.mode == Mode::Online {
@@ -978,41 +1056,61 @@ fn advance_buffered(
 ) -> Result<(), String> {
     for _ in 0..8 {
         advance(game, session, status, network, now)?;
-        if session.mode != Mode::Online || session.turns.is_empty() {
+        if session.mode != Mode::Online || session.frames.is_empty() {
             break;
         }
     }
     Ok(())
 }
 
+/// Builds the next local turn: the local player's delayed orders and each computer opponent's
+/// orders, all bound to the authority on the tick they execute.
 fn local_turn(
     game: &mut Match,
     frames: &mut BTreeMap<u32, Vec<Command>>,
     next_tick: u32,
 ) -> Result<Turn, String> {
     let target = game
-        .sim
+        .view
         .tick()
         .checked_add(INPUT_DELAY_TICKS)
         .ok_or("Match tick limit reached.")?;
     frames.insert(target, std::mem::take(&mut game.pending));
-    let mut commands = frames.remove(&next_tick).unwrap_or_default();
-    let players = u8::try_from(game.sim.players().len()).map_err(|_| "Invalid player count.")?;
+    let ordered = frames.remove(&next_tick).unwrap_or_default();
+    let local_player = game.local_player;
+    let local = game
+        .local_mut()
+        .ok_or("The match has no local simulation.")?;
+    let players = u8::try_from(local.sim.players().len()).map_err(|_| "Invalid player count.")?;
+    let mut inputs: Vec<_> = (0..players)
+        .map(|player| PlayerInput {
+            player: PlayerId(player),
+            commands: Vec::new(),
+        })
+        .collect();
+    inputs[usize::from(local_player.0)].commands = ordered
+        .iter()
+        .filter_map(|command| local.knowledge.translate_command(&local.sim, command))
+        .collect();
+    for seat in &mut local.opponents {
+        inputs[usize::from(seat.knowledge.player().0)].commands = seat.commands(&local.sim);
+    }
     Ok(Turn {
         tick: next_tick,
-        inputs: (0..players)
-            .map(|player| PlayerInput {
-                player: PlayerId(player),
-                commands: if PlayerId(player) == game.local_player {
-                    std::mem::take(&mut commands)
-                } else if game.sim.is_skirmish() {
-                    rts_ai::commands(&game.sim, PlayerId(player))
-                } else {
-                    Vec::new()
-                },
-            })
-            .collect(),
+        inputs,
     })
+}
+
+/// Applies a full turn to the local simulation and refreshes every view.
+fn apply_local(game: &mut Match, turn: &Turn) -> Result<u64, String> {
+    let local = game
+        .local_mut()
+        .ok_or("The match has no local simulation.")?;
+    turn.apply(&mut local.sim)
+        .map_err(|error| format!("Cannot advance match: {error}"))?;
+    let hash = local.sim.state_hash();
+    game.observe_local();
+    Ok(hash)
 }
 
 fn advance(
@@ -1022,91 +1120,116 @@ fn advance(
     network: &mut Network,
     now: f64,
 ) -> Result<(), String> {
-    let next_tick = game
-        .sim
-        .tick()
-        .checked_add(1)
-        .ok_or("Match tick limit reached.")?;
-    let mut authoritative_hash = None;
-    let turn =
-        match session.mode {
-            Mode::Offline => local_turn(game, &mut session.local_frames, next_tick)?,
-            Mode::Online => {
-                let Some((turn, hash)) = session.turns.remove(&next_tick) else {
-                    if now - session.last_step > 15.0 {
-                        return Err("The server stopped responding. Play has stopped.".into());
-                    }
-                    if now - session.last_step > 0.25 {
-                        status.info("Waiting for the server…");
-                    }
-                    return Ok(());
-                };
-                authoritative_hash = Some(hash);
-                let target = session
-                    .received_tick
-                    .checked_add(INPUT_DELAY_TICKS)
-                    .ok_or("Match tick limit reached.")?;
-                if target > session.submitted_tick {
-                    network.0.as_mut().ok_or("Connection closed.")?.send(
-                        &ClientMessage::Input {
-                            tick: target,
-                            commands: std::mem::take(&mut game.pending),
-                        },
-                    )?;
-                    session.submitted_tick = target;
-                }
-                turn
+    match session.mode {
+        Mode::Offline => {
+            let next_tick = game
+                .view
+                .tick()
+                .checked_add(1)
+                .ok_or("Match tick limit reached.")?;
+            let turn = local_turn(game, &mut session.local_frames, next_tick)?;
+            let hash = apply_local(game, &turn)?;
+            if let Some(Recording::Match(recording)) = &mut session.recording {
+                recording
+                    .push(turn, hash)
+                    .map_err(|error| format!("Cannot record match: {error}"))?;
             }
-            Mode::Playback => {
-                let replay = session
-                    .last_replay
-                    .as_ref()
-                    .ok_or("Replay is not loaded.")?;
-                let Some(turn) = replay.turns.get(game.sim.tick() as usize) else {
-                    if game.sim.state_hash() != replay.final_hash {
+            if let Some(result) = game.view.outcome() {
+                status.result = Some(MatchResult::for_player(result, game.local_player));
+                status.info("");
+                stop_match(session, status, Some(game));
+            }
+        }
+        Mode::Online => {
+            let next = if session.applied_frames == 0 {
+                0
+            } else {
+                game.view
+                    .tick()
+                    .checked_add(1)
+                    .ok_or("Match tick limit reached.")?
+            };
+            let Some(frame) = session.frames.remove(&next) else {
+                if now - session.last_step > 15.0 {
+                    return Err("The server stopped responding. Play has stopped.".into());
+                }
+                if now - session.last_step > 0.25 {
+                    status.info("Waiting for the server…");
+                }
+                return Ok(());
+            };
+            let target = session
+                .received_tick
+                .unwrap_or(0)
+                .checked_add(INPUT_DELAY_TICKS)
+                .ok_or("Match tick limit reached.")?;
+            if target > session.submitted_tick {
+                network
+                    .0
+                    .as_mut()
+                    .ok_or("Connection closed.")?
+                    .send(&ClientMessage::Input {
+                        tick: target,
+                        commands: std::mem::take(&mut game.pending),
+                    })?;
+                session.submitted_tick = target;
+            }
+            game.view
+                .apply(frame.clone())
+                .map_err(|error| format!("Invalid server view: {error}"))?;
+            game.record_volleys();
+            session.applied_frames += 1;
+            if let Some(Recording::View(recording)) = &mut session.recording {
+                recording
+                    .push(frame)
+                    .map_err(|error| format!("Cannot record match: {error}"))?;
+            }
+            if status.message.starts_with("Waiting for") {
+                status.info(format!("You are player {}.", game.local_player.0 + 1));
+            }
+        }
+        Mode::Playback => match session
+            .last_replay
+            .as_ref()
+            .ok_or("Replay is not loaded.")?
+        {
+            Recording::Match(replay) => {
+                let tick = game.view.tick();
+                let Some(turn) = replay.turns.get(tick as usize).cloned() else {
+                    if game.local_sim().map(Sim::state_hash) != Some(replay.final_hash) {
                         return Err("Replay ended with a different match state.".into());
                     }
-                    session.mode = Mode::Stopped;
-                    status.stopped = true;
-                    status.result = game
-                        .sim
-                        .outcome()
-                        .map(|result| MatchResult::for_player(result, game.local_player));
-                    status.info("Replay finished and verified.");
+                    finish_playback(session, status, game, "Replay finished and verified.");
                     return Ok(());
                 };
-                turn.clone()
+                apply_local(game, &turn)?;
             }
-            Mode::Idle | Mode::Stopped => return Ok(()),
-        };
-    turn.apply(&mut game.sim)
-        .map_err(|error| format!("Cannot advance match: {error}"))?;
-    game.record_volleys();
-    let hash = game.sim.state_hash();
-    if session.mode == Mode::Online {
-        if authoritative_hash != Some(hash) {
-            return Err(
-                "Match state differs from the authoritative server. Play has stopped.".into(),
-            );
-        }
-        if status.message.starts_with("Waiting for") {
-            status.info(format!("You are player {}.", game.local_player.0 + 1));
-        }
-    }
-    if let Some(recording) = &mut session.recording {
-        recording
-            .push(turn, hash)
-            .map_err(|error| format!("Cannot record match: {error}"))?;
-    }
-    if session.mode == Mode::Offline
-        && let Some(result) = game.sim.outcome()
-    {
-        status.result = Some(MatchResult::for_player(result, game.local_player));
-        status.info("");
-        stop_match(session, status, Some(game));
+            Recording::View(replay) => {
+                let Some(frame) = replay.frames.get(session.applied_frames).cloned() else {
+                    finish_playback(session, status, game, "Replay finished.");
+                    return Ok(());
+                };
+                game.view
+                    .apply(frame)
+                    .map_err(|error| format!("Invalid replay: {error}"))?;
+                game.record_volleys();
+                session.applied_frames += 1;
+            }
+        },
+        Mode::Idle | Mode::Stopped => return Ok(()),
     }
     session.last_step = now;
     Ok(())
+}
+
+fn finish_playback(session: &mut Session, status: &mut SessionStatus, game: &Match, message: &str) {
+    session.mode = Mode::Stopped;
+    status.stopped = true;
+    status.result = game
+        .view
+        .outcome()
+        .map(|result| MatchResult::for_player(result, game.local_player));
+    status.info(message);
 }
 
 fn finish_replay_import(
@@ -1120,7 +1243,9 @@ fn finish_replay_import(
     status.importing = false;
     let result = result
         .and_then(|text| {
-            Replay::from_ron(&text).map_err(|error| format!("Cannot import replay: {error}"))
+            Recording::from_ron(&text)
+                .map(|(recording, _)| recording)
+                .map_err(|error| format!("Cannot import replay: {error}"))
         })
         .and_then(|replay| library.add(Shelf::Replays, &replay, None));
     match result {

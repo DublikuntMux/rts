@@ -451,7 +451,10 @@ fn gather_and_build_targets_need_current_sight() {
         view.visibility(tile_of(deposit.pos)),
         TileVisibility::Remembered
     );
-    assert!(view.deposit(far).is_some(), "the deposit is still remembered");
+    assert!(
+        view.deposit(far).is_some(),
+        "the deposit is still remembered"
+    );
     assert!(!view.can_place_barracks(site));
     assert_eq!(knowledge.translate_command(&sim, &gather), None);
     assert_eq!(knowledge.translate_command(&sim, &build), None);

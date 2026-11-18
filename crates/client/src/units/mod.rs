@@ -120,23 +120,23 @@ fn sync_units(
         layout,
         soldiers,
     } = &mut *visuals;
-    layout.update(game.sim.units().map(|(id, unit)| {
+    layout.update(game.view.units().map(|(id, unit)| {
         (
             id,
             unit.pos,
-            UnitBounds::from_definition(game.sim.rules().unit(unit.kind)),
-            game.sim.move_target(id).is_some(),
+            UnitBounds::from_definition(game.view.rules().unit(unit.kind)),
+            game.view.move_target(id).is_some(),
         )
     }));
-    for (id, unit) in game.sim.units() {
-        let definition = game.sim.rules().unit(unit.kind);
+    for (id, unit) in game.view.units() {
+        let definition = game.view.rules().unit(unit.kind);
         let bounds = UnitBounds::from_definition(definition);
         let position = to_world(unit.pos);
         let target = layout.placement(id);
         let motion = motion.entry(id).or_insert_with(|| {
-            UnitMotion::new(position, target, game.sim.tick(), fixed.elapsed_secs_f64())
+            UnitMotion::new(position, target, game.view.tick(), fixed.elapsed_secs_f64())
         });
-        motion.observe(position, game.sim.tick(), fixed.elapsed_secs_f64());
+        motion.observe(position, game.view.tick(), fixed.elapsed_secs_f64());
         let placement = motion.draw(
             target,
             time.elapsed_secs_f64(),
@@ -203,7 +203,7 @@ fn sync_units(
         entities.insert(id, entity);
     }
     entities.retain(|&id, &mut entity| {
-        let alive = game.sim.unit(id).is_some();
+        let alive = game.view.unit(id).is_some();
         if !alive {
             commands.entity(entity).despawn();
         }
@@ -423,7 +423,7 @@ mod tests {
                 .insert_resource(TimeUpdateStrategy::ManualDuration(
                     std::time::Duration::from_secs_f64(1.0 / f64::from(fps)),
                 ))
-                .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.sim.step());
+                .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.step());
             let mut last = None;
             for _ in 0..fps * 5 / 2 {
                 app.update();
@@ -478,10 +478,17 @@ mod tests {
             assert!(world.get::<Sprite>(entity).is_some());
             assert_eq!(
                 world.get::<Transform>(entity).unwrap().translation,
-                to_world(world.resource::<Match>().sim.unit(id).unwrap().pos).extend(UNIT_Z)
+                to_world(world.resource::<Match>().view.unit(id).unwrap().pos).extend(UNIT_Z)
             );
         }
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
         app.update();
         let visuals = app.world().resource::<UnitVisuals>();
         assert_eq!(visuals.entities, entities);
@@ -489,7 +496,6 @@ mod tests {
 
         app.world_mut()
             .resource_mut::<Match>()
-            .sim
             .remove_unit(UnitId(0));
         app.update();
         assert!(app.world().get_entity(entities[&UnitId(0)]).is_err());
@@ -531,12 +537,15 @@ mod tests {
         let world = app.world();
         let visuals = world.resource::<UnitVisuals>();
         assert_eq!(visuals.images.len(), 1);
-        for (id, unit) in world.resource::<Match>().sim.units() {
+        for (id, unit) in world.resource::<Match>().view.units() {
             let sprite = world.get::<Sprite>(visuals.entities[&id]).unwrap();
             assert_eq!(sprite.image, visuals.images[&unit.kind]);
             assert_eq!(sprite.color, custom_color);
         }
-        assert_eq!(world.resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            world.resource::<Match>().local_sim().unwrap().state_hash(),
+            hash
+        );
     }
 
     #[test]
@@ -585,7 +594,7 @@ mod tests {
             app.update();
             let visuals = app.world().resource::<UnitVisuals>();
             for (&id, &unit_entity) in &visuals.entities {
-                let kind = app.world().resource::<Match>().sim.unit(id).unwrap().kind;
+                let kind = app.world().resource::<Match>().view.unit(id).unwrap().kind;
                 let squad = visuals.soldiers.get(&id);
                 let expected = if detailed && squad.is_none() {
                     visuals.images[&kind].clone()
@@ -620,7 +629,14 @@ mod tests {
             assert_eq!(*app.world().get::<Transform>(entity).unwrap(), original);
             assert_eq!(sprite.custom_size, Some(bounds.size));
         }
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
     }
 
     #[test]
@@ -676,23 +692,26 @@ mod tests {
         let (first, second) = (centers[0].2, centers[usize::from(grid.columns)].2);
         assert!(first.y > second.y && (first.x - second.x).abs() < 0.001);
         assert!(centers[1].2.x > centers[0].2.x);
-        assert_eq!(world.resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            world.resource::<Match>().local_sim().unwrap().state_hash(),
+            hash
+        );
 
         // An enemy squad in range shoots; the fallen soldiers' sprites hide in place.
         let mut game = app.world_mut().resource_mut::<Match>();
-        let rules = game.sim.rules().clone();
+        let rules = game.view.rules().clone();
         let map = MapData::from_ron(
             r#"(name: "squad", players: [(start: (0.5,0.5)), (start: (2.5,0.5))],
             tiles: ["..."], units: [(kind:"soldier",owner:0,pos:(0.5,0.5)),
             (kind:"soldier",owner:1,pos:(2.5,0.5))])"#,
         )
         .unwrap();
-        game.sim = Sim::new(rules, &map).unwrap();
-        while game.sim.unit(UnitId(0)).unwrap().alive() == soldiers.len() {
-            game.sim.step();
+        game.replace_sim(Sim::new(rules, &map).unwrap());
+        while game.view.unit(UnitId(0)).unwrap().alive() == soldiers.len() {
+            game.step();
         }
         let fallen: Vec<_> = game
-            .sim
+            .view
             .unit(UnitId(0))
             .unwrap()
             .soldiers
@@ -712,7 +731,6 @@ mod tests {
 
         app.world_mut()
             .resource_mut::<Match>()
-            .sim
             .remove_unit(UnitId(0));
         app.update();
         assert!(app.world().get_entity(root).is_err());
@@ -811,10 +829,17 @@ mod tests {
                     .all(|other| other.translation != transform.translation)
             );
         }
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
 
         for id in [UnitId(1), UnitId(2)] {
-            app.world_mut().resource_mut::<Match>().sim.remove_unit(id);
+            app.world_mut().resource_mut::<Match>().remove_unit(id);
         }
         // Regroup from the last drawn placement, even while the simulation is stationary.
         let before = *app.world().get::<Transform>(entities[&UnitId(0)]).unwrap();
@@ -878,7 +903,14 @@ mod tests {
             rectangles[0].max.y <= rectangles[1].min.y
                 || rectangles[1].max.y <= rectangles[0].min.y
         );
-        assert_eq!(app.world().resource::<Match>().sim.state_hash(), hash);
+        assert_eq!(
+            app.world()
+                .resource::<Match>()
+                .local_sim()
+                .unwrap()
+                .state_hash(),
+            hash
+        );
     }
 
     #[test]
@@ -909,7 +941,7 @@ mod tests {
             .insert_resource(TimeUpdateStrategy::ManualDuration(
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             ))
-            .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.sim.step());
+            .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.step());
         let mut arrived_at = None;
         let mut arrival_checks = 0;
         for _ in 0..180 {
@@ -917,7 +949,7 @@ mod tests {
             let world = app.world();
             let game = world.resource::<Match>();
             if (0..4).map(UnitId).all(|id| {
-                game.sim.unit(id).unwrap().pos == target && game.sim.move_target(id).is_none()
+                game.view.unit(id).unwrap().pos == target && game.view.move_target(id).is_none()
             }) {
                 let now = world.resource::<Time>().elapsed_secs_f64();
                 let arrival = *arrived_at.get_or_insert(now);
@@ -946,8 +978,8 @@ mod tests {
         assert!(arrival_checks > 60);
         let game = app.world().resource::<Match>();
         for id in (0..4).map(UnitId) {
-            assert_eq!(game.sim.unit(id).unwrap().pos, target);
-            assert_eq!(game.sim.move_target(id), None);
+            assert_eq!(game.view.unit(id).unwrap().pos, target);
+            assert_eq!(game.view.move_target(id), None);
         }
         let entities: Vec<_> = app
             .world()

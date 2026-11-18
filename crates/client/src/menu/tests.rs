@@ -239,7 +239,7 @@ fn every_page_and_dialog_spawns_on_wide_and_compact_screens() {
         act(&mut app, Action::StartGame);
         // Sent messages are drained by the next frame's message update, so check right away.
 
-        let replay = Replay::new(setup("crossroads")).unwrap();
+        let replay = rts_net::Recording::Match(Replay::new(setup("crossroads")).unwrap());
         app.world_mut()
             .resource_mut::<Library>()
             .add(crate::library::Shelf::Saves, &replay, None)

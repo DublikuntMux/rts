@@ -156,7 +156,7 @@ impl Replay {
 fn match_simulation(setup: &MatchSetup, version: u32) -> Result<Sim, NetError> {
     let mut sim = setup.simulation()?;
     if version >= REPLAY_VERSION {
-        sim.enforce_combat_sight();
+        sim.enforce_fog();
     }
     Ok(sim)
 }
