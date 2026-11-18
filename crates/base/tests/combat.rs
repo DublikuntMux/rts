@@ -1,4 +1,6 @@
-use rts_base::{Command, IVec2, MapData, PlayerId, Rules, Sim, TILE, UnitId};
+use rts_base::{
+    Command, IVec2, MapData, PlayerId, Rules, Shot, Sim, TILE, UnitId, UnitKind, Volley,
+};
 
 /// Two-by-two squads with 10 health per soldier and one 5-damage shot per soldier every
 /// half second, reaching two tiles.
@@ -226,4 +228,44 @@ fn promotion_restores_the_squad_and_raises_damage() {
     // A second rank-up never happens without a further rank.
     assert_eq!(soldiers(&sim, 0), [10, 5, 10, 10]);
     assert_eq!(sim.unit(UnitId(0)).unwrap().kills, 4);
+}
+
+#[test]
+fn volleys_record_each_shooter_and_hit_for_the_latest_tick_only() {
+    let mut sim = sim(
+        r#"".....""#,
+        r#"(kind: "rifles", owner: 0, pos: (0.5, 0.5)), (kind: "rifles", owner: 1, pos: (2.0, 0.5))"#,
+    );
+    sim.step();
+    let shot = |soldier, hit| Shot { soldier, hit };
+    let (from, to) = (
+        IVec2::new(TILE / 2, TILE / 2),
+        IVec2::new(2 * TILE, TILE / 2),
+    );
+    assert_eq!(
+        sim.volleys(),
+        [
+            Volley {
+                shooter: UnitId(0),
+                shooter_kind: UnitKind(0),
+                target: UnitId(1),
+                target_kind: UnitKind(0),
+                from,
+                to,
+                shots: vec![shot(0, 0), shot(1, 0), shot(2, 2), shot(3, 2)],
+            },
+            // Only the two survivors of unit 1 fire back, from their own slots.
+            Volley {
+                shooter: UnitId(1),
+                shooter_kind: UnitKind(0),
+                target: UnitId(0),
+                target_kind: UnitKind(0),
+                from: to,
+                to: from,
+                shots: vec![shot(1, 1), shot(3, 1)],
+            },
+        ]
+    );
+    sim.step();
+    assert_eq!(sim.volleys(), []);
 }

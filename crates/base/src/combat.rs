@@ -5,8 +5,11 @@
 //! nearest enemy in range. Every living soldier fires one shot, and each shot hits the living
 //! soldier of the target squad standing nearest the shooter, so the facing rank falls first.
 //! Defeated soldiers count as kills; reaching a new rank restores the whole squad.
+//!
+//! Every volley is also recorded for presentation in [`Sim::volleys`]. The record is
+//! rebuilt each tick and never feeds back into the match or its hash.
 
-use crate::{IVec2, PlayerId, Sim, UnitId, movement::MoveOrder, rules::Weapon, tile_of};
+use crate::{IVec2, PlayerId, Sim, UnitId, UnitKind, movement::MoveOrder, rules::Weapon, tile_of};
 
 /// Squared distance between two world positions, without overflow.
 fn distance_squared(a: IVec2, b: IVec2) -> i64 {
@@ -19,7 +22,42 @@ fn in_range(from: IVec2, to: IVec2, weapon: &Weapon) -> bool {
     distance_squared(from, to) <= i64::from(weapon.range) * i64::from(weapon.range)
 }
 
+/// One unit's volley during the latest tick. Presentation only: not hashed or replayed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Volley {
+    pub shooter: UnitId,
+    pub shooter_kind: UnitKind,
+    pub target: UnitId,
+    /// Kind of the target, which may no longer exist after this volley.
+    pub target_kind: UnitKind,
+    /// Shooter center when it fired.
+    pub from: IVec2,
+    /// Target center when it was hit.
+    pub to: IVec2,
+    /// Shots in firing order. Fewer than the shooter's soldiers when the target fell first.
+    pub shots: Vec<Shot>,
+}
+
+/// One soldier's shot within a [`Volley`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shot {
+    /// Squad slot of the soldier that fired.
+    pub soldier: u8,
+    /// Squad slot of the target soldier it hit.
+    pub hit: u8,
+}
+
+fn slot(index: usize) -> u8 {
+    u8::try_from(index).expect("squads have at most 255 soldiers")
+}
+
 impl Sim {
+    /// Volleys fired during the latest tick, in firing order.
+    #[must_use]
+    pub fn volleys(&self) -> &[Volley] {
+        &self.volleys
+    }
+
     /// Starts or ends pursuit for attack orders. Orders whose target died or cannot be reached
     /// end; attackers in range stop so they can fire this tick.
     pub(crate) fn pursue_targets(&mut self) {
@@ -105,8 +143,15 @@ impl Sim {
 
     fn fire(&mut self, id: UnitId, target: UnitId, weapon: &Weapon) {
         let shooter = &self.units[&id];
-        let shots = shooter.alive();
-        let from = shooter.pos;
+        let (from, shooter_kind) = (shooter.pos, shooter.kind);
+        let gunners: Vec<u8> = shooter
+            .soldiers
+            .iter()
+            .enumerate()
+            .filter(|&(_, &health)| health > 0)
+            .map(|(index, _)| slot(index))
+            .collect();
+        let mut shots = Vec::with_capacity(gunners.len());
         let damage = self.rules.shot_damage(weapon, shooter.kills);
         let mut kills = 0;
         let victim = self.units.get_mut(&target).expect("target is alive");
@@ -114,27 +159,39 @@ impl Sim {
         let building = definition.building;
         let grid = definition.ranks();
         let half_size = IVec2::splat(definition.radius);
-        for _ in 0..shots {
+        for soldier in gunners {
             let nearest = victim
                 .soldiers
                 .iter()
                 .enumerate()
                 .filter(|&(_, &health)| health > 0)
-                .min_by_key(|&(slot, _)| {
-                    let slot = u8::try_from(slot).expect("squads have at most 255 soldiers");
-                    distance_squared(from, victim.pos + grid.offset(slot, half_size))
+                .min_by_key(|&(index, _)| {
+                    distance_squared(from, victim.pos + grid.offset(slot(index), half_size))
                 })
-                .map(|(slot, _)| slot);
-            let Some(slot) = nearest else {
+                .map(|(index, _)| index);
+            let Some(index) = nearest else {
                 break;
             };
-            let health = &mut victim.soldiers[slot];
+            shots.push(Shot {
+                soldier,
+                hit: slot(index),
+            });
+            let health = &mut victim.soldiers[index];
             *health = health.saturating_sub(damage).max(0);
             if *health == 0 && !building {
                 kills += 1;
             }
         }
         let destroyed = victim.alive() == 0;
+        self.volleys.push(Volley {
+            shooter: id,
+            shooter_kind,
+            target,
+            target_kind: victim.kind,
+            from,
+            to: victim.pos,
+            shots,
+        });
         let shooter = self.units.get_mut(&id).expect("shooter is alive");
         shooter.cooldown = weapon.cooldown;
         let rank = self.rules.rank(shooter.kills);

@@ -69,3 +69,51 @@ fn movement_hash_stream_matches_v7_baseline() {
     }
     assert_eq!(fingerprint, 7_097_546_498_927_173_293);
 }
+
+/// Pin the combat hash stream through idle fire, attack pursuit, casualties, veterancy, and
+/// destruction. Presentation records of volleys must never change it.
+#[test]
+fn combat_hash_stream_matches_baseline() {
+    let rules = Rules::from_ron(
+        r##"(tile_capacity: 4, terrain: [
+            (id: "grass", symbol: '.', speed_modifier: 1, color: "#00ff00"),
+        ], units: [
+            (id: "rifles", sprite: "r.png", size: 2, squad: 4, max_health: 10, radius: 0.4, speed: 2,
+             weapon: Some((range: 2, damage: 3, cooldown: 0.5))),
+            (id: "worker", sprite: "w.png", size: 1, max_health: 10, radius: 0.25, speed: 2),
+        ], ranks: [(name: "Veteran", kills: 3, damage_bonus: 50)])"##,
+    )
+    .unwrap();
+    let map = MapData::from_ron(
+        r#"(name: "combat hash", players: [(start: (0.5, 0.5)), (start: (7.5, 0.5))],
+            tiles: ["........", "........"], units: [
+                (kind: "rifles", owner: 0, pos: (0.5, 0.5)),
+                (kind: "rifles", owner: 0, pos: (0.5, 1.5)),
+                (kind: "rifles", owner: 1, pos: (2.0, 0.5)),
+                (kind: "worker", owner: 1, pos: (7.5, 1.5)),
+                (kind: "rifles", owner: 1, pos: (6.5, 0.5)),
+            ])"#,
+    )
+    .unwrap();
+    let mut sim = Sim::new(rules, &map).unwrap();
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325_u64;
+    for tick in 0..=240 {
+        if tick == 5 {
+            sim.queue_command(
+                PlayerId(0),
+                Command::Attack {
+                    units: vec![UnitId(1)],
+                    target: UnitId(3),
+                },
+            );
+        }
+        for byte in sim.state_hash().to_le_bytes() {
+            fingerprint = (fingerprint ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+        if tick < 240 {
+            sim.step();
+        }
+    }
+    assert!(sim.unit(UnitId(3)).is_none());
+    assert_eq!(fingerprint, 5_125_704_475_991_639_989);
+}

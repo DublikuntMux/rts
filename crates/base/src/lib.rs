@@ -22,6 +22,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+pub use combat::{Shot, Volley};
 pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use economy::{
@@ -119,6 +120,8 @@ pub struct Sim {
     /// Ordered attack targets by attacker.
     attack_orders: BTreeMap<UnitId, UnitId>,
     skirmish: Option<skirmish::Skirmish>,
+    /// Volleys of the latest tick, for presentation. Excluded from the state hash.
+    volleys: Vec<Volley>,
 }
 
 /// Derived live group usage and pace; rebuilt after commands, never stored or hashed.
@@ -181,6 +184,7 @@ impl Sim {
             move_orders: BTreeMap::new(),
             attack_orders: BTreeMap::new(),
             skirmish: None,
+            volleys: Vec::new(),
         };
         let mut occupancy = Occupancy::new(sim.terrain.size());
         for (index, placement) in map.units.iter().enumerate() {
@@ -229,6 +233,7 @@ impl Sim {
     /// only the turn counter advances.
     pub fn step_with_commands(&mut self, commands: impl IntoIterator<Item = (PlayerId, Command)>) {
         self.tick += 1;
+        self.volleys.clear();
         if self.outcome().is_some() {
             return;
         }
