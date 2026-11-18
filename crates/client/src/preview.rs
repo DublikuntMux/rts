@@ -1,4 +1,4 @@
-//! Small map images for the menu: terrain colors with player start markers.
+//! Small map images for the menu from the local player's opening view.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -7,7 +7,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use rts_assets::Graphics;
-use rts_base::{Sim, TILE};
+use rts_base::{PlayerId, PlayerView, Sim, TILE};
 
 /// Preview pixels per map tile.
 const SCALE: i32 = 4;
@@ -20,16 +20,20 @@ const MARKER_RADIUS: f32 = 1.6;
 const MARKER_OUTER: f32 = MARKER_RADIUS * SCALE as f32;
 const MARKER_EDGE: [u8; 4] = [16, 20, 28, 255];
 
-/// Renders a map's terrain and player starts.
+/// Renders explored terrain and the local start, as they appear before the first turn.
+pub fn map_preview(sim: &Sim, graphics: &Graphics) -> Image {
+    let (_, view) = PlayerView::observe(sim, PlayerId(0));
+    opening_preview(&view, graphics)
+}
+
 #[expect(
     clippy::cast_precision_loss,
     reason = "preview pixel coordinates are far below f32 precision limits"
 )]
-pub fn map_preview(sim: &Sim, graphics: &Graphics) -> Image {
-    let terrain = sim.terrain();
-    let size = terrain.size();
+fn opening_preview(view: &PlayerView, graphics: &Graphics) -> Image {
+    let size = view.size();
     let (width, height) = (size.x * SCALE, size.y * SCALE);
-    let colors: Vec<[u8; 4]> = sim
+    let colors: Vec<[u8; 4]> = view
         .rules()
         .terrain_types()
         .iter()
@@ -42,18 +46,17 @@ pub fn map_preview(sim: &Sim, graphics: &Graphics) -> Image {
     let mut pixels = Vec::with_capacity(usize::try_from(width * height * 4).unwrap_or(0));
     for y in 0..height {
         for x in 0..width {
-            let tile =
-                terrain.tiles()[usize::try_from((y / SCALE) * size.x + x / SCALE).unwrap_or(0)];
-            pixels.extend_from_slice(&colors[usize::from(tile.0)]);
+            let tile = bevy::math::IVec2::new(x / SCALE, y / SCALE);
+            let color = view
+                .terrain(tile)
+                .map_or([0, 0, 0, 255], |terrain| colors[usize::from(terrain.0)]);
+            pixels.extend_from_slice(&color);
         }
     }
     let scale = SCALE as f32;
-    for (slot, player) in sim.players().iter().enumerate() {
-        let center = player.start.as_vec2() / TILE as f32 * scale;
-        let color =
-            Srgba::from(graphics.player_color(u8::try_from(slot).unwrap_or(0))).to_u8_array();
-        paint_start(&mut pixels, width, height, center, color);
-    }
+    let center = view.start().as_vec2() / TILE as f32 * scale;
+    let color = Srgba::from(graphics.player_color(view.player().0)).to_u8_array();
+    paint_start(&mut pixels, width, height, center, color);
     let mut image = Image::new(
         Extent3d {
             width: u32::try_from(width).unwrap_or(1),
@@ -156,10 +159,10 @@ mod tests {
     }
 
     #[test]
-    fn preview_scales_terrain_and_marks_starts() {
+    fn preview_scales_known_terrain_and_marks_only_the_local_start() {
         let sim = MatchSetup {
             rules: include_str!("../../../assets/data/core.rules.ron").into(),
-            map: include_str!("../../../assets/maps/proving_grounds.map.ron").into(),
+            map: include_str!("../../../assets/maps/frontier.map.ron").into(),
             seed: 0,
             players: 2,
         }
@@ -181,6 +184,15 @@ mod tests {
             .unwrap();
         assert_eq!(pixel, Srgba::from(graphics.player_color(0)).to_u8_array());
         let corner = image.pixel_bytes(bevy::math::UVec3::ZERO).unwrap();
-        assert_eq!(corner, Srgba::hex("#4a7a3e").unwrap().to_u8_array());
+        assert_eq!(corner, [0, 0, 0, 255]);
+        let enemy = ((sim.players()[1].start / TILE) * SCALE).as_uvec2();
+        assert_eq!(image.pixel_bytes(enemy.extend(0)).unwrap(), [0, 0, 0, 255]);
+        let tile = sim.deposits().next().unwrap().1.pos / TILE;
+        let wood = (tile * SCALE).as_uvec2();
+        let terrain = sim.terrain().get(tile).unwrap();
+        let color = Srgba::hex(&sim.rules().terrain(terrain).color)
+            .unwrap()
+            .to_u8_array();
+        assert_eq!(image.pixel_bytes(wood.extend(0)).unwrap(), color);
     }
 }

@@ -467,7 +467,7 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
     bsn_list! {
         @heading("Select map")
         --
-        @hint("Choose your ground. Colored markers show each player’s starting position.")
+        @hint("The preview shows the terrain around your starting position.")
         --
         @split(
             maps,
@@ -1032,11 +1032,16 @@ fn catalog_preview(view: &View, index: usize) -> impl Scene {
 
 /// A record's map preview, from the catalog when the map is bundled.
 fn record_preview(view: &View, record: &Record) -> Box<dyn SceneList> {
+    if record.meta.setup.map.is_empty() {
+        return boxed(empty_preview(
+            "See the recorded player's view during playback.",
+        ));
+    }
     let aspect = map_aspect(&record.meta.setup.map);
     view.catalog
         .0
         .iter()
-        .find(|map| map.setup.map == record.meta.setup.map)
+        .find(|map| map.setup == record.meta.setup)
         .map_or_else(
             || boxed(preview_for(record, aspect)),
             |map| boxed(map_image(map.preview.clone(), aspect)),
