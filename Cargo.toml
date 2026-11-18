@@ -48,6 +48,7 @@ js-sys = "0.3.107"
 wasm-bindgen = "0.2.130"
 web-sys = { version = "0.3.107", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement", "Storage", "Blob", "BlobPropertyBag", "Url", "Event", "ErrorEvent", "PromiseRejectionEvent", "FileList", "File"] }
 
+rts_ai = { path = "crates/ai" }
 rts_assets = { path = "crates/assets" }
 rts_base = { path = "crates/base" }
 rts_client = { path = "crates/client" }

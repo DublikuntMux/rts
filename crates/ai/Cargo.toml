@@ -1,0 +1,14 @@
+[package]
+name = "rts_ai"
+description = "Deterministic skirmish AI for the RTS demo."
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rts_base.workspace = true
+
+[dev-dependencies]
+rts_net.workspace = true

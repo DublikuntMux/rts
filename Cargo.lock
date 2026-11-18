@@ -4803,6 +4803,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rts_ai"
+version = "0.1.0"
+dependencies = [
+ "rts_base",
+ "rts_net",
+]
+
+[[package]]
 name = "rts_android"
 version = "0.1.0"
 dependencies = [
@@ -4841,6 +4849,7 @@ dependencies = [
  "js-sys",
  "miniz_oxide 0.9.1",
  "ron",
+ "rts_ai",
  "rts_assets",
  "rts_base",
  "rts_net",

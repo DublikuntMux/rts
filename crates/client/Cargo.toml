@@ -16,6 +16,7 @@ bevy.workspace = true
 ewebsock.workspace = true
 miniz_oxide.workspace = true
 ron.workspace = true
+rts_ai.workspace = true
 rts_assets.workspace = true
 rts_base.workspace = true
 rts_net.workspace = true
