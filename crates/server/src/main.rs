@@ -55,6 +55,7 @@ fn configuration(
     }
     if let Some(path) = map {
         config.setup.map = read_document(&path)?;
+        config.random_layout = false;
     }
     if let Some(seed) = seed {
         config.setup.seed = seed;
@@ -66,6 +67,10 @@ fn configuration(
         .setup
         .simulation()
         .map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
+    if config.random_layout {
+        rts_server::random_setup(&config.setup.rules, config.setup.seed)
+            .map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
+    }
     let address = address
         .or_else(|| std::env::var("RTS_SERVER_ADDR").ok())
         .unwrap_or_else(|| "127.0.0.1:9001".to_owned());
@@ -104,6 +109,7 @@ mod tests {
         let (address, default) = config(&["127.0.0.1:1234"]).unwrap();
         assert_eq!(address, "127.0.0.1:1234");
         assert_eq!(default.setup.players, 2);
+        assert!(default.random_layout);
         let (_, rules) = config(&[
             "--rules",
             "../../assets/data/core.rules.ron",
@@ -114,8 +120,13 @@ mod tests {
         assert_eq!(rules.setup.rules, default.setup.rules);
         assert_eq!(rules.setup.map, default.setup.map);
         assert_eq!(rules.setup.seed, 42);
+        assert!(rules.random_layout);
         let (_, map) = config(&["--map", "../../assets/maps/proving_grounds.map.ron"]).unwrap();
-        assert_eq!(map.setup, default.setup);
+        assert!(!map.random_layout);
+        assert_eq!(
+            map.setup.map,
+            include_str!("../../../assets/maps/proving_grounds.map.ron")
+        );
     }
 
     #[test]
@@ -139,6 +150,7 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         let (address, config) = result.unwrap();
         assert_eq!(address, "127.0.0.1:0");
+        assert!(!config.random_layout);
         assert_eq!(config.setup.players, 1);
         assert_eq!(config.setup.seed, 99);
         assert_eq!(config.setup.simulation().unwrap().players().len(), 1);
