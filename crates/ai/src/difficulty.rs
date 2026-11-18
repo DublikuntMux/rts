@@ -18,8 +18,8 @@ pub enum Difficulty {
 pub enum ScoutPattern {
     /// The unexplored cell nearest the scout: a wandering search.
     Nearest,
-    /// The unexplored cell nearest the home base: an expanding ring.
-    Rings,
+    /// The unexplored cell nearest the map center: a sweep outward from the middle.
+    Center,
     /// Straight to the mirror image of the home base, then outward from there.
     Mirror,
 }
@@ -40,7 +40,7 @@ impl Difficulty {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Easy => "Scouts aimlessly, reacts slowly, and attacks late with a large army.",
-            Self::Normal => "Scouts outward from its base and attacks once its army is ready.",
+            Self::Normal => "Scouts the middle of the map and attacks once its army is ready.",
             Self::Hard => "Scouts toward your likely base, reacts quickly, and attacks early.",
         }
     }
@@ -59,7 +59,7 @@ impl Difficulty {
     pub const fn scout_pattern(self) -> ScoutPattern {
         match self {
             Self::Easy => ScoutPattern::Nearest,
-            Self::Normal => ScoutPattern::Rings,
+            Self::Normal => ScoutPattern::Center,
             Self::Hard => ScoutPattern::Mirror,
         }
     }
