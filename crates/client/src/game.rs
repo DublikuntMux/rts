@@ -43,14 +43,17 @@ impl Match {
         }
     }
 
-    /// Collects input for the next delayed local/network batch, never applying it optimistically.
-    pub fn queue_command(&mut self, command: Command) {
-        if self.accepts_orders && self.pending.len() < MAX_COMMANDS_PER_TURN {
-            self.pending.push(command);
-            if rts_net::validate_commands(&self.pending).is_err() {
-                self.pending.pop();
-            }
+    /// Returns whether input was collected for the next delayed local/network batch.
+    pub fn queue_command(&mut self, command: Command) -> bool {
+        if !self.accepts_orders || self.pending.len() >= MAX_COMMANDS_PER_TURN {
+            return false;
         }
+        self.pending.push(command);
+        if rts_net::validate_commands(&self.pending).is_err() {
+            self.pending.pop();
+            return false;
+        }
+        true
     }
 }
 

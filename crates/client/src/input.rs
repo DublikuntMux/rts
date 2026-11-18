@@ -520,11 +520,12 @@ fn issue_move(
         })
         .flatten();
     if let Some(target) = enemy {
-        feedback.0 = Some((position, Marker::Attack, now));
-        game.queue_command(Command::Attack {
+        if game.queue_command(Command::Attack {
             units: armed,
             target,
-        });
+        }) {
+            feedback.0 = Some((position, Marker::Attack, now));
+        }
         return;
     }
     move_to(position, selection, game, feedback, now);
@@ -542,27 +543,20 @@ fn move_to(
     feedback: &mut OrderFeedback,
     now: f64,
 ) {
-    if selection.units.is_empty() {
+    if !game.accepts_orders || selection.units.is_empty() {
         return;
     }
     let target =
         (position * Vec2::new(1.0, -1.0) * (rts_base::TILE as f32 / TILE_PX as f32)).round();
     let target = SimPos::new(target.x as i32, target.y as i32);
     let traversable = game.sim.terrain().speed_modifier(target, game.sim.rules()) > 0;
-    feedback.0 = Some((
-        position,
-        if traversable {
-            Marker::Move
-        } else {
-            Marker::Blocked
-        },
-        now,
-    ));
-    if traversable {
-        game.queue_command(Command::Move {
-            units: selection.units.iter().copied().collect(),
-            target,
-        });
+    if !traversable {
+        feedback.0 = Some((position, Marker::Blocked, now));
+    } else if game.queue_command(Command::Move {
+        units: selection.units.iter().copied().collect(),
+        target,
+    }) {
+        feedback.0 = Some((position, Marker::Move, now));
     }
 }
 
@@ -1022,6 +1016,37 @@ mod tests {
             app.world().resource::<Match>().pending.as_slice(),
             [Command::Move { units, .. }] if units == &[UnitId(0)]
         ));
+    }
+
+    #[test]
+    fn rejected_pointer_orders_do_not_show_order_markers() {
+        for accepts_orders in [false, true] {
+            let mut app = test_app_with("soldier");
+            click(&mut app, Vec2::new(336.0, 236.0));
+            let pending = if accepts_orders {
+                vec![
+                    Command::Stop {
+                        units: vec![UnitId(0)],
+                    };
+                    rts_net::MAX_COMMANDS_PER_TURN
+                ]
+            } else {
+                Vec::new()
+            };
+            {
+                let mut game = app.world_mut().resource_mut::<Match>();
+                game.accepts_orders = accepts_orders;
+                game.pending.clone_from(&pending);
+            }
+
+            mouse_event(&mut app, Vec2::new(464.0, 236.0), MouseButton::Right, true);
+            assert_eq!(app.world().resource::<Match>().pending, pending);
+            assert!(app.world().resource::<OrderFeedback>().0.is_none());
+
+            tap(&mut app, Vec2::new(400.0, 300.0));
+            assert_eq!(app.world().resource::<Match>().pending, pending);
+            assert!(app.world().resource::<OrderFeedback>().0.is_none());
+        }
     }
 
     #[test]
