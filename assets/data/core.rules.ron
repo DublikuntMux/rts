@@ -15,7 +15,23 @@
         (id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.3, speed: 3.0),
         (id: "soldier", sprite: "textures/units/soldier.png", size: 2, squad: 6, max_health: 30, radius: 0.45, speed: 2.5,
          weapon: Some((range: 3.0, damage: 4, cooldown: 1.0))),
+        (id: "headquarters", sprite: "textures/units/headquarters.png", size: 4, max_health: 480,
+         radius: 0.5, speed: 0.0, building: true),
+        (id: "barracks", sprite: "textures/units/barracks.png", size: 4, max_health: 250,
+         radius: 0.5, speed: 0.0, building: true),
     ],
+    // Skirmish economy. Durations are integral simulation ticks (20 ticks per second).
+    economy: Some((
+        initial: (wood: 110, gold: 85),
+        worker_cost: (wood: 20, gold: 15),
+        barracks_cost: (wood: 95, gold: 70),
+        rifle_cost: (wood: 55, gold: 40),
+        worker_ticks: 80,
+        barracks_ticks: 120,
+        rifle_ticks: 100,
+        harvest_ticks: 22,
+        carry_capacity: 15,
+    )),
     // Veterancy. Kills count enemy soldiers; each new rank restores the whole squad,
     // including fallen soldiers, and raises damage per shot by damage_bonus percent.
     ranks: [

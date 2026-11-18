@@ -30,6 +30,31 @@ fn bundled_map_starts() {
 }
 
 #[test]
+fn frontier_starts_with_mirrored_bases_and_resolvable_building_sprites() {
+    use std::path::Path;
+
+    let sim = sim_from(include_str!("../../../assets/maps/frontier.map.ron")).unwrap();
+    assert!(sim.is_skirmish());
+    assert_eq!(sim.terrain().size(), IVec2::new(34, 24));
+    let field = sim.terrain().world_size();
+    let left = sim.unit(sim.headquarters(PlayerId(0)).unwrap()).unwrap();
+    let right = sim.unit(sim.headquarters(PlayerId(1)).unwrap()).unwrap();
+    assert_eq!(left.pos + right.pos, field);
+    for id in ["headquarters", "barracks"] {
+        let kind = sim.rules().unit_kind(id).unwrap();
+        let sprite = &sim.rules().unit(kind).sprite;
+        assert!(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../assets")
+                .join(sprite)
+                .is_file(),
+            "{id} sprite {sprite} is missing"
+        );
+    }
+    assert_eq!(sim.deposits().count(), 12);
+}
+
+#[test]
 fn spawns_units_in_file_order_with_full_health() {
     let sim = sim_from(&map(
         PLAYER,

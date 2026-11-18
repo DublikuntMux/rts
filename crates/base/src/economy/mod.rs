@@ -238,6 +238,12 @@ impl Sim {
         self.economy()?.banks.get(usize::from(player.0)).copied()
     }
 
+    /// The resource deposit with this map ID, including depleted deposits.
+    #[must_use]
+    pub fn deposit(&self, id: DepositId) -> Option<&Deposit> {
+        self.economy()?.deposit(id)
+    }
+
     /// Resource deposits in stable map order, including depleted deposits.
     pub fn deposits(&self) -> impl Iterator<Item = (DepositId, &Deposit)> {
         self.economy()
