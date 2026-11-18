@@ -67,19 +67,7 @@ impl FogVisibility {
     /// # Panics
     /// Never: map sizes are bounded by [`MAX_MAP_SIDE`].
     pub fn update(&mut self, sources: impl IntoIterator<Item = (IVec2, u8)>) -> Vec<u32> {
-        self.visible.fill(false);
-        for (pos, radius) in sources {
-            let center = tile_of(pos);
-            let r = i32::from(radius);
-            for y in (center.y - r).max(0)..=(center.y + r).min(self.size.y - 1) {
-                for x in (center.x - r).max(0)..=(center.x + r).min(self.size.x - 1) {
-                    if tile_in_sight(center, IVec2::new(x, y), r) {
-                        let index = usize::try_from(y * self.size.x + x).expect("inside map");
-                        self.visible[index] = true;
-                    }
-                }
-            }
-        }
+        paint_sight(self.size, &mut self.visible, sources);
         let mut discovered = Vec::new();
         for (index, (&visible, explored)) in self.visible.iter().zip(&mut self.explored).enumerate()
         {
@@ -115,6 +103,22 @@ impl FogVisibility {
     fn index(&self, tile: IVec2) -> Option<usize> {
         (tile.cmpge(IVec2::ZERO).all() && tile.cmplt(self.size).all())
             .then(|| usize::try_from(tile.y * self.size.x + tile.x).expect("inside map"))
+    }
+}
+
+fn paint_sight(size: IVec2, visible: &mut [bool], sources: impl IntoIterator<Item = (IVec2, u8)>) {
+    visible.fill(false);
+    for (pos, radius) in sources {
+        let center = tile_of(pos);
+        let r = i32::from(radius);
+        for y in (center.y - r).max(0)..=(center.y + r).min(size.y - 1) {
+            for x in (center.x - r).max(0)..=(center.x + r).min(size.x - 1) {
+                if tile_in_sight(center, IVec2::new(x, y), r) {
+                    let index = usize::try_from(y * size.x + x).expect("inside map");
+                    visible[index] = true;
+                }
+            }
+        }
     }
 }
 
@@ -551,6 +555,8 @@ pub struct PlayerView {
     tick: Option<u32>,
     terrain: Vec<Option<TerrainId>>,
     fog: FogVisibility,
+    terrain_revision: u32,
+    sight_scratch: Vec<bool>,
     units: BTreeMap<UnitId, ViewUnit>,
     deposits: BTreeMap<DepositId, ViewDeposit>,
     resources: Option<Resources>,
@@ -591,6 +597,8 @@ impl PlayerView {
             tick: None,
             terrain: vec![None; len],
             fog: FogVisibility::new(intro.size),
+            terrain_revision: 0,
+            sight_scratch: vec![false; len],
             units: BTreeMap::new(),
             deposits: BTreeMap::new(),
             resources: None,
@@ -622,6 +630,8 @@ impl PlayerView {
     /// to data the view cannot hold.
     pub fn apply(&mut self, frame: ViewFrame) -> Result<(), LoadError> {
         self.validate(&frame)?;
+        let discovery = !frame.explored.is_empty();
+        let sources_changed = self.sight_sources_changed(&frame);
         self.tick = Some(frame.tick);
         for (index, terrain) in frame.explored {
             self.terrain[index as usize] = Some(terrain);
@@ -645,13 +655,44 @@ impl PlayerView {
             self.outcome = frame.outcome;
         }
         self.volleys = frame.volleys;
-        let player = self.intro.player;
-        self.fog.update(sight_sources(
-            &self.rules,
-            self.units.values().map(|unit| &unit.unit),
-            player,
-        ));
+        let coverage_changed = sources_changed && self.refresh_sight();
+        if discovery || coverage_changed {
+            self.terrain_revision = self.terrain_revision.wrapping_add(1);
+        }
         Ok(())
+    }
+
+    fn sight_sources_changed(&self, frame: &ViewFrame) -> bool {
+        let sight_source =
+            |unit: &Unit| (unit.owner == self.intro.player).then(|| (tile_of(unit.pos), unit.kind));
+        frame
+            .removed
+            .iter()
+            .any(|&id| self.unit(id).and_then(sight_source).is_some())
+            || frame
+                .units
+                .iter()
+                .any(|unit| self.unit(unit.id).and_then(sight_source) != sight_source(&unit.unit))
+    }
+
+    fn refresh_sight(&mut self) -> bool {
+        paint_sight(
+            self.intro.size,
+            &mut self.sight_scratch,
+            sight_sources(
+                &self.rules,
+                self.units.values().map(|unit| &unit.unit),
+                self.intro.player,
+            ),
+        );
+        if self.sight_scratch == self.fog.visible {
+            return false;
+        }
+        std::mem::swap(&mut self.fog.visible, &mut self.sight_scratch);
+        for (explored, &visible) in self.fog.explored.iter_mut().zip(&self.fog.visible) {
+            *explored |= visible;
+        }
+        true
     }
 
     fn validate(&self, frame: &ViewFrame) -> Result<(), LoadError> {
@@ -732,6 +773,12 @@ impl PlayerView {
     #[must_use]
     pub const fn intro(&self) -> &ViewIntro {
         &self.intro
+    }
+
+    /// Changes only when terrain discovery or current tile visibility changes.
+    #[must_use]
+    pub const fn terrain_revision(&self) -> u32 {
+        self.terrain_revision
     }
 
     /// The player whose knowledge this is.

@@ -1,5 +1,6 @@
 use rts_base::{
-    Command, IVec2, MapData, PlayerId, PlayerKnowledge, Rules, Sim, TILE, TileVisibility, UnitId,
+    Command, IVec2, MapData, PlayerId, PlayerKnowledge, PlayerView, Rules, Sim, TILE,
+    TileVisibility, UnitId,
 };
 
 const RULES: &str = include_str!("../../../assets/data/core.rules.ron");
@@ -86,4 +87,40 @@ fn stopping_a_scout_discards_its_exploration_goal() {
     }
     assert_eq!(sim.unit(scout).unwrap().pos, stop);
     assert_eq!(sim.move_target(scout), None);
+}
+
+#[test]
+fn terrain_revision_changes_for_discovery_and_lost_sight_but_not_quiet_ticks() {
+    let mut sim = corridor('.');
+    let (mut knowledge, mut view) = PlayerView::observe(&sim, PlayerId(0));
+    let initial = view.terrain_revision();
+    sim.step();
+    view.apply(knowledge.observe(&sim)).unwrap();
+    assert_eq!(view.terrain_revision(), initial);
+
+    sim.step_with_commands([(
+        PlayerId(0),
+        Command::Move {
+            units: vec![UnitId(0)],
+            target: DESTINATION,
+        },
+    )]);
+    view.apply(knowledge.observe(&sim)).unwrap();
+    assert_eq!(view.terrain_revision(), initial, "within the same tile");
+    for _ in 0..20 {
+        sim.step();
+        view.apply(knowledge.observe(&sim)).unwrap();
+    }
+    assert_ne!(view.terrain_revision(), initial);
+
+    let previous = view.terrain_revision();
+    let position = rts_base::tile_of(sim.unit(UnitId(0)).unwrap().pos);
+    assert_eq!(view.visibility(position), TileVisibility::Visible);
+    sim.remove_unit(UnitId(0));
+    sim.step();
+    let frame = knowledge.observe(&sim);
+    assert_eq!(frame.explored, []);
+    view.apply(frame).unwrap();
+    assert_eq!(view.visibility(position), TileVisibility::Remembered);
+    assert_ne!(view.terrain_revision(), previous);
 }
