@@ -8,6 +8,7 @@
 mod combat;
 mod command;
 mod coords;
+mod economy;
 mod hash;
 mod map;
 mod movement;
@@ -23,6 +24,10 @@ use std::{
 
 pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
+pub use economy::{
+    Deposit, DepositId, EconomyRules, PRODUCTION_QUEUE_LIMIT, ResourceKind, Resources, Training,
+    TrainingKind,
+};
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, SkirmishMap, Terrain, UnitPlacement};
 pub use rules::{
@@ -206,8 +211,8 @@ impl Sim {
             occupancy.add(placement.pos, size);
             sim.spawn_unit(kind, PlayerId(placement.owner), placement.pos);
         }
-        if map.skirmish.is_some() {
-            sim.setup_skirmish()?;
+        if let Some(skirmish) = &map.skirmish {
+            sim.setup_skirmish(skirmish)?;
         }
         Ok(sim)
     }
@@ -234,6 +239,7 @@ impl Sim {
         }
         self.pursue_targets();
         self.advance_movement();
+        self.advance_economy();
         self.advance_combat();
         self.update_outcome();
     }
@@ -246,6 +252,7 @@ impl Sim {
         for unit in self.units.values() {
             occupancy.add(unit.pos, self.rules.unit(unit.kind).size);
         }
+        let reserved = self.reserved_build_tiles();
         let mut groups = BTreeMap::<MoveGroupId, MovingGroup>::new();
         for (id, order) in &self.move_orders {
             if let Some(group) = order.group {
@@ -271,16 +278,19 @@ impl Sim {
             if let Some(group) = &mut group {
                 group.remove(unit.pos, definition.size);
             }
-            let can_plan = |tile| {
-                occupancy.fits_excluding(
-                    tile,
-                    definition.size,
-                    self.rules.tile_capacity(),
-                    group.as_ref().map_or(0, |group| group.used(tile)),
-                )
+            let can_plan = |tile: IVec2| {
+                !reserved.contains(&(tile.x, tile.y))
+                    && occupancy.fits_excluding(
+                        tile,
+                        definition.size,
+                        self.rules.tile_capacity(),
+                        group.as_ref().map_or(0, |group| group.used(tile)),
+                    )
             };
-            let can_enter =
-                |tile| occupancy.fits(tile, definition.size, self.rules.tile_capacity());
+            let can_enter = |tile: IVec2| {
+                !reserved.contains(&(tile.x, tile.y))
+                    && occupancy.fits(tile, definition.size, self.rules.tile_capacity())
+            };
             let active = !order.refresh(unit.pos, &self.terrain, &self.rules, &can_plan)
                 || order.advance(
                     &mut unit.pos,
@@ -325,6 +335,22 @@ impl Sim {
                 self.order_attack(player, units, target);
                 return;
             }
+            Command::Gather { units, deposit } => {
+                self.order_gather(player, units, deposit);
+                return;
+            }
+            Command::BuildBarracks { units, target } => {
+                self.order_barracks(player, units, target);
+                return;
+            }
+            Command::TrainWorker { units } => {
+                self.order_training(player, units, TrainingKind::Worker);
+                return;
+            }
+            Command::TrainRifleSquad { units } => {
+                self.order_training(player, units, TrainingKind::RifleSquad);
+                return;
+            }
         };
         units.sort_unstable();
         units.dedup();
@@ -342,10 +368,12 @@ impl Sim {
                 if let Some(order) = MoveOrder::new(unit.pos, target, &self.terrain, &self.rules) {
                     orders.push((id, order));
                     self.attack_orders.remove(&id);
+                    self.cancel_work(id);
                 }
             } else {
                 self.move_orders.remove(&id);
                 self.attack_orders.remove(&id);
+                self.cancel_work(id);
             }
         }
         let group = (orders.len() > 1).then_some(group);
@@ -372,6 +400,7 @@ impl Sim {
                 unit.owner == player && self.rules.unit(unit.kind).weapon.is_some()
             });
             if armed {
+                self.cancel_work(id);
                 self.move_orders.remove(&id);
                 self.attack_orders.insert(id, target);
             }
@@ -446,6 +475,8 @@ impl Sim {
     pub fn remove_unit(&mut self, id: UnitId) -> Option<Unit> {
         self.move_orders.remove(&id);
         self.attack_orders.remove(&id);
+        self.cancel_work(id);
+        self.remove_economy_unit(id);
         self.units.remove(&id)
     }
 

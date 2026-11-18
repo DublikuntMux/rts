@@ -25,7 +25,17 @@ impl MoveOrder {
         terrain: &Terrain,
         rules: &Rules,
     ) -> Option<Self> {
-        let waypoints = Self::route(start, target, terrain, rules, &|_| true)?;
+        Self::new_avoiding(start, target, terrain, rules, &|_| true)
+    }
+
+    pub(crate) fn new_avoiding(
+        start: IVec2,
+        target: IVec2,
+        terrain: &Terrain,
+        rules: &Rules,
+        can_enter: &impl Fn(IVec2) -> bool,
+    ) -> Option<Self> {
+        let waypoints = Self::route(start, target, terrain, rules, can_enter)?;
         Some(Self {
             group: None,
             target,

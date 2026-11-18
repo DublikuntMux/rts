@@ -2,7 +2,7 @@ use glam::IVec2;
 use serde::Deserialize;
 
 use crate::{
-    LoadError,
+    Deposit, LoadError,
     coords::{TILE, de_tile_pos, tile_of},
     rules::{Rules, TerrainId},
 };
@@ -29,7 +29,10 @@ pub struct MapData {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SkirmishMap {}
+pub struct SkirmishMap {
+    /// Fixed deposit locations and their starting stock.
+    pub deposits: Vec<Deposit>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

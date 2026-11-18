@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{IVec2, UnitId};
+use crate::{DepositId, IVec2, UnitId};
 
 /// Commands issued by a player. The simulation checks ownership when applying them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +20,22 @@ pub enum Command {
         units: Vec<UnitId>,
         target: UnitId,
     },
+    /// Workers harvest from a deposit and deliver their loads to their headquarters.
+    Gather {
+        units: Vec<UnitId>,
+        deposit: DepositId,
+    },
+    /// One worker travels to the target tile and builds a barracks.
+    BuildBarracks {
+        units: Vec<UnitId>,
+        target: IVec2,
+    },
+    TrainWorker {
+        units: Vec<UnitId>,
+    },
+    TrainRifleSquad {
+        units: Vec<UnitId>,
+    },
 }
 
 impl Command {
@@ -27,14 +43,26 @@ impl Command {
     #[must_use]
     pub fn units(&self) -> &[UnitId] {
         match self {
-            Self::Move { units, .. } | Self::Stop { units } | Self::Attack { units, .. } => units,
+            Self::Move { units, .. }
+            | Self::Stop { units }
+            | Self::Attack { units, .. }
+            | Self::Gather { units, .. }
+            | Self::BuildBarracks { units, .. }
+            | Self::TrainWorker { units }
+            | Self::TrainRifleSquad { units } => units,
         }
     }
 
     /// Mutable access to the ordered units, for filtering before submission.
     pub const fn units_mut(&mut self) -> &mut Vec<UnitId> {
         match self {
-            Self::Move { units, .. } | Self::Stop { units } | Self::Attack { units, .. } => units,
+            Self::Move { units, .. }
+            | Self::Stop { units }
+            | Self::Attack { units, .. }
+            | Self::Gather { units, .. }
+            | Self::BuildBarracks { units, .. }
+            | Self::TrainWorker { units }
+            | Self::TrainRifleSquad { units } => units,
         }
     }
 }
@@ -57,6 +85,24 @@ impl Hash for Command {
                 2_u8.hash(state);
                 units.hash(state);
                 target.hash(state);
+            }
+            Self::Gather { units, deposit } => {
+                3_u8.hash(state);
+                units.hash(state);
+                deposit.hash(state);
+            }
+            Self::BuildBarracks { units, target } => {
+                4_u8.hash(state);
+                units.hash(state);
+                target.hash(state);
+            }
+            Self::TrainWorker { units } => {
+                5_u8.hash(state);
+                units.hash(state);
+            }
+            Self::TrainRifleSquad { units } => {
+                6_u8.hash(state);
+                units.hash(state);
             }
         }
     }

@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 
 use crate::{
-    IVec2, LoadError,
+    EconomyRules, IVec2, LoadError,
     coords::{de_seconds, de_speed_modifier, de_tile_pos, de_tiles},
 };
 
@@ -26,6 +26,8 @@ pub struct Rules {
     /// Veterancy ranks above the starting rank, in increasing order of kills.
     #[serde(default)]
     ranks: Vec<RankDef>,
+    #[serde(default)]
+    economy: Option<EconomyRules>,
 }
 
 /// A veterancy rank. Reaching it restores every soldier of the squad, including fallen ones,
@@ -117,6 +119,27 @@ const fn one_soldier() -> u8 {
 }
 
 impl UnitDef {
+    fn validate_role(&self) -> Result<(), LoadError> {
+        if self.building && (self.squad != 1 || self.weapon.is_some()) {
+            return Err(LoadError::invalid(format!(
+                "building `{}` must have one health pool and no weapon",
+                self.id
+            )));
+        }
+        if self.squad == 0
+            || self.max_health <= 0
+            || self.radius <= 0
+            || self.speed < 0
+            || (!self.building && self.speed == 0)
+        {
+            return Err(LoadError::invalid(format!(
+                "unit `{}` needs positive squad, max_health, and radius, and valid speed",
+                self.id
+            )));
+        }
+        Ok(())
+    }
+
     /// Arrangement of this unit's soldiers.
     #[must_use]
     pub fn ranks(&self) -> SquadGrid {
@@ -262,23 +285,7 @@ impl Rules {
             if !ids.insert(&unit.id) {
                 return Err(LoadError::invalid(format!("duplicate unit `{}`", unit.id)));
             }
-            if unit.building && (unit.squad != 1 || unit.weapon.is_some()) {
-                return Err(LoadError::invalid(format!(
-                    "building `{}` must have one health pool and no weapon",
-                    unit.id
-                )));
-            }
-            if unit.squad == 0
-                || unit.max_health <= 0
-                || unit.radius <= 0
-                || unit.speed < 0
-                || (!unit.building && unit.speed == 0)
-            {
-                return Err(LoadError::invalid(format!(
-                    "unit `{}` needs positive squad, max_health, and radius, and valid speed",
-                    unit.id
-                )));
-            }
+            unit.validate_role()?;
             if let Some(weapon) = unit.weapon
                 && (weapon.range <= 0 || weapon.damage <= 0)
             {
@@ -296,7 +303,16 @@ impl Rules {
                 )));
             }
         }
+        if let Some(economy) = &self.economy {
+            economy.validate()?;
+        }
         Ok(())
+    }
+
+    /// Economy configuration for maps that opt into skirmish.
+    #[must_use]
+    pub const fn economy(&self) -> Option<&EconomyRules> {
+        self.economy.as_ref()
     }
 
     /// Ranks above the starting rank.

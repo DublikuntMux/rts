@@ -2,7 +2,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use crate::{LoadError, PlayerId, Sim, UnitId};
+use crate::{LoadError, PlayerId, Sim, SkirmishMap, UnitId, economy::Economy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchOutcome {
@@ -23,20 +23,24 @@ impl Hash for MatchOutcome {
 }
 
 #[derive(Debug, Clone, Hash)]
-pub(crate) struct Skirmish {
+pub struct Skirmish {
     headquarters: Vec<UnitId>,
     outcome: Option<MatchOutcome>,
+    pub(super) economy: Economy,
 }
 
 impl Sim {
-    pub(crate) fn setup_skirmish(&mut self) -> Result<(), LoadError> {
+    pub(crate) fn setup_skirmish(&mut self, map: &SkirmishMap) -> Result<(), LoadError> {
         if self.players.len() != 2 {
             return Err(LoadError::invalid("skirmish requires exactly two players"));
         }
         let kind = self
             .rules
             .unit_kind("headquarters")
-            .filter(|&kind| self.rules.unit(kind).building)
+            .filter(|&kind| {
+                let unit = self.rules.unit(kind);
+                unit.building && unit.size == self.rules.tile_capacity()
+            })
             .ok_or_else(|| LoadError::invalid("skirmish requires a headquarters building type"))?;
         let mut headquarters = vec![None; self.players.len()];
         for (id, unit) in self.units().filter(|(_, unit)| unit.kind == kind) {
@@ -54,6 +58,7 @@ impl Sim {
         self.skirmish = Some(Skirmish {
             headquarters,
             outcome: None,
+            economy: Economy::new(self, map)?,
         });
         Ok(())
     }
