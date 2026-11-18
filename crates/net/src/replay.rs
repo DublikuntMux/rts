@@ -1,10 +1,13 @@
-use rts_base::Sim;
+use rts_base::{Command, Sim};
 use serde::{Deserialize, Serialize};
 
 use crate::{MatchSetup, NetError, PROTOCOL_VERSION, Turn, decode, encode, validate_version};
 
 pub const MAX_REPLAY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_REPLAY_TURNS: usize = 1_000_000;
+
+// Version 7's sandbox simulation has the same deterministic hash stream.
+const SANDBOX_REPLAY_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,13 +38,16 @@ impl Replay {
     /// # Errors
     /// Returns an error for unsupported versions, excessive turns or a nonsequential turn.
     pub fn push(&mut self, turn: Turn, hash: u64) -> Result<(), NetError> {
-        validate_version(self.version)?;
+        if self.version != SANDBOX_REPLAY_VERSION {
+            validate_version(self.version)?;
+        }
         if self.turns.len() >= MAX_REPLAY_TURNS {
             return Err(NetError::invalid("too many replay turns"));
         }
         let tick = u32::try_from(self.turns.len() + 1)
             .map_err(|_| NetError::invalid("replay tick overflow"))?;
         turn.validate(tick, self.setup.players)?;
+        self.validate_turn_version(&turn)?;
         self.turns.push(turn);
         self.final_hash = hash;
         Ok(())
@@ -76,12 +82,18 @@ impl Replay {
     /// # Errors
     /// Returns an error for invalid setup, version, turns or a final hash mismatch.
     pub fn playback(&self) -> Result<Sim, NetError> {
-        validate_version(self.version)?;
+        if self.version != SANDBOX_REPLAY_VERSION {
+            validate_version(self.version)?;
+        }
         if self.turns.len() > MAX_REPLAY_TURNS {
             return Err(NetError::invalid("too many replay turns"));
         }
         let mut sim = self.setup.simulation()?;
+        if self.version == SANDBOX_REPLAY_VERSION && sim.is_skirmish() {
+            return Err(NetError::invalid("skirmish requires replay version 8"));
+        }
         for turn in &self.turns {
+            self.validate_turn_version(turn)?;
             turn.apply(&mut sim)?;
         }
         let actual = sim.state_hash();
@@ -92,5 +104,25 @@ impl Replay {
             });
         }
         Ok(sim)
+    }
+
+    fn validate_turn_version(&self, turn: &Turn) -> Result<(), NetError> {
+        if self.version == SANDBOX_REPLAY_VERSION
+            && turn
+                .inputs
+                .iter()
+                .flat_map(|input| &input.commands)
+                .any(|command| {
+                    !matches!(
+                        command,
+                        Command::Move { .. } | Command::Stop { .. } | Command::Attack { .. },
+                    )
+                })
+        {
+            return Err(NetError::invalid(
+                "economy commands require replay version 8",
+            ));
+        }
+        Ok(())
     }
 }

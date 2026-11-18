@@ -1,4 +1,4 @@
-use rts_base::{Command, IVec2, PlayerId, TILE, UnitId};
+use rts_base::{Command, DepositId, IVec2, PlayerId, TILE, UnitId};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, MAX_COMMANDS_PER_TURN, MAX_MESSAGE_BYTES, MAX_SETUP_BYTES,
     MAX_UNITS_PER_COMMAND, MatchSetup, PROTOCOL_VERSION, PlayerInput, Replay, ServerFrame,
@@ -95,6 +95,25 @@ fn all_wire_messages_roundtrip() {
         ClientMessage::Input {
             tick: 2,
             commands: vec![move_command(), stop_command()],
+        },
+        ClientMessage::Input {
+            tick: 3,
+            commands: vec![
+                Command::Gather {
+                    units: vec![UnitId(0)],
+                    deposit: DepositId(2),
+                },
+                Command::BuildBarracks {
+                    units: vec![UnitId(0)],
+                    target: IVec2::new(TILE, TILE),
+                },
+                Command::TrainWorker {
+                    units: vec![UnitId(1)],
+                },
+                Command::TrainRifleSquad {
+                    units: vec![UnitId(2)],
+                },
+            ],
         },
         ClientMessage::Leave,
     ] {
@@ -869,4 +888,41 @@ fn lobby_validates_host_receiver_slot_count_names_and_unknown_fields() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn version_7_is_rejected_on_live_wire() {
+    assert!(decode_client("Rooms(version:7)").is_err());
+
+    let mut bytes = binary_frame(&ServerMessage::Setup(setup()));
+    bytes[4..8].copy_from_slice(&7_u32.to_le_bytes());
+    assert!(decode_server_binary(&bytes).is_err());
+}
+
+#[test]
+fn an_original_v7_sandbox_replay_still_verifies_and_can_continue() {
+    // Recorded using the v7 encoder and simulation.
+    let original = concat!(
+        r#"(version:7,setup:("#,
+        r#"rules:"(tile_capacity:4,terrain:[(id:\"grass\",symbol:\'.\',speed_modifier:1,color:\"green\")],"#,
+        r#"units:[(id:\"worker\",sprite:\"worker.png\",size:1,max_health:10,radius:0.25,speed:2)])","#,
+        r#"map:"(name:\"legacy\",players:[(start:(0.5,0.5))],tiles:[\"....\"],"#,
+        r#"units:[(kind:\"worker\",owner:0,pos:(0.5,0.5))])",seed:42,players:1),"#,
+        r#"turns:[(tick:1,inputs:[(player:(0),commands:[Move(units:[(0)],target:(3584,512))])])],"#,
+        "final_hash:8879068771994757554)",
+    );
+    let (mut replay, mut sim) = Replay::from_ron_with_sim(original).unwrap();
+    assert_eq!(sim.tick(), 1);
+    assert!(!sim.is_skirmish());
+
+    let next = Turn {
+        tick: 2,
+        inputs: vec![PlayerInput {
+            player: PlayerId(0),
+            commands: vec![stop_command()],
+        }],
+    };
+    next.apply(&mut sim).unwrap();
+    replay.push(next, sim.state_hash()).unwrap();
+    assert_eq!(replay.playback().unwrap().state_hash(), sim.state_hash());
 }
