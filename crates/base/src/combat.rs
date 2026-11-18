@@ -59,16 +59,8 @@ fn slot(index: usize) -> u8 {
 }
 
 impl Sim {
-    /// Restricts combat to targets a player's forces can currently see.
-    ///
-    /// Select this at match setup for fog-enabled matches. Older recordings keep the
-    /// original combat rules.
-    pub const fn enforce_combat_sight(&mut self) {
-        self.combat_sight = true;
-    }
-
     pub(super) fn can_target(&self, player: PlayerId, position: IVec2) -> bool {
-        !self.combat_sight
+        self.fog_navigation.is_none()
             || self.units.values().any(|unit| {
                 unit.owner == player
                     && tile_in_sight(
@@ -116,7 +108,7 @@ impl Sim {
             if current.is_some_and(|current| tile_of(current) == tile_of(goal)) {
                 continue;
             }
-            match MoveOrder::new(unit.pos, goal, &self.terrain, &self.rules) {
+            match self.route_known(unit.owner, unit.pos, goal, &|_| true) {
                 Some(order) => {
                     self.move_orders.insert(id, order);
                 }

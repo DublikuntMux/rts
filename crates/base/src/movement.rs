@@ -19,15 +19,6 @@ pub struct MoveOrder {
 }
 
 impl MoveOrder {
-    pub(crate) fn new(
-        start: IVec2,
-        target: IVec2,
-        terrain: &Terrain,
-        rules: &Rules,
-    ) -> Option<Self> {
-        Self::new_avoiding(start, target, terrain, rules, &|_| true)
-    }
-
     pub(crate) fn new_avoiding(
         start: IVec2,
         target: IVec2,

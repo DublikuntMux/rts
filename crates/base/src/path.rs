@@ -13,12 +13,12 @@ pub fn find_path(
     can_enter: &impl Fn(IVec2) -> bool,
 ) -> Option<Vec<IVec2>> {
     let traversable = |tile| {
-        terrain
-            .get(tile)
-            .is_some_and(|id| rules.terrain(id).speed_modifier > 0)
-            // Approach a full destination and wait outside it. Movement still checks capacity
-            // before entering it; intermediate occupied tiles must be routed around.
-            && (tile == start || tile == goal || can_enter(tile))
+        // Approach a full destination and wait outside it. Movement still checks capacity
+        // before entering it; intermediate occupied tiles must be routed around.
+        (tile == start || tile == goal || can_enter(tile))
+            && terrain
+                .get(tile)
+                .is_some_and(|id| rules.terrain(id).speed_modifier > 0)
     };
     if !traversable(start) || !traversable(goal) {
         return None;

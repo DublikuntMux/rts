@@ -119,7 +119,7 @@ impl FogVisibility {
 }
 
 /// Sight from a source tile. The square bound and r² + r give rounded tile discs.
-pub(crate) fn tile_in_sight(center: IVec2, tile: IVec2, radius: i32) -> bool {
+pub fn tile_in_sight(center: IVec2, tile: IVec2, radius: i32) -> bool {
     let delta = (tile - center).abs();
     delta.max_element() <= radius
         && delta.x * delta.x + delta.y * delta.y <= radius * radius + radius

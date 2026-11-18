@@ -9,6 +9,7 @@ mod combat;
 mod command;
 mod coords;
 mod economy;
+mod fog_navigation;
 mod hash;
 mod map;
 mod movement;
@@ -43,6 +44,7 @@ pub use visibility::{
     ViewFrame, ViewIntro, ViewUnit,
 };
 
+use crate::fog_navigation::FogNavigation;
 use crate::hash::StateHasher;
 use crate::movement::{MoveGroupId, MoveOrder};
 use crate::occupancy::Occupancy;
@@ -125,7 +127,7 @@ pub struct Sim {
     move_orders: BTreeMap<UnitId, MoveOrder>,
     /// Ordered attack targets by attacker.
     attack_orders: BTreeMap<UnitId, UnitId>,
-    combat_sight: bool,
+    fog_navigation: Option<FogNavigation>,
     skirmish: Option<skirmish::Skirmish>,
     /// Volleys of the latest tick, for presentation. Excluded from the state hash.
     volleys: Vec<Volley>,
@@ -190,7 +192,7 @@ impl Sim {
             commands: BTreeMap::new(),
             move_orders: BTreeMap::new(),
             attack_orders: BTreeMap::new(),
-            combat_sight: false,
+            fog_navigation: None,
             skirmish: None,
             volleys: Vec::new(),
         };
@@ -245,11 +247,13 @@ impl Sim {
         if self.outcome().is_some() {
             return;
         }
+        self.refresh_navigation_sight();
         let queued = self.commands.remove(&self.tick).unwrap_or_default();
         for (index, (player, command)) in (0_u64..).zip(queued.into_iter().chain(commands)) {
             let group = (self.tick, index);
             self.apply_command(player, command, group);
         }
+        self.continue_exploration();
         self.pursue_targets();
         self.advance_movement();
         self.advance_economy();
@@ -291,17 +295,29 @@ impl Sim {
             if let Some(group) = &mut group {
                 group.remove(unit.pos, definition.size);
             }
-            let can_plan = |tile: IVec2| {
-                !reserved.contains(&(tile.x, tile.y))
-                    && occupancy.fits_excluding(
-                        tile,
-                        definition.size,
-                        self.rules.tile_capacity(),
-                        group.as_ref().map_or(0, |group| group.used(tile)),
-                    )
+            let visibility = |tile| {
+                self.fog_navigation
+                    .as_ref()
+                    .map_or(TileVisibility::Visible, |fog| {
+                        fog.views[usize::from(unit.owner.0)].tile(tile)
+                    })
+            };
+            let can_plan = |tile: IVec2| match visibility(tile) {
+                TileVisibility::Unexplored => false,
+                TileVisibility::Remembered => true,
+                TileVisibility::Visible => {
+                    !reserved.contains(&(tile.x, tile.y))
+                        && occupancy.fits_excluding(
+                            tile,
+                            definition.size,
+                            self.rules.tile_capacity(),
+                            group.as_ref().map_or(0, |group| group.used(tile)),
+                        )
+                }
             };
             let can_enter = |tile: IVec2| {
-                !reserved.contains(&(tile.x, tile.y))
+                visibility(tile) == TileVisibility::Visible
+                    && !reserved.contains(&(tile.x, tile.y))
                     && occupancy.fits(tile, definition.size, self.rules.tile_capacity())
             };
             let active = !order.refresh(unit.pos, &self.terrain, &self.rules, &can_plan)
@@ -338,7 +354,9 @@ impl Sim {
     fn apply_command(&mut self, player: PlayerId, command: Command, group: MoveGroupId) {
         let (mut units, target) = match command {
             Command::Move { units, target } => {
-                if self.terrain.speed_modifier(target, &self.rules) == 0 {
+                if self.fog_navigation.is_none()
+                    && self.terrain.speed_modifier(target, &self.rules) == 0
+                {
                     return;
                 }
                 (units, Some(target))
@@ -382,21 +400,26 @@ impl Sim {
             };
             if let Some(target) = target {
                 // An unreachable replacement leaves the current order intact.
-                if let Some(order) = MoveOrder::new(unit.pos, target, &self.terrain, &self.rules) {
-                    orders.push((id, order));
+                if let Some((order, exploring)) = self.plan_exploration(player, unit.pos, target) {
+                    orders.push((id, order, exploring.then_some(target)));
                     self.attack_orders.remove(&id);
                     self.cancel_work(id);
+                    self.cancel_exploration(id);
                 }
             } else {
                 self.move_orders.remove(&id);
                 self.attack_orders.remove(&id);
                 self.cancel_work(id);
+                self.cancel_exploration(id);
             }
         }
         let group = (orders.len() > 1).then_some(group);
-        for (id, mut order) in orders {
+        for (id, mut order, destination) in orders {
             order.group = group;
             self.move_orders.insert(id, order);
+            if let Some(destination) = destination {
+                self.remember_destination(id, destination, group);
+            }
         }
     }
 
@@ -418,6 +441,7 @@ impl Sim {
             });
             if armed {
                 self.cancel_work(id);
+                self.cancel_exploration(id);
                 self.move_orders.remove(&id);
                 self.attack_orders.insert(id, target);
             }
@@ -492,6 +516,7 @@ impl Sim {
     pub fn remove_unit(&mut self, id: UnitId) -> Option<Unit> {
         self.move_orders.remove(&id);
         self.attack_orders.remove(&id);
+        self.cancel_exploration(id);
         self.cancel_work(id);
         self.remove_economy_unit(id);
         self.units.remove(&id)
@@ -510,6 +535,9 @@ impl Sim {
         self.attack_orders.hash(&mut hasher);
         if let Some(skirmish) = &self.skirmish {
             skirmish.hash(&mut hasher);
+        }
+        if let Some(navigation) = &self.fog_navigation {
+            navigation.hash(&mut hasher);
         }
         hasher.finish()
     }

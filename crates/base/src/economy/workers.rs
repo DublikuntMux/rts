@@ -70,6 +70,7 @@ impl Sim {
         };
         if self.resources(player).is_none()
             || self.outcome().is_some()
+            || !self.can_target(player, target)
             || self.terrain.speed_modifier(target, &self.rules) == 0
         {
             return false;
@@ -126,7 +127,7 @@ impl Sim {
         };
         let Some(target) = economy
             .deposit(deposit)
-            .filter(|deposit| deposit.remaining > 0)
+            .filter(|deposit| self.can_target(player, deposit.pos) && deposit.remaining > 0)
         else {
             return;
         };
@@ -141,7 +142,9 @@ impl Sim {
             else {
                 continue;
             };
-            if self.gather_target(id) == Some(deposit) || self.work_route(unit.pos, pos).is_none() {
+            if self.gather_target(id) == Some(deposit)
+                || self.work_route(player, unit.pos, pos).is_none()
+            {
                 continue;
             }
             self.replace_work(
@@ -177,7 +180,7 @@ impl Sim {
             let unit = self
                 .unit(id)
                 .filter(|unit| unit.owner == player && unit.kind == worker_kind)?;
-            self.approach(unit.pos, target, worker_kind)
+            self.approach(player, unit.pos, target, worker_kind)
                 .map(|order| (id, order))
         }) else {
             return;
@@ -196,6 +199,7 @@ impl Sim {
 
     fn replace_work(&mut self, worker: UnitId, work: Work) {
         self.cancel_work(worker);
+        self.cancel_exploration(worker);
         self.move_orders.remove(&worker);
         self.attack_orders.remove(&worker);
         self.economy_mut()
@@ -221,8 +225,10 @@ impl Sim {
         let rules = *self.rules.economy().expect("skirmish rules");
         let unit = &self.units[&worker];
         let (owner, pos, kind) = (unit.owner, unit.pos, unit.kind);
+        // Remote stock changes remain unknown until this player can see the deposit again.
+        let depleted = self.can_target(owner, deposit.pos) && deposit.remaining == 0;
         if cargo.is_some_and(|(kind, amount)| {
-            kind != deposit.kind || amount == rules.carry_capacity || deposit.remaining == 0
+            kind != deposit.kind || amount == rules.carry_capacity || depleted
         }) {
             if let Some(hq) = self.headquarters(owner) {
                 let target = self.units[&hq].pos;
@@ -232,7 +238,7 @@ impl Sim {
                     self.move_to_work_site(worker, pos, target, kind);
                 }
             }
-        } else if deposit.remaining == 0 {
+        } else if depleted {
             self.cancel_work(worker);
             self.move_orders.remove(&worker);
         } else if pos == deposit.pos {
@@ -261,7 +267,7 @@ impl Sim {
                 );
             }
         } else if !self.move_orders.contains_key(&worker)
-            && let Some(order) = self.work_route(pos, deposit.pos)
+            && let Some(order) = self.work_route(owner, pos, deposit.pos)
         {
             self.move_orders.insert(worker, order);
         }
@@ -307,47 +313,62 @@ impl Sim {
     }
 
     fn move_to_work_site(&mut self, worker: UnitId, from: IVec2, site: IVec2, kind: UnitKind) {
+        let player = self.units[&worker].owner;
         let current = self.move_target(worker);
         if current.is_some_and(|current| {
-            self.available_neighbors(site, kind)
-                .any(|pos| pos == current)
+            !self.can_target(player, current)
+                || self
+                    .available_neighbors(site, kind)
+                    .any(|pos| pos == current)
         }) {
             return;
         }
-        if let Some(route) = self.approach(from, site, kind) {
+        if let Some(route) = self.approach(player, from, site, kind) {
             self.move_orders.insert(worker, route);
         }
     }
 
-    fn approach(&self, from: IVec2, target: IVec2, kind: UnitKind) -> Option<MoveOrder> {
+    fn approach(
+        &self,
+        player: PlayerId,
+        from: IVec2,
+        target: IVec2,
+        kind: UnitKind,
+    ) -> Option<MoveOrder> {
         if adjacent(from, target) {
-            return self.work_route(from, from);
+            return self.work_route(player, from, from);
         }
-        let mut candidates: Vec<_> = self.available_neighbors(target, kind).collect();
+        let mut candidates: Vec<_> = self
+            .available_neighbors(target, kind)
+            .filter(|&pos| self.can_target(player, pos))
+            .collect();
         // Prefer the nearest approach; stable sorting retains row-major order on ties.
         candidates.sort_by_key(|&pos| pos.x.abs_diff(from.x) + pos.y.abs_diff(from.y));
-        let mut blockers = self.work_route_blockers();
+        let mut blockers = self.work_route_blockers(player);
         let site = tile_of(target);
         blockers.insert((site.x, site.y));
         candidates.into_iter().find_map(|pos| {
-            MoveOrder::new_avoiding(from, pos, &self.terrain, &self.rules, &|tile| {
+            self.route_known(player, from, pos, &|tile| {
                 !blockers.contains(&(tile.x, tile.y))
             })
         })
     }
 
-    fn work_route(&self, from: IVec2, to: IVec2) -> Option<MoveOrder> {
-        let blockers = self.work_route_blockers();
-        MoveOrder::new_avoiding(from, to, &self.terrain, &self.rules, &|tile| {
+    fn work_route(&self, player: PlayerId, from: IVec2, to: IVec2) -> Option<MoveOrder> {
+        let blockers = self.work_route_blockers(player);
+        self.route_known(player, from, to, &|tile| {
             !blockers.contains(&(tile.x, tile.y))
         })
     }
 
-    fn work_route_blockers(&self) -> BTreeSet<(i32, i32)> {
+    fn work_route_blockers(&self, player: PlayerId) -> BTreeSet<(i32, i32)> {
         let mut blockers = self.reserved_build_tiles();
+        blockers.retain(|&(x, y)| self.can_target(player, tile_center(IVec2::new(x, y))));
         blockers.extend(
             self.units()
-                .filter(|(_, unit)| self.rules.unit(unit.kind).building)
+                .filter(|(_, unit)| {
+                    self.rules.unit(unit.kind).building && self.can_target(player, unit.pos)
+                })
                 .map(|(_, unit)| {
                     let tile = tile_of(unit.pos);
                     (tile.x, tile.y)

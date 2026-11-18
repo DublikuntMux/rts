@@ -118,7 +118,7 @@ fn fog_combat_ends_pursuit_when_the_target_leaves_team_sight() {
            (kind: "worker", owner: 1, pos: (9.5, 0.5))"#,
     );
     let mut fog = legacy.clone();
-    fog.enforce_combat_sight();
+    fog.enforce_fog();
     let attacker = UnitId(0);
     let spotter = UnitId(1);
     let target = UnitId(2);
@@ -153,7 +153,7 @@ fn fog_combat_cannot_fire_past_team_sight_even_with_a_long_range_weapon() {
         r#"(kind: "rifles", owner: 0, pos: (1.5, 0.5)),
            (kind: "worker", owner: 1, pos: (8.5, 0.5))"#,
     );
-    fog.enforce_combat_sight();
+    fog.enforce_fog();
     fog.step_with_commands([(
         PlayerId(0),
         Command::Attack {
@@ -161,7 +161,7 @@ fn fog_combat_cannot_fire_past_team_sight_even_with_a_long_range_weapon() {
             target: UnitId(1),
         },
     )]);
-    assert!(fog.volleys().is_empty());
+    assert_eq!(fog.volleys(), []);
     assert_eq!(fog.attack_target(UnitId(0)), None);
     assert_eq!(fog.unit(UnitId(1)).unwrap().health(), 10);
 }
