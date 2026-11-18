@@ -5,6 +5,7 @@
 //! metadata document for listing and previews and a data document with the replay itself.
 
 use bevy::prelude::*;
+use rts_ai::Difficulty;
 use rts_base::Sim;
 use rts_net::{MatchSetup, Replay};
 use serde::{Deserialize, Serialize};
@@ -52,10 +53,14 @@ pub struct RecordMeta {
     pub saved_at: u64,
     /// Rules and map, for the preview.
     pub setup: MatchSetup,
+    /// The opponent's difficulty in a saved game. Saves from before difficulty levels
+    /// resume at the default level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub difficulty: Option<Difficulty>,
 }
 
 impl RecordMeta {
-    fn new(name: String, replay: &Replay) -> Self {
+    fn new(name: String, replay: &Replay, difficulty: Option<Difficulty>) -> Self {
         Self {
             name,
             map: map_name(&replay.setup),
@@ -63,6 +68,7 @@ impl RecordMeta {
             ticks: u32::try_from(replay.turns.len()).unwrap_or(u32::MAX),
             saved_at: now_millis(),
             setup: replay.setup.clone(),
+            difficulty,
         }
     }
 }
@@ -117,17 +123,23 @@ impl Library {
         self.records(kind).iter().find(|record| record.id == id)
     }
 
-    /// Stores `replay` under the next free automatic name, such as "Save 03".
+    /// Stores `replay` under the next free automatic name, such as "Save 03". Saved games
+    /// also keep the opponent's `difficulty`.
     ///
     /// # Errors
     /// Returns an error for an invalid recording or a storage failure.
-    pub fn add(&mut self, kind: Shelf, replay: &Replay) -> Result<Record, String> {
+    pub fn add(
+        &mut self,
+        kind: Shelf,
+        replay: &Replay,
+        difficulty: Option<Difficulty>,
+    ) -> Result<Record, String> {
         let data = replay
             .to_ron()
             .map_err(|error| format!("Cannot save: {error}"))?;
         let record = Record {
             id: self.free_id(kind),
-            meta: RecordMeta::new(self.next_name(kind), replay),
+            meta: RecordMeta::new(self.next_name(kind), replay, difficulty),
         };
         let meta = ron::to_string(&record.meta).map_err(|error| format!("Cannot save: {error}"))?;
         let folder = kind.folder();
@@ -301,8 +313,10 @@ mod tests {
     fn records_round_trip_number_and_delete() {
         let store = temporary_store("library");
         let mut library = Library::new(store.clone());
-        let first = library.add(Shelf::Saves, &replay(3)).unwrap();
-        let second = library.add(Shelf::Saves, &replay(5)).unwrap();
+        let first = library
+            .add(Shelf::Saves, &replay(3), Some(Difficulty::Hard))
+            .unwrap();
+        let second = library.add(Shelf::Saves, &replay(5), None).unwrap();
         assert_eq!(first.meta.name, "Save 01");
         assert_eq!(second.meta.name, "Save 02");
         assert_eq!(second.meta.map, "Proving Grounds");
@@ -316,6 +330,14 @@ mod tests {
             library.records(Shelf::Saves)
         );
         assert_eq!(reopened.records(Shelf::Saves)[0].id, second.id);
+        assert_eq!(
+            reopened
+                .get(Shelf::Saves, &first.id)
+                .unwrap()
+                .meta
+                .difficulty,
+            Some(Difficulty::Hard)
+        );
         let (loaded, sim) = reopened.load(Shelf::Saves, &first.id).unwrap();
         assert_eq!(loaded, replay(3));
         assert_eq!(sim.tick(), 3);
@@ -324,16 +346,34 @@ mod tests {
         assert_eq!(library.records(Shelf::Saves).len(), 1);
         assert!(library.load(Shelf::Saves, &second.id).is_err());
         assert_eq!(
-            library.add(Shelf::Saves, &replay(1)).unwrap().meta.name,
+            library
+                .add(Shelf::Saves, &replay(1), None)
+                .unwrap()
+                .meta
+                .name,
             "Save 02"
         );
+    }
+
+    #[test]
+    fn metadata_without_difficulty_still_lists() {
+        let store = temporary_store("legacy");
+        let mut library = Library::new(store.clone());
+        let record = library.add(Shelf::Saves, &replay(1), None).unwrap();
+        let text = store
+            .read(&format!("saves/{}.meta.ron", record.id))
+            .unwrap()
+            .unwrap();
+        assert!(!text.contains("difficulty"));
+        let reopened = Library::new(store);
+        assert_eq!(reopened.records(Shelf::Saves)[0].meta.difficulty, None);
     }
 
     #[test]
     fn corrupt_records_are_skipped_or_rejected() {
         let store = temporary_store("corrupt");
         let mut library = Library::new(store.clone());
-        let record = library.add(Shelf::Replays, &replay(2)).unwrap();
+        let record = library.add(Shelf::Replays, &replay(2), None).unwrap();
         store.write("replays/broken.meta.ron", "not ron").unwrap();
         store
             .write(&format!("replays/{}.data.ron", record.id), "(version: 0)")

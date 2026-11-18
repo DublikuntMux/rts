@@ -15,6 +15,7 @@ use std::{
 
 use bevy::prelude::*;
 use ewebsock::{WsEvent, WsMessage, WsSender};
+use rts_ai::Difficulty;
 use rts_base::{Command, MatchOutcome, PlayerId, Sim};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
@@ -33,11 +34,12 @@ use crate::{
 
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub enum SessionAction {
-    /// Starts a solo match on a catalog map.
+    /// Starts a solo match on a catalog map against an opponent of this difficulty.
     NewGame {
         map: usize,
+        difficulty: Difficulty,
     },
-    /// Starts a fresh match with the completed skirmish's setup.
+    /// Starts a fresh match with the completed skirmish's setup and difficulty.
     Restart,
     /// Continues a saved solo match.
     LoadGame {
@@ -287,6 +289,8 @@ pub struct Session {
     recording: Option<Replay>,
     last_replay: Option<Replay>,
     last_step: f64,
+    /// The solo opponent's difficulty, kept by restarts and saved games.
+    pub difficulty: Difficulty,
 }
 
 impl Session {
@@ -507,11 +511,12 @@ fn handle_actions(
             Ok(())
         };
         let result = match action {
-            SessionAction::NewGame { map } => catalog
+            SessionAction::NewGame { map, difficulty } => catalog
                 .as_ref()
                 .and_then(|catalog| catalog.0.get(*map))
                 .ok_or_else(|| "This map is not available.".to_owned())
                 .and_then(|map| {
+                    session.difficulty = *difficulty;
                     let game = session.begin(map.setup.clone(), Mode::Offline, PlayerId(0), now);
                     play(
                         game,
@@ -543,6 +548,10 @@ fn handle_actions(
             SessionAction::Restart => Err("Complete a solo skirmish before restarting.".into()),
             SessionAction::LoadGame { id } => {
                 library.load(Shelf::Saves, id).and_then(|(saved, sim)| {
+                    session.difficulty = library
+                        .get(Shelf::Saves, id)
+                        .and_then(|record| record.meta.difficulty)
+                        .unwrap_or_default();
                     let game = Ok(session.resume(saved, sim, now));
                     play(
                         game,
@@ -559,7 +568,9 @@ fn handle_actions(
                         .recording
                         .as_ref()
                         .ok_or_else(|| "There is nothing to save.".to_owned())
-                        .and_then(|replay| library.add(Shelf::Saves, replay))
+                        .and_then(|replay| {
+                            library.add(Shelf::Saves, replay, Some(session.difficulty))
+                        })
                         .map(|record| status.info(format!("Saved as {}.", record.meta.name)))
                 } else {
                     Err("Only a running solo match can be saved.".into())
@@ -685,7 +696,7 @@ fn handle_actions(
             SessionAction::SaveReplay => session
                 .replay()
                 .ok_or_else(|| "There is no recorded match yet.".to_owned())
-                .and_then(|replay| library.add(Shelf::Replays, replay))
+                .and_then(|replay| library.add(Shelf::Replays, replay, None))
                 .map(|record| status.info(format!("Replay saved as {}.", record.meta.name))),
             SessionAction::Delete { shelf, id } => {
                 library.delete(*shelf, id).map(|()| status.info("Deleted."))
@@ -1111,7 +1122,7 @@ fn finish_replay_import(
         .and_then(|text| {
             Replay::from_ron(&text).map_err(|error| format!("Cannot import replay: {error}"))
         })
-        .and_then(|replay| library.add(Shelf::Replays, &replay));
+        .and_then(|replay| library.add(Shelf::Replays, &replay, None));
     match result {
         Ok(record) => status.info(format!("Imported as {}.", record.meta.name)),
         Err(error) => status.fail(error),

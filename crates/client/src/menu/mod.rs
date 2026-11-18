@@ -26,6 +26,7 @@ use bevy::{
     ui_widgets::{Activate, ScrollArea, ScrollIntoView},
     window::PrimaryWindow,
 };
+use rts_ai::Difficulty;
 use rts_net::{MAX_NAME_CHARS, RoomInfo};
 
 use self::widgets::Field;
@@ -223,6 +224,8 @@ pub struct Menu {
     pub solo: SoloPage,
     /// Index into the [`MapCatalog`].
     pub map: usize,
+    /// The opponent's difficulty for a new skirmish.
+    pub difficulty: Difficulty,
     pub saves: Browse,
     pub replays: Browse,
     /// Selected room code in the room browser.
@@ -243,6 +246,7 @@ impl Default for Menu {
             section: Section::default(),
             solo: SoloPage::default(),
             map: 0,
+            difficulty: Difficulty::default(),
             saves: Browse::default(),
             replays: Browse::default(),
             room: None,
@@ -410,6 +414,7 @@ pub enum Action {
     OpenNewGame,
     OpenLoadGame,
     SelectMap(usize),
+    SelectDifficulty(Difficulty),
     StartGame,
     Select(Shelf, ReplayPick),
     ToggleDropdown(Dropdown),
@@ -496,6 +501,7 @@ impl Action {
         match self {
             Self::Section(section) => menu.section == *section,
             Self::SelectMap(map) => menu.map == *map,
+            Self::SelectDifficulty(difficulty) => menu.difficulty == *difficulty,
             Self::Select(kind, pick) => menu.browse(*kind).selected.as_ref() == Some(pick),
             Self::SelectRoom(code) => menu.room.as_ref() == Some(code),
             Self::SetPublic(public) => menu.public_room == *public,
@@ -581,8 +587,12 @@ fn perform(
                 select_first(&mut menu.saves, library.records(Shelf::Saves), false);
             }
             Action::SelectMap(map) => menu.map = map,
+            Action::SelectDifficulty(difficulty) => menu.difficulty = difficulty,
             Action::StartGame => {
-                session.write(SessionAction::NewGame { map: menu.map });
+                session.write(SessionAction::NewGame {
+                    map: menu.map,
+                    difficulty: menu.difficulty,
+                });
             }
             Action::Select(shelf, pick) => menu.browse_mut(shelf).selected = Some(pick),
             Action::ToggleDropdown(dropdown) => {

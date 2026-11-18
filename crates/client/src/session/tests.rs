@@ -45,6 +45,10 @@ fn local_input_delay_and_replay_share_the_same_turns() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario follows a skirmish through save, resume, result, restart, and playback"
+)]
 fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
     let mut app = headless();
     let mut setup = crate::skirmish::test_setup();
@@ -57,8 +61,18 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
         app.update();
         app.update();
     };
-    send(&mut app, SessionAction::NewGame { map: 0 });
+    send(
+        &mut app,
+        SessionAction::NewGame {
+            map: 0,
+            difficulty: rts_ai::Difficulty::Hard,
+        },
+    );
     assert!(app.world().resource::<Match>().sim.is_skirmish());
+    assert_eq!(
+        app.world().resource::<Session>().difficulty,
+        rts_ai::Difficulty::Hard
+    );
     assert!(
         app.world_mut()
             .resource_mut::<Match>()
@@ -90,7 +104,13 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
         .id
         .clone();
     send(&mut app, SessionAction::Leave);
+    app.world_mut().resource_mut::<Session>().difficulty = rts_ai::Difficulty::Easy;
     send(&mut app, SessionAction::LoadGame { id: saved });
+    assert_eq!(
+        app.world().resource::<Session>().difficulty,
+        rts_ai::Difficulty::Hard,
+        "a saved game resumes at its own difficulty"
+    );
     assert_eq!(app.world().resource::<Match>().sim.state_hash(), saved_hash);
 
     assert!(
@@ -120,6 +140,10 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
         AppState::InGame
     );
     assert_eq!(status(&app).result, None);
+    assert_eq!(
+        app.world().resource::<Session>().difficulty,
+        rts_ai::Difficulty::Hard
+    );
     let game = app.world().resource::<Match>();
     assert!(game.accepts_orders);
     assert_eq!(
@@ -242,8 +266,10 @@ fn imported_replay_joins_the_library_without_replacing_a_starting_match() {
     let mut app = headless();
     let text = Replay::new(setup()).unwrap().to_ron().unwrap();
     app.world().non_send::<ReplayIo>().complete_for_test(text);
-    app.world_mut()
-        .write_message(SessionAction::NewGame { map: 0 });
+    app.world_mut().write_message(SessionAction::NewGame {
+        map: 0,
+        difficulty: rts_ai::Difficulty::Normal,
+    });
     app.update();
     assert!(app.world().resource::<Session>().mode == Mode::Offline);
     assert!(app.world().resource::<Match>().accepts_orders);
@@ -268,8 +294,10 @@ fn imported_replay_joins_the_library_without_replacing_a_starting_match() {
 #[test]
 fn saved_solo_game_continues_from_its_recorded_state() {
     let mut app = headless();
-    app.world_mut()
-        .write_message(SessionAction::NewGame { map: 0 });
+    app.world_mut().write_message(SessionAction::NewGame {
+        map: 0,
+        difficulty: rts_ai::Difficulty::Normal,
+    });
     app.update();
     app.update();
     let target = IVec2::new(5 * TILE, 10 * TILE);

@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 rts_base.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 rts_net.workspace = true

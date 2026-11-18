@@ -1,5 +1,9 @@
 //! The deterministic opponent for two-player skirmishes.
 
+mod difficulty;
+
+pub use difficulty::{Difficulty, ScoutPattern};
+
 use rts_base::{
     Command, DepositId, IVec2, PlayerId, ResourceKind, Resources, Sim, TILE, UnitId, tile_of,
 };

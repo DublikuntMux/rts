@@ -4808,6 +4808,7 @@ version = "0.1.0"
 dependencies = [
  "rts_base",
  "rts_net",
+ "serde",
 ]
 
 [[package]]

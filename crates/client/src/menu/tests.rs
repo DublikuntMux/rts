@@ -242,7 +242,7 @@ fn every_page_and_dialog_spawns_on_wide_and_compact_screens() {
         let replay = Replay::new(setup("crossroads")).unwrap();
         app.world_mut()
             .resource_mut::<Library>()
-            .add(crate::library::Shelf::Saves, &replay)
+            .add(crate::library::Shelf::Saves, &replay, None)
             .unwrap();
         act(&mut app, Action::Back);
         act(&mut app, Action::OpenLoadGame);
@@ -338,9 +338,30 @@ fn actions_follow_session_state_and_send_session_actions() {
 
     act(&mut app, Action::OpenNewGame);
     act(&mut app, Action::SelectMap(1));
+    assert_eq!(
+        app.world().resource::<Menu>().difficulty,
+        Difficulty::Normal,
+        "new skirmishes default to Normal"
+    );
     app.world_mut().write_message(Action::StartGame);
     app.update();
-    assert_eq!(sent(&mut app), [SessionAction::NewGame { map: 1 }]);
+    assert_eq!(
+        sent(&mut app),
+        [SessionAction::NewGame {
+            map: 1,
+            difficulty: Difficulty::Normal
+        }]
+    );
+    act(&mut app, Action::SelectDifficulty(Difficulty::Hard));
+    app.world_mut().write_message(Action::StartGame);
+    app.update();
+    assert_eq!(
+        sent(&mut app),
+        [SessionAction::NewGame {
+            map: 1,
+            difficulty: Difficulty::Hard
+        }]
+    );
 
     // Joining needs a connection and a complete invite code.
     act(&mut app, Action::Section(Section::Multiplayer));
@@ -453,6 +474,7 @@ fn browse_filters_orders_and_keeps_a_valid_selection() {
             ticks: 0,
             saved_at,
             setup: setup("proving_grounds"),
+            difficulty: None,
         },
     };
     let records = [

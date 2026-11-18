@@ -3,6 +3,7 @@
 use bevy::{
     input_focus::tab_navigation::TabGroup, prelude::*, scene::EntityScene, ui_widgets::ScrollArea,
 };
+use rts_ai::Difficulty;
 use rts_net::RoomInfo;
 
 use super::{
@@ -47,6 +48,7 @@ pub enum PageKey {
     },
     NewGame {
         map: usize,
+        difficulty: Difficulty,
     },
     Browse {
         shelf: Shelf,
@@ -89,7 +91,10 @@ impl PageKey {
                 SoloPage::Home => Self::SoloHome {
                     latest: view.library.records(Shelf::Saves).first().cloned(),
                 },
-                SoloPage::NewGame => Self::NewGame { map: menu.map },
+                SoloPage::NewGame => Self::NewGame {
+                    map: menu.map,
+                    difficulty: menu.difficulty,
+                },
                 SoloPage::LoadGame => browse(Shelf::Saves),
             },
             Section::Multiplayer => match view.online_page() {
@@ -363,7 +368,7 @@ pub fn page(view: &View) -> impl Scene {
 fn page_contents(view: &View) -> Box<dyn SceneList> {
     match PageKey::of(view) {
         PageKey::SoloHome { latest } => Box::new(solo_home(view, latest)),
-        PageKey::NewGame { map } => Box::new(new_game(view, map)),
+        PageKey::NewGame { map, .. } => Box::new(new_game(view, map)),
         PageKey::Browse { shelf, .. } => Box::new(browser(view, shelf)),
         PageKey::Connect { .. } => Box::new(connect(view)),
         PageKey::Connecting { url } => Box::new(connecting(url)),
@@ -458,6 +463,7 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
     } else {
         "Start sandbox"
     };
+    let difficulty: Scenes = when(map.skirmish, difficulty_choice(view.menu.difficulty));
     bsn_list! {
         @heading("Select map")
         --
@@ -472,10 +478,30 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
                 --
                 @hint(detail)
                 --
+                {difficulty}
+                --
                 @row(bsn_list! { @wide_button(start, Action::StartGame, Tone::Primary) })
             },
         )
     }
+}
+
+/// Opponent difficulty buttons and what the chosen level changes.
+fn difficulty_choice(chosen: Difficulty) -> impl Scene {
+    let levels: Vec<_> = Difficulty::ALL
+        .into_iter()
+        .map(|level| button(level.label(), Action::SelectDifficulty(level), Tone::Item))
+        .collect();
+    column(
+        6.0,
+        bsn_list! {
+            @text("Opponent", 14.0, INK)
+            --
+            @row(levels)
+            --
+            @hint(chosen.description())
+        },
+    )
 }
 
 /// The save browser or the replay browser.
