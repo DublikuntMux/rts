@@ -32,7 +32,7 @@ pub enum TileVisibility {
 }
 
 /// Explored and currently visible tiles of one player.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FogVisibility {
     size: IVec2,
     explored: Vec<bool>,
@@ -461,8 +461,8 @@ impl PlayerKnowledge {
 
     /// Maps a command written with this player's view IDs to authoritative IDs.
     ///
-    /// Units the player does not own are dropped. Attack targets must be enemies in sight now,
-    /// gather targets must be deposits the player has seen, and build sites must be explored.
+    /// Units the player does not own are dropped. Attack targets, gather deposits, and build
+    /// sites must be in sight now, so the answer never depends on hidden or remembered state.
     /// Returns `None` if nothing valid remains.
     #[must_use]
     pub fn translate_command(&self, sim: &Sim, command: &Command) -> Option<Command> {
@@ -477,13 +477,13 @@ impl PlayerKnowledge {
                 *target = id;
             }
             Command::Gather { deposit, .. } => {
-                *deposit = self.deposits.resolve(deposit.0)?;
+                let id = self.deposits.resolve(deposit.0)?;
+                if !self.fog.sees(sim.deposit(id)?.pos) {
+                    return None;
+                }
+                *deposit = id;
             }
-            Command::BuildBarracks { target, .. }
-                if self.fog.tile(tile_of(*target)) == TileVisibility::Unexplored =>
-            {
-                return None;
-            }
+            Command::BuildBarracks { target, .. } if !self.fog.sees(*target) => return None,
             _ => {}
         }
         let units = command.units_mut();
@@ -497,6 +497,37 @@ impl PlayerKnowledge {
             *unit = id;
             true
         });
+        (!units.is_empty()).then_some(command)
+    }
+}
+
+impl PlayerKnowledge {
+    /// Re-checks a command already bound by [`Self::translate_command`] when it executes.
+    ///
+    /// Commands wait for the input delay, and a target in sight at submission may have left
+    /// sight since. Attack targets must still be living enemies in sight, gather deposits and
+    /// build sites must still be in sight, and units must still belong to the player. Returns
+    /// `None` if nothing valid remains.
+    #[must_use]
+    pub fn revalidate(&self, sim: &Sim, mut command: Command) -> Option<Command> {
+        match &command {
+            Command::Attack { target, .. } => {
+                let unit = sim.unit(*target)?;
+                if unit.owner == self.player || !self.fog.sees(unit.pos) {
+                    return None;
+                }
+            }
+            Command::Gather { deposit, .. } => {
+                self.deposits.get(*deposit)?;
+                if !self.fog.sees(sim.deposit(*deposit)?.pos) {
+                    return None;
+                }
+            }
+            Command::BuildBarracks { target, .. } if !self.fog.sees(*target) => return None,
+            _ => {}
+        }
+        let units = command.units_mut();
+        units.retain(|&id| sim.unit(id).is_some_and(|unit| unit.owner == self.player));
         (!units.is_empty()).then_some(command)
     }
 }
@@ -861,11 +892,13 @@ impl PlayerView {
         &self.volleys
     }
 
-    /// Whether a barracks site looks free from what the player knows. The authority decides.
+    /// Whether a barracks site in sight looks free. Sites out of sight are refused, as the
+    /// authority refuses them. The authority decides.
     #[must_use]
     pub fn can_place_barracks(&self, target: IVec2) -> bool {
         if self.resources.is_none()
             || self.outcome.is_some()
+            || !self.fog.sees(target)
             || self.speed_modifier(target).is_none_or(|speed| speed == 0)
         {
             return false;

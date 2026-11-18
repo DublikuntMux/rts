@@ -352,3 +352,109 @@ fn fog_discs_follow_sight_radius() {
     fog.update([]);
     assert_eq!(fog.tile(IVec2::new(12, 10)), TileVisibility::Remembered);
 }
+
+#[test]
+fn queued_attacks_are_revalidated_when_they_execute() {
+    let mut sim = corridor();
+    let (mut knowledge, mut view) = PlayerView::observe(&sim, PlayerId(0));
+    let soldier = own_soldier(&view);
+    step(
+        &mut sim,
+        &mut knowledge,
+        &mut view,
+        &[Command::Move {
+            units: vec![soldier],
+            target: tile(33, 2),
+        }],
+    );
+    let enemy = (0..400)
+        .find_map(|_| {
+            step(&mut sim, &mut knowledge, &mut view, &[]);
+            view.units()
+                .find(|(_, unit)| unit.owner == PlayerId(1))
+                .map(|(id, _)| id)
+        })
+        .expect("the enemy comes into sight");
+    let bound = knowledge
+        .translate_command(
+            &sim,
+            &Command::Attack {
+                units: vec![soldier],
+                target: enemy,
+            },
+        )
+        .expect("a visible target is accepted");
+    assert_eq!(
+        knowledge.revalidate(&sim, bound.clone()),
+        Some(bound.clone())
+    );
+    step(
+        &mut sim,
+        &mut knowledge,
+        &mut view,
+        &[Command::Move {
+            units: vec![soldier],
+            target: tile(2, 2),
+        }],
+    );
+    for _ in 0..400 {
+        step(&mut sim, &mut knowledge, &mut view, &[]);
+    }
+    assert!(view.unit(enemy).is_none());
+    assert_eq!(
+        knowledge.revalidate(&sim, bound),
+        None,
+        "a target that left sight during the input delay is refused"
+    );
+}
+
+#[test]
+fn gather_and_build_targets_need_current_sight() {
+    let mut sim = frontier();
+    let (mut knowledge, mut view) = PlayerView::observe(&sim, PlayerId(0));
+    let worker_kind = sim.rules().unit_kind("worker").unwrap();
+    let worker = view
+        .units()
+        .find(|(_, unit)| unit.owner == PlayerId(0) && unit.kind == worker_kind)
+        .unwrap()
+        .0;
+    let go = |target| Command::Move {
+        units: vec![worker],
+        target,
+    };
+    step(&mut sim, &mut knowledge, &mut view, &[go(tile(16, 11))]);
+    for _ in 0..160 {
+        step(&mut sim, &mut knowledge, &mut view, &[]);
+    }
+    let (far, deposit) = view
+        .deposits()
+        .find(|(_, deposit)| tile_of(deposit.pos) == IVec2::new(16, 10))
+        .expect("the worker saw the central gold");
+    let site = tile(17, 12);
+    assert!(view.can_place_barracks(site));
+    let gather = Command::Gather {
+        units: vec![worker],
+        deposit: far,
+    };
+    let build = Command::BuildBarracks {
+        units: vec![worker],
+        target: site,
+    };
+    let bound_gather = knowledge.translate_command(&sim, &gather).unwrap();
+    let bound_build = knowledge.translate_command(&sim, &build).unwrap();
+
+    step(&mut sim, &mut knowledge, &mut view, &[go(tile(5, 9))]);
+    for _ in 0..200 {
+        step(&mut sim, &mut knowledge, &mut view, &[]);
+    }
+    assert_eq!(
+        view.visibility(tile_of(deposit.pos)),
+        TileVisibility::Remembered
+    );
+    assert!(view.deposit(far).is_some(), "the deposit is still remembered");
+    assert!(!view.can_place_barracks(site));
+    assert_eq!(knowledge.translate_command(&sim, &gather), None);
+    assert_eq!(knowledge.translate_command(&sim, &build), None);
+    assert_eq!(knowledge.revalidate(&sim, bound_gather), None);
+    assert_eq!(knowledge.revalidate(&sim, bound_build), None);
+}
