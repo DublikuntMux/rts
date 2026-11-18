@@ -119,6 +119,25 @@ on the bundled map verify that either AI slot gathers both local resources,
 builds and deploys, and defeats a passive opponent. Two active opponents
 both develop and reach a terminal result within 4,000 ticks.
 
+Scout
+-----
+
+**Scout unit (2026-11-18).** Base tests cover the ``sight`` default and
+bounds, barracks-only scout training with mixed costs and spawning, and
+rejection of incomplete scout rules. They also verify that rules without
+``economy.scout`` ignore ``TrainScout`` with an unchanged state hash. The
+pinned v7 hash streams still match. Network tests round-trip
+``TrainScout``. They train a scout from the bundled rules, move it eight
+tiles, and verify the RON replay, and they replay scout orders as no-ops under
+pre-scout rules. Bevy tests activate the desktop scout command in slot 6 and
+the phone action and check that the action is hidden when rules omit it.
+All 335 workspace tests, all-target Clippy with warnings denied, the
+workspace ``wasm32`` check, and the strict Sphinx build passed. The
+``real_client_sessions_use_server_mods_verify_turns_and_replays`` network test
+fails intermittently, on the base commit as well. No native window was driven,
+because this desktop had no input-automation tool, so the art was checked only
+as a PNG.
+
 M4 — Combat
 -----------
 

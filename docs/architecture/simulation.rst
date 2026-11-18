@@ -179,6 +179,7 @@ Commands
        BuildBarracks { units: Vec<UnitId>, target: IVec2 },
        TrainWorker { units: Vec<UnitId> },
        TrainRifleSquad { units: Vec<UnitId> },
+       TrainScout { units: Vec<UnitId> },
    }
 
 A command names units by stable ID and a target in world units. Applying a
@@ -284,7 +285,11 @@ resource at a time. Construction reserves one tile when the command is
 accepted, then completes once the worker has spent the required ticks
 beside it. Interrupted work releases the reservation and refunds the cost.
 Paid training jobs complete in queue order. A finished job waits until a
-neighboring tile can fit the new unit.
+neighboring tile can fit the new unit. Headquarters train workers; barracks
+train rifle squads and, when the rules include ``economy.scout``, scouts.
+``TrainScout`` is ignored under rules without that entry, so recordings
+made before scouts existed replay with unchanged hashes. A unit's ``sight``
+is rules data for fog of war and does not enter the state hash.
 
 Buildings use the same unit IDs, ownership checks, health, and targeting
 as squads. They stay on their tiles and give no soldier kills for veterancy.

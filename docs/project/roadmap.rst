@@ -188,6 +188,13 @@ Frontier skirmish
    v8 carries the new commands and setup. Version 7 sandbox replays still
    load. New pixel art covers terrain, units, buildings, and deposits.
 
+Scout
+   A fast, lightly armed recon unit trained at barracks for wood and gold,
+   with its own pixel-art sprite and desktop and phone commands. Unit rules
+   gain an integer ``sight`` radius in tiles (default 4, scout 8) for fog of
+   war. The optional ``economy.scout`` entry keeps earlier rules, v8 replays,
+   and state hashes valid.
+
 Upcoming
 --------
 

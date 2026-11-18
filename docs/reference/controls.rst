@@ -211,5 +211,7 @@ Skirmish controls
 * With a worker selected, choose **Build barracks**, then click or tap a
   clear tile. Escape or the targeting cancel button backs out.
 * Select the headquarters for **Train worker** or a barracks for
-  **Rifle squad**. The command shows its wood and gold cost.
+  **Rifle squad** or **Train scout**. Each command shows its wood and gold
+  cost. On desktop, the scout command occupies the grid slot after **Rifles**.
+  On phones, it joins the floating action row.
 * Right-click or tap an enemy building with armed units selected to attack.

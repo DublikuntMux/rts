@@ -44,9 +44,11 @@ Frontier skirmish
   traversable tile. The worker travels next to the tile and constructs the
   building. The order reserves the ground and charges both resources.
   Interrupting construction releases the tile and returns the cost.
-* Select the headquarters to **Train worker** or select a barracks to train a
-  **Rifle squad**. The desktop command grid uses the shorter labels
-  **Barracks**, **Worker**, and **Rifles**. Training charges the displayed cost
+* Select the headquarters for **Train worker**, or select a barracks for
+  **Rifle squad** or **Train scout**. Scouts are fast, lightly armed
+  recon troopers that see twice as far as other units. Use them to find the
+  enemy, not to fight. The desktop command grid uses the shorter labels
+  **Barracks**, **Worker**, **Rifles**, and **Scout**. Training charges the displayed cost
   and adds a job to the selected building's queue. Finished units emerge on a neighboring tile
   with room for them.
 * Select rifle squads and right-click or tap the enemy headquarters to
