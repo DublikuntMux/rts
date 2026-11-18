@@ -10,16 +10,18 @@ that guarantee it and how they are enforced. They apply to all code in
 Authority model
 ---------------
 
-The server owns the rules, map, tick clock, and simulation. It sends the
-complete match configuration when a player creates or joins a room, then one
-ordered turn and its resulting state hash every tick. Clients run
-deterministic replicas to render the match and record replays. They verify
-every tick against the server and stop locally on divergence. Client state and
-hashes never influence the server.
+The server owns the rules, map, tick clock, and simulation. Online clients
+hold no simulation: each receives its player's fog-filtered view frames
+(:doc:`visibility`). Determinism is therefore needed for *reproduction*, not
+for authority or agreement:
 
-Determinism is therefore needed for *agreement*, not for authority. A
-nondeterministic bug cannot corrupt the server's match, but it stops every
-client whose replica disagrees.
+* Solo matches, saved games, and full replays rebuild a match from its setup
+  and turns, and must arrive at the recorded state hash on every platform.
+* Resuming a save replays every turn, so the local player's knowledge and the
+  computer opponents' memory match the live match.
+
+A nondeterministic bug cannot corrupt the server's match, but it breaks
+saves and replays recorded on another platform.
 
 Rules
 -----
@@ -133,33 +135,14 @@ Rules and terrain are fixed at setup and are not hashed; the setup checksum
 covers them instead. Fractional movement state is hashed, so two peers that
 disagree about sub-unit progress are detected before their positions differ.
 
-Desync detection
-----------------
+Replay verification
+-------------------
 
-.. kroki::
-   :type: plantuml
-   :caption: How a client detects divergence from the server.
-   :align: center
-
-   @startuml
-   skinparam backgroundColor transparent
-   start
-   :receive Turn N and server hash H;
-   :apply Turn N to the local Sim;
-   :h = Sim::state_hash();
-   if (h == H?) then (yes)
-     :record Turn N and h in the replay;
-     :render;
-   else (no)
-     :stop the local match;
-     :show "Match state differs from\nthe authoritative server";
-     :close the connection;
-   endif
-   stop
-   @enduml
-
-There is no resynchronization yet. Corrective snapshots that let a diverged or
-late client recover are future work.
+Full replays store the state hash after their last turn. Playback, loading
+from the library, and resuming a saved game re-simulate every turn and
+compare the final hash. Any difference rejects the recording. Online clients
+have no state to hash; they validate each view frame's sequence and contents
+instead (:doc:`../reference/protocol`).
 
 Writing deterministic code
 --------------------------

@@ -27,18 +27,23 @@ Arguments
      - Rules file sent to every client. Defaults to the bundled
        ``assets/data/core.rules.ron``.
    * - ``--map PATH``
-     - Map file sent to every client. Defaults to the bundled
-       ``assets/maps/proving_grounds.map.ron``. The map's number of player
-       starts sets the room size.
+     - Play this map in every room instead of a private random layout. The
+       map's number of player starts sets the room size. Clients receive
+       only its name; anyone with the file knows its layout.
    * - ``--seed N``
-     - Unsigned 64-bit match seed. Defaults to 0. It is included in the
-       setup checksum and replays, and reserved for simulation randomness.
+     - Unsigned 64-bit match seed for a fixed map. Defaults to 0. It stays on
+       the server and is reserved for simulation randomness.
+
+Without ``--map``, every match plays a fresh two-player *Random frontier*
+layout generated from a seed drawn from OS entropy at the start of that
+match. The seed is never sent to clients, so the layout is known only through
+each player's fog of war. See :doc:`../architecture/server`.
 
 Each option may appear once, in any order. Unknown options, a second
 address, a missing value, or an invalid seed print the usage line and exit.
 
-The bundled rules and map are compiled into the server binary, so the server
-runs without the ``assets/`` folder unless you override them.
+The bundled rules and the Frontier map are compiled into the server binary,
+so the server runs without the ``assets/`` folder unless you override them.
 
 Startup validation
 ------------------
@@ -50,6 +55,8 @@ Before it binds the port, the server:
 3. Builds the complete initial simulation from the rules and map, which runs
    every content check described in :doc:`rules-format` and
    :doc:`map-format`.
+4. With random layouts, also generates and validates a layout, so rules that
+   lack the standard terrain symbols or skirmish units are refused.
 
 Any failure exits with status 1 and a message such as:
 

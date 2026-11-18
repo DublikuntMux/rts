@@ -138,6 +138,62 @@ fails intermittently, on the base commit as well. No native window was driven,
 because this desktop had no input-automation tool, so the art was checked only
 as a PNG.
 
+Fog of war
+----------
+
+**Authoritative fog of war and private views (2026-11-18).** Covered by tests:
+
+* ``rts_base`` visibility tests:
+
+  * Discovery, then re-hiding of enemy units while explored terrain stays
+    remembered.
+  * Frames that stay byte-identical while the hidden player gathers and
+    trains out of sight.
+  * Commands bound to the sender's knowledge. Foreign or unknown IDs,
+    attacks on hidden enemies, and gather or build targets out of current
+    sight are refused, both at receipt and again at execution, for queued
+    attacks whose target left sight.
+  * Enemy economy and starts withheld.
+  * Malformed frames rejected.
+
+* ``rts_net`` tests:
+
+  * The lobby setup frame carries no map content.
+  * View message bounds.
+  * Player-perspective replays round-trip and reject corruption.
+  * Full version 8 and 9 replays still load.
+
+* ``rts_server`` coordinator tests:
+
+  * Each slot's ``Started`` intro and tick 0 frame.
+  * 20 Hz per-player frames.
+  * Forged ownership through another player's view IDs.
+
+* ``rts_server`` WebSocket tests over real sockets:
+
+  * Host and guest receive distinct private views of a random layout, and
+    their view replays replay to the live views.
+  * On a public corridor, an enemy is discovered and then hidden again,
+    remembered terrain stays, and hidden movement produces only quiet frames.
+
+* Random layouts:
+
+  * Valid and varied.
+  * Deterministic per seed.
+
+* ``rts_client`` tests:
+
+  * Fog tinting for unexplored and remembered terrain.
+  * Online frame ordering, stalls, catch-up, and invalid frames.
+  * Saves, resume, restart, and playback of fog-aware solo skirmishes.
+  * A real-socket host and guest session: each sees only its own units and
+    half of the map, and the host's saved private replay plays back from the
+    library.
+
+All 354 workspace tests, strict all-target Clippy, formatting, the WebAssembly
+workspace check, and the strict Sphinx build passed. Not run: a rendered
+desktop, browser, or Android session.
+
 Fog-aware skirmish AI
 ---------------------
 

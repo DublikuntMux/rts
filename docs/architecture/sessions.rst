@@ -1,11 +1,15 @@
 Match sessions
 ==============
 
-A *session* decides where each turn comes from: the local player (solo), the
-server (online), or a recording (playback). ``crates/client/src/session.rs``
-implements all three with the same turn format, so solo play, online play,
-and replays go through one code path: ``Turn::apply``, a hash, and a replay
-recording.
+A *session* decides where the match on screen comes from: a local simulation
+(solo), the server (online), or a recording (playback). In every mode the
+interface reads only ``Match::view``, the local player's fog-filtered
+``PlayerView`` (:doc:`visibility`).
+
+* Solo matches and full-replay playback hold the authoritative ``Sim`` in a
+  ``LocalAuthority`` and observe it after each ``Turn::apply``.
+* Online matches and player-perspective playback apply ``ViewFrame``\ s
+  directly; they never hold the ``Sim``.
 
 Components
 ----------
@@ -19,8 +23,15 @@ Components
    * - ``SessionAction``
      - Interface messages for local games, connections, rooms, and the library.
    * - ``Session``
-     - Mode, buffered turns, local input frames, pending online setup,
-       current recording, last replay (also used during playback), and timing.
+     - Mode, local input frames, buffered server frames, the latest received
+       tick, pending ``LobbySetup``, the current ``Recording``, the last
+       recording (also used during playback), the opponent difficulty, and
+       timing.
+   * - ``Match``
+     - The local player's ``PlayerView``, pending orders in view IDs, recent
+       volleys, and, for local matches, the ``LocalAuthority``: the ``Sim``,
+       the local player's ``PlayerKnowledge``, and one ``Seat`` (knowledge,
+       view, ``rts_ai::Opponent``) per computer opponent.
    * - ``SessionStatus``
      - Interface view: ``message``, ``error``, ``server``, ``rooms``,
        ``lobby``, ``joining``, ``running``, ``stopped``, ``kind``,
@@ -85,9 +96,9 @@ Modes
    Idle --> Online : Started from server
    Idle --> Playback : WatchLast, WatchReplay
    Offline --> Idle : Leave
-   Online --> Stopped : hash mismatch, stall,\ndisconnect, Ended
+   Online --> Stopped : invalid frame, stall,\ndisconnect, Ended
    Online --> Idle : Leave
-   Playback --> Stopped : last turn verified
+   Playback --> Stopped : recording finished
    Playback --> Idle : Leave
    Stopped --> Idle : Leave
    Stopped : match stays on screen,\norders disabled
@@ -102,29 +113,30 @@ Saving a game also requires a running, unstopped solo match.
 Starting a match
 ----------------
 
-``Session::begin`` is shared by new solo and online matches:
+* ``Session::begin`` starts a solo match from a ``MatchSetup``. It creates a
+  ``Replay``, builds the ``Sim`` from it (``Replay::simulation`` enables fog
+  for current recordings), and plays slot 0. On a skirmish map it seats a
+  computer opponent at the session's ``difficulty`` in every other slot.
+* ``Session::begin_online`` starts from the server's ``LobbySetup`` and the
+  ``ViewIntro`` in ``Started``. It records a ``ViewReplay`` and creates a
+  ``Match`` with an empty view. The tick 0 frame arrives next.
+* ``Session::resume`` continues a saved game. See below.
+* ``Session::begin_replay`` accepts a recording already verified by the
+  library or recorded locally, with orders disabled. A full replay starts a
+  fresh local simulation viewed by player 1. A player-perspective replay
+  starts an empty view from its intro.
 
-1. Build the ``Sim`` and a new ``Replay`` from the ``MatchSetup``.
-2. Archive the old recording into ``last_replay`` and clear buffers.
-3. Install the new recording, mode, and step time.
-4. Return a ``Match`` for the local player. The caller inserts it and
-   switches to ``InGame``.
-
-Solo play selects a setup from ``MapCatalog`` and controls slot 0. Online
-play uses the server setup and the local slot from ``Lobby``.
-``Session::begin_replay`` accepts a recording already verified by the library
-or recorded locally. It starts a fresh simulation in ``Playback`` with
-orders disabled. Starting any local match, save, or replay disconnects from
-the server.
-Playback reads the retained last replay directly instead of cloning a second
-copy of the recording.
+Each of them archives the old recording into ``last_replay`` and clears the
+buffers. Starting any local match, save, or replay disconnects from the
+server. Playback reads the retained last replay directly instead of cloning a
+second copy of the recording.
 
 The fixed-step loop
 -------------------
 
 ``advance_session`` runs in ``FixedUpdate`` at 20 Hz while ``InGame``. Each
-call applies one turn, and in online mode repeats up to eight times while
-buffered turns remain, so a slow frame catches up with bounded work.
+call advances one tick. In online mode it repeats up to eight times while
+buffered frames remain, so a slow frame catches up with bounded work.
 
 .. kroki::
    :type: plantuml
@@ -134,13 +146,18 @@ buffered turns remain, so a slow frame catches up with bounded work.
    @startuml
    skinparam backgroundColor transparent
    start
-   :next = sim.tick + 1;
    switch (mode)
    case (Offline)
-     :frames[sim.tick + 2] = take pending;
-     :turn = frames[next] for the local player,\nempty for others;
+     :frames[view.tick + 2] = take pending;
+     :local orders = translate frames[next]\nwith the local player's knowledge;
+     :each seat: opponent.commands(seat view),\ntranslated with its knowledge;
+     :turn.apply(sim); observe every player;
+     :recording.push(turn, state hash);
+     if (outcome?) then (yes)
+       :show result, stop;
+     endif
    case (Online)
-     if (turn for next buffered?) then (no)
+     if (frame for next tick buffered?) then (no)
        if (> 15 s since last step?) then (yes)
          :fail: server stopped responding;
          stop
@@ -149,29 +166,28 @@ buffered turns remain, so a slow frame catches up with bounded work.
        endif
        stop
      endif
-     :take turn and server hash;
      if (received + 2 > last submitted?) then (yes)
        :send Input { tick: received + 2,\ncommands: take pending };
      endif
+     :view.apply(frame) (fails on an invalid frame);
+     :recording.push(frame);
    case (Playback)
-     if (turn for next in replay?) then (no)
-       if (hash == final_hash?) then (yes)
-         :"Replay finished and verified.";
-       else (no)
-         :fail;
+     if (full replay) then (yes)
+       if (turn for next tick?) then (no)
+         :verify final hash;\n"Replay finished and verified.";
+         stop
        endif
-       stop
+       :turn.apply(sim); observe;
+     else (view replay)
+       if (frame left?) then (no)
+         :"Replay finished.";
+         stop
+       endif
+       :view.apply(frame);
      endif
    case (Idle or Stopped)
      stop
    endswitch
-   :turn.apply(sim);
-   :hash = sim.state_hash();
-   if (Online and hash != server hash?) then (yes)
-     :fail: state differs from server;
-     stop
-   endif
-   :recording.push(turn, hash);
    stop
    @enduml
 
@@ -182,13 +198,14 @@ Input delay
 -----------
 
 Solo play delays local input by two ticks, exactly as the server does, so
-solo matches feel the same as online ones and record the same kind of turns:
+solo matches feel the same as online ones:
 
 * Commands queued while tick *T* is current are stored in ``frames[T + 2]``.
 * The turn for tick *T + 1* takes ``frames[T + 1]``, which was filled two
-  steps earlier.
+  steps earlier, and translates it then. Translating on the executing tick
+  applies the same current-sight rules as the server's revalidation.
 
-Online, the client sends its pending commands once per applied turn, for the
+Online, the client sends its pending commands once per applied frame, for the
 latest *received* tick plus two. Using the received tick rather than the
 applied tick keeps input ahead of the server even when the client has a
 backlog. ``submitted_tick`` makes sure each tick is sent at most once.
@@ -200,7 +217,7 @@ Connection flow
 2048 bytes; native builds refuse ``wss://``) and opens an ``ewebsock``
 socket. Socket events enter a bounded channel of 128 events; if it fills,
 the socket stops reading. On open, the client sends
-``Rooms { version: 8 }``. The first ``Rooms`` reply marks the server
+``Rooms { version: 9 }``. The first ``Rooms`` reply marks the server
 ``Connected``. Create and join use this same connection.
 
 ``poll_network`` runs in ``PreUpdate`` and handles up to 128 events per frame:
@@ -214,18 +231,18 @@ the socket stops reading. On open, the client sends
    * - ``Rooms``
      - Mark a connecting server connected and replace the public room list.
    * - ``Setup``
-     - Accept only before a match and once per join/create request; validate
-       through ``simulation()`` and reply ``Loaded { checksum }``.
+     - Accept only before a match and once per join/create request; parse
+       the rules and reply ``Loaded { checksum }``.
    * - ``Lobby``
      - Update code, local slot, visibility, names, and readiness. Ignore
        updates when neither joining nor already in a lobby. An update during
        a match fails the connection.
    * - ``Started``
-     - Require a setup and lobby, matching player count, delay 2, and no
-       running match. Begin online play with the assigned slot.
-   * - ``Turn``
-     - Require online mode, fewer than 128 buffered turns, and the next tick
-       in sequence. Buffer the turn with its hash.
+     - Require a setup and lobby, matching player count, delay 2, a view for
+       the lobby's slot, and no running match. Begin online play.
+   * - ``View``
+     - Require online mode, fewer than 128 buffered frames, and the next tick
+       in sequence (0 first). Buffer the frame.
    * - ``Ended``
      - During online play, stop the match and show the reason; keep the
        connection. In a lobby, clear the lobby and setup, show the reason,
@@ -243,11 +260,14 @@ Loading the setup and choosing **Ready** are separate steps; see
 Saved games and library
 -----------------------
 
-A saved game is a solo match's ``Replay``. ``Library::load`` calls
-``Replay::from_ron_with_sim`` to verify it once and return both the recording
-and its final ``Sim``. ``Session::resume`` continues from that simulation in
-``Offline`` mode as player 1. Recorded turns remain in the recording and new
-turns append to it. Online matches cannot be saved as games.
+A saved game is a solo match's full ``Replay``. ``Library::load`` verifies
+any ``Recording`` with ``Recording::from_ron``. ``Session::resume`` replays the
+saved turns from the start, in the live order: opponent orders, then apply,
+then observe. Afterwards every player's knowledge and each opponent's memory
+match the live match. It checks the final hash and continues in ``Offline``
+mode as player 1. Recorded turns remain in the recording and new turns append
+to it. Online matches cannot be saved as games. Their player-perspective
+replays can be watched, saved to the replay shelf, imported, and exported.
 
 ``library.rs`` keeps two shelves: ``saves/`` and ``replays/``. Each record
 contains ``<id>.meta.ron`` and ``<id>.data.ron``. The data is replay RON;

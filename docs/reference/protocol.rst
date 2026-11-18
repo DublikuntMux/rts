@@ -4,14 +4,15 @@ Multiplayer protocol
 Clients and the server exchange WebSocket messages defined in ``rts_net``
 (``crates/net/src/lib.rs``). The crate has no renderer or socket dependency;
 the server runtime and the client session supply the transport. The current
-protocol version is **7**. Older clients and replays are incompatible.
+protocol version is **9**. Older clients are incompatible. Version 8 full
+replays still load; see :doc:`replay-format`.
 
 Encoding
 --------
 
 * Lobby and gameplay messages are RON text in WebSocket *text* frames. RON
   nesting is limited to 64 levels.
-* The match setup is a binary frame, described in :doc:`setup-frame`.
+* The lobby setup is a binary frame, described in :doc:`setup-frame`.
 * The server treats any binary frame from a client as invalid. Clients
   reject a text-encoded setup and unknown binary tags.
 * Every message is validated when encoded and when decoded. Structures deny
@@ -25,22 +26,37 @@ Shared types
 
 .. code-block:: rust
 
-   struct UnitId(u32);            // stable, never reused in a match
+   struct UnitId(u32);            // a view ID on the wire (see below)
    struct PlayerId(u8);           // slot index in the map's player list
 
    enum Command {
        Move { units: Vec<UnitId>, target: IVec2 },  // target in world units
        Stop { units: Vec<UnitId> },
        Attack { units: Vec<UnitId>, target: UnitId },
+       Gather { units: Vec<UnitId>, deposit: DepositId },
+       BuildBarracks { units: Vec<UnitId>, target: IVec2 },
+       TrainWorker { units: Vec<UnitId> },
+       TrainRifleSquad { units: Vec<UnitId> },
+       TrainScout { units: Vec<UnitId> },
    }
 
-   struct PlayerInput { player: PlayerId, commands: Vec<Command> }
-   struct Turn { tick: u32, inputs: Vec<PlayerInput> }
+   struct LobbySetup { rules: String, map: String, players: u8 }
+   struct ViewIntro { player: PlayerId, players: u8, size: IVec2, start: IVec2, skirmish: bool }
+   struct ViewFrame {
+       tick: u32,
+       explored: Vec<(u32, TerrainId)>,
+       units: Vec<ViewUnit>, removed: Vec<UnitId>,
+       deposits: Vec<ViewDeposit>,
+       resources: Option<Resources>, headquarters: Option<UnitId>,
+       outcome: Option<MatchOutcome>, volleys: Vec<Volley>,
+   }
 
-A ``Turn`` contains exactly one ``PlayerInput`` per match player, in
-ascending slot order. Commands keep their submission order. ``Turn::apply``
-checks that the turn is for the simulation's next tick and applies it without
-adding another input delay.
+Unit and deposit IDs on the wire are the receiving player's *view IDs*. They
+are aliases assigned in the order that player first observed each entity, so
+they never reveal authoritative IDs. ``ViewFrame`` and its parts are described
+in :doc:`../architecture/visibility`. ``Turn`` (one ``PlayerInput`` per player
+in slot order) no longer crosses the network. It remains the record format of
+full replays (:doc:`replay-format`).
 
 Client messages
 ---------------
@@ -58,17 +74,17 @@ Client messages
    * - ``Join { version, code, name }``
      - Join by six-character code (``A``–``Z``, ``0``–``9``) with this name.
    * - ``Loaded { checksum }``
-     - Acknowledge the received setup with its checksum.
+     - Acknowledge the received lobby setup with its checksum.
    * - ``Ready { ready }``
      - Set or clear this player's explicit readiness before the match.
    * - ``Start``
      - Host only: start a full room whose members have loaded and are ready.
    * - ``Input { tick, commands }``
-     - Commands for a future tick.
+     - Commands in this player's view IDs for a future tick.
    * - ``Leave``
      - Leave the room.
 
-Clients never send rules, player slot identities, simulation state, or hashes.
+Clients never send rules, player slot identities, or simulation state.
 The server identifies each player by the connection's slot.
 
 Server messages
@@ -80,17 +96,20 @@ Server messages
 
    * - Message
      - Meaning
-   * - ``Setup(MatchSetup)``
-     - The server's rules, map, seed, and player count. Binary frame only.
+   * - ``Setup(LobbySetup)``
+     - The server's rules text, the room's map name, and the player count.
+       No terrain, units, starts, deposits, or seed. Binary frame only.
    * - ``Rooms { rooms }``
      - Up to 64 public rooms that have space and have not started, sorted by code.
    * - ``Lobby { code, player, public, slots }``
      - Room visibility and named slots with readiness. ``player`` is the
        receiver's slot. Empty slots are ``None``; capacity is ``slots.len()``.
-   * - ``Started { players, input_delay }``
-     - The match started. ``input_delay`` is always 2.
-   * - ``Turn { turn, hash }``
-     - One authoritative turn and the server's state hash *after* applying it.
+   * - ``Started { players, input_delay, view }``
+     - The match started. ``input_delay`` is always 2. ``view`` is the
+       receiver's own ``ViewIntro``; it differs per player.
+   * - ``View { frame }``
+     - The receiver's knowledge after one authoritative tick, starting at
+       tick 0. Sent only to that player.
    * - ``Ended { reason }``
      - The room or match ended, or this client left the room.
    * - ``Error { message }``
@@ -110,15 +129,16 @@ characters or leading or trailing whitespace. This applies to ``Create``,
 ``Join``, occupied lobby slots, and listed hosts. Listed map names are at most
 64 characters with no control characters. Listed player counts are from 1 to
 capacity; capacity is from 1 to 8. A lobby has 1 to 8 slots, and its host and
-receiver slots must be occupied. These messages retain the 64 KiB size limit.
+receiver slots must be occupied. These messages retain the 64 KiB size limit;
+``View`` may use up to 4 MiB.
 
 Example text frames:
 
 .. code-block:: text
 
-   Join(version:8,code:"K7Q2PX",name:"Ada")
+   Join(version:9,code:"K7Q2PX",name:"Ada")
    Input(tick:42,commands:[Move(units:[(0),(1)],target:(11147,14223))])
-   Turn(turn:(tick:40,inputs:[(player:(0),commands:[]),(player:(1),commands:[Stop(units:[(7)])])]),hash:17134265448149945174)
+   View(frame:(tick:40,explored:[],units:[],removed:[],deposits:[],resources:None,headquarters:None,outcome:None,volleys:[]))
 
 Message sequence
 ----------------
@@ -133,22 +153,23 @@ Message sequence
    hide footbox
    participant Client as C
    participant Server as S
-   C -> S : Rooms { version: 8 }
+   C -> S : Rooms { version: 9 }
    S --> C : Rooms { rooms }
-   C -> S : Create { version: 8, name, public }\nor Join { version: 8, code, name }
+   C -> S : Create { version: 9, name, public }\nor Join { version: 9, code, name }
    S --> C : Setup (binary)
    S --> C : Lobby { code, player, public, slots }
-   C -> C : validate setup,\ncompute checksum
+   C -> C : parse rules,\ncompute checksum
    C -> S : Loaded { checksum }
    S --> C : Lobby
    C -> S : Ready { ready: true }
    S --> C : Lobby { slots with updated readiness }
    ... other players join, load, and become ready ...
    C -> S : Start (host only)
-   S --> C : Started { players, input_delay: 2 }
+   S --> C : Started { players, input_delay: 2, view }
+   S --> C : View { frame for tick 0 }
    loop every tick (50 ms)
-     S --> C : Turn { turn, hash }
-     C -> C : apply turn, compare hash
+     S --> C : View { frame }
+     C -> C : validate and apply frame
      C -> S : Input { tick: received + 2, commands }
    end
    alt a player leaves or disconnects
@@ -190,42 +211,53 @@ Input:
 * ``tick`` must be after the server's current tick, after this player's
   previous ``Input``, and at most 8 ticks ahead. Gaps are allowed.
 * The batch must fit the command limits and the per-message limit.
-* The server removes unit IDs the player does not own, or that no longer
-  exist, and drops commands left empty.
-* The combined turn with every player's input must still fit the turn message
-  limit.
+* The server translates each command with the sender's knowledge. View IDs
+  that do not resolve, or name units the player does not own, are removed.
+  ``Attack`` needs an enemy in sight now, ``Gather`` a deposit in sight now,
+  and ``BuildBarracks`` a site in sight now; otherwise the command is
+  dropped. Commands left with no units are dropped.
 * A rejected ``Input`` returns ``Error`` and does not count as a submission.
+  Dropped commands are silent: the answer must not depend on hidden state.
 
-Turns:
+Ticks:
 
-* The first turn is tick 1, due one tick (50 ms) after ``Started``.
-* Turns are produced every 50 ms whether or not input arrives. A player
-  without input for a tick gets an empty batch.
-* The simulation validates the remaining commands: ownership, target terrain,
+* ``Started`` is followed at once by each player's frame for tick 0. The
+  first simulated tick is 1, due 50 ms after ``Started``.
+* Ticks run every 50 ms whether or not input arrives. A player without input
+  for a tick gets an empty batch.
+* On the tick a command executes, the server revalidates it against the
+  player's current knowledge, so a target that left sight during the input
+  delay is refused. The simulation then validates ownership, target terrain,
   and reachability. Invalid orders have no effect.
+* After each tick every player receives its own ``View`` frame.
 
 Client rules
 ------------
 
 * A setup is accepted once per room membership, before the match. The client
-  builds the full simulation from it before sending ``Loaded``. Explicit
-  readiness is a separate player choice.
-* ``Started`` must match the setup's player count and an input delay of 2.
-* Each ``Turn`` must be the next tick after the last one received, with one
-  input per room slot. At most 128 turns may be buffered.
-* After applying a turn, the client compares its state hash with ``hash``. A
-  mismatch stops the client's match; the server is unaffected.
-* After each applied turn, the client sends its pending commands for the
+  parses its rules before sending ``Loaded``. Explicit readiness is a
+  separate player choice.
+* ``Started`` must match the setup's player count, an input delay of 2, and
+  the client's lobby slot.
+* ``View`` frames must arrive in tick order, starting at 0. At most 128 may
+  be buffered. ``PlayerView::apply`` rejects frames that are out of sequence,
+  explore a tile twice, remove unknown units, or carry units, deposits,
+  volleys, or economy the view cannot hold. A rejected frame stops the
+  client's match; the server is unaffected.
+* After each applied frame, the client sends its pending commands for the
   latest received tick plus 2, at most once per tick.
 
 Trust model
 -----------
 
 The server is the only source of match state. Clients cannot change another
-player's units, positions, or health, and cannot speed up or stall the clock.
-A modified client can only change what it displays. All players currently
-receive every player's commands, so there is no hidden information yet;
-fog-of-war (M9) needs a visibility-aware protocol. Corrective snapshots,
-reconnection, and late joining are not implemented.
+player's units, positions, or health, cannot command units by guessing IDs,
+cannot target what they cannot see, and cannot speed up or stall the clock.
+A client receives only its own view: terrain it has explored, units in sight,
+its own orders and economy, and volleys between visible positions. Activity
+out of sight produces the same frames as no activity. By default every match
+uses a fresh layout from a server-private seed; see
+:doc:`../architecture/server`. Reconnection and late joining are not
+implemented.
 
 Limits are listed in :doc:`limits`.

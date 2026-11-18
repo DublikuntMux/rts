@@ -23,9 +23,9 @@ Hard requirements
      - Every dependency must build for all three. Networking must work in
        browsers, so it uses WebSockets.
    * - Multiplayer
-     - A server-authoritative deterministic simulation with verified client
-       replicas. This constrains all simulation and future script code; see
-       :doc:`determinism`.
+     - A server-authoritative simulation that sends each client only its
+       player's fog-of-war view (:doc:`visibility`). Local matches and replays
+       rely on a deterministic simulation; see :doc:`determinism`.
    * - Mobile controls
      - Every action is reachable by touch; nothing depends on hover or on a
        hotkey alone.
@@ -111,13 +111,14 @@ Crates
        simulation, pathfinding, state hash. No Bevy.
      - —
    * - ``rts_net``
-     - Bounded RON protocol, binary setup framing, setup checksums, ordered
-       turns, and verified replays. No renderer or sockets.
+     - Bounded RON protocol, binary lobby setup framing, setup checksums,
+       view frames, ordered turns, and verified full and player-perspective
+       replays. No renderer or sockets.
      - base
    * - ``rts_server``
      - Socket-free room coordinator and native WebSocket runtime: lobbies,
-       setup delivery, fixed-rate simulation, input validation, state hashes.
-       Binary ``rts-server``.
+       private random layouts, fixed-rate simulation, input bound to each
+       player's knowledge, per-player view frames. Binary ``rts-server``.
      - base, net
    * - ``rts_assets``
      - Builds ``assets.pack`` in ``build.rs``, opens it per platform, and
@@ -207,7 +208,7 @@ How a match runs
 
 .. kroki::
    :type: plantuml
-   :caption: Data flow during an online match. Solo play uses the same turn format without a socket.
+   :caption: Data flow during an online match. Solo play runs the authoritative Sim locally and observes it the same way.
    :align: center
 
    @startuml
@@ -217,36 +218,38 @@ How a match runs
      [Input and HUD] as input
      [Match.pending\ncommand list] as pending
      [Session] as session
-     [Client Sim replica] as csim
-     [Rendering\n(terrain, unit scenes)] as render
-     [Replay recording] as rec
+     [PlayerView\n(fog-filtered)] as view
+     [Rendering\n(terrain, fog, unit scenes)] as render
+     [View replay recording] as rec
    }
    package "Server (rts_server)" {
      [Coordinator\nroom and clock] as coord
      [Authoritative Sim] as ssim
+     [PlayerKnowledge\nper slot] as knowledge
    }
-   input --> pending : Command
+   input --> pending : Command (view IDs)
    pending --> session
    session --> coord : Input { tick + 2 }
+   coord --> knowledge : translate, revalidate
    coord --> ssim : Turn every 50 ms
-   ssim --> coord : state hash
-   coord --> session : Turn + hash
-   session --> csim : apply Turn
-   csim --> session : hash to verify
-   session --> rec : Turn + hash
-   csim --> render : read positions
+   ssim --> knowledge : observe
+   knowledge --> session : View { frame } (own only)
+   session --> view : apply frame
+   session --> rec : frame
+   view --> render : read units and fog
    @enduml
 
 1. Input systems never change the simulation. They append
-   ``rts_base::Command`` values to the match's pending list.
+   ``rts_base::Command`` values, written in the player's view IDs, to the
+   match's pending list.
 2. The session sends pending commands to the server for a future tick.
-3. The server's coordinator collects every player's input into one
-   ``Turn`` per tick, applies it to the authoritative ``Sim``, and broadcasts
-   the turn with the resulting state hash.
-4. Each client applies the same turn to its replica, checks the hash, and
-   records the turn.
-5. Rendering reads the replica's unit positions and smooths movement between
-   ticks.
+3. The server binds each command to its sender's knowledge. It collects every
+   player's input into one ``Turn`` per tick and applies it to the
+   authoritative ``Sim``.
+4. The server observes the match once per player and sends each client only
+   its own ``View`` frame.
+5. Each client applies the frame to its ``PlayerView``, records it, and
+   renders from it, smoothing movement between ticks.
 
 Read on
 -------

@@ -1,15 +1,15 @@
 Networking model
 ================
 
-RTS uses **deterministic command replication with server authority**. Instead
-of sending positions, the server sends the ordered commands of every tick plus
-a hash of its resulting state. Each client applies the same commands to its
-own copy of the simulation and checks the hash. This keeps bandwidth tiny and
-independent of unit count, and gives replays for free.
+RTS uses **server authority with private per-player views**. Only the server
+runs the match. Every tick it sends each player a *view frame*: the changes to
+what that player can see. Clients never receive the full map, other players'
+commands, the seed, or a state hash. A client therefore cannot reveal fogged
+terrain, hidden units, enemy orders, or enemy economy, even if it is modified.
 
 This page follows one command end to end. The message formats are in
-:doc:`../reference/protocol`; the server internals are in :doc:`server`; the
-client internals are in :doc:`sessions`.
+:doc:`../reference/protocol`. The server internals are in :doc:`server`, the
+client internals in :doc:`sessions`, and the fog rules in :doc:`visibility`.
 
 Why this model
 --------------
@@ -20,31 +20,34 @@ Why this model
 
    * - Property
      - How it is achieved
-   * - Same game on every screen
-     - Every peer runs the deterministic ``rts_base`` simulation on the same
-       setup and the same turns. See :doc:`determinism`.
+   * - Hidden information stays hidden
+     - The server sends each player only its own ``ViewFrame`` messages
+       (:doc:`visibility`). Lobby setup carries the public rules and the
+       map's name, nothing else.
    * - Cheating is limited
-     - Only the server's simulation is authoritative. It checks ownership,
-       targets, reachability, and capacity, and owns the clock.
-   * - Divergence is detected
-     - The server sends its state hash with every turn; clients compare.
+     - Only the server's simulation exists. It binds each command to the
+       sender's knowledge: own units only, and targets in sight. It checks
+       again when the command executes, and it owns the clock.
    * - Slow players cannot stall others
      - The server advances at 20 Hz whether or not input arrives.
    * - Browsers can play
      - WebSockets work everywhere; the protocol has no UDP or WebRTC
        dependency.
-   * - Replays are exact
-     - A replay is the setup plus the turns already exchanged.
+   * - Replays are possible
+     - Each client records the frames it received as a player-perspective
+       replay. Local matches record full deterministic turns.
 
-The cost is input latency: a command takes effect two ticks after the client
-schedules it, plus network delay.
+The cost is bandwidth. A frame lists every visible unit that changed, so it
+grows with the number of moving units in sight. Quiet frames are only a few
+bytes. Commands still take effect two ticks after the client schedules them,
+plus network delay.
 
 A command's journey
 -------------------
 
 .. kroki::
    :type: plantuml
-   :caption: A Move issued by player 1 while the client has received turn 40.
+   :caption: A Move issued by player 1 while the client has received the frame for tick 40.
    :align: center
 
    @startuml
@@ -55,35 +58,38 @@ A command's journey
    participant "Server\n(Coordinator, Game)" as S
    participant "Client 2" as C2
    P -> C1 : right-click ground
-   C1 -> C1 : queue Move in Match.pending
-   S --> C1 : Turn 41 + hash
-   C1 -> C1 : apply 41, verify hash
+   C1 -> C1 : queue Move (view IDs) in Match.pending
+   S --> C1 : View { frame 41 }
+   C1 -> C1 : apply frame 41 to PlayerView
    C1 -> S : Input { tick: 43, [Move] }
-   S -> S : validate, filter ownership,\nstore in inputs[43][slot 0]
-   S --> C1 : Turn 42 + hash
-   S --> C2 : Turn 42 + hash
-   S -> S : tick 43 due:\nTurn 43 = { slot 0: [Move], slot 1: [] }\napply, hash = H43
-   S --> C1 : Turn 43 + H43
-   S --> C2 : Turn 43 + H43
-   C1 -> C1 : apply 43 → units start moving\nhash == H43 ✓
-   C2 -> C2 : apply 43 → same result\nhash == H43 ✓
+   S -> S : translate with player 1's knowledge:\nown units, targets in sight;\nstore in inputs[43][slot 0]
+   S --> C1 : View { frame 42 }
+   S --> C2 : View { frame 42 }
+   S -> S : tick 43 due:\nrevalidate, apply turn,\nobserve each player
+   S --> C1 : View { frame 43: own units moving }
+   S --> C2 : View { frame 43: only what player 2 sees }
    @enduml
 
-1. Input appends the command to ``Match::pending``. Nothing moves yet.
-2. When the client applies its next turn, it sends all pending commands for
+1. Input appends the command, written in view IDs, to ``Match::pending``.
+   Nothing moves yet.
+2. When the client applies its next frame, it sends all pending commands for
    *latest received tick + 2*.
-3. The server validates the input, removes units the player does not own,
-   and stores it for that tick.
-4. When the tick is due, the server builds one ``Turn`` with every player's
-   batch in slot order, applies it, hashes the state, and broadcasts both.
-5. Every client applies the turn and compares hashes before recording it.
+3. The server validates the batch. It translates each command with the
+   sender's ``PlayerKnowledge``: view IDs become authoritative IDs, foreign
+   units are dropped, and commands that target something out of sight are
+   refused. The result is stored for that tick.
+4. When the tick is due, the server revalidates each stored command against
+   the player's current knowledge, applies the turn, and observes the match
+   once per player.
+5. Each client receives only its own frame and applies it to its
+   ``PlayerView``.
 
 Input delay timeline
 --------------------
 
 .. kroki::
    :type: plantuml
-   :caption: Ticks on the server and one client, with time in milliseconds. The client always schedules input two ticks past the latest turn it has received.
+   :caption: Ticks on the server and one client, with time in milliseconds. The client always schedules input two ticks past the latest frame it has received.
    :align: center
 
    @startuml
@@ -107,48 +113,48 @@ Input delay timeline
    S is 43
    R is 42
    I is 44
-   @200
-   S is 44
-   R is 43
-   I is 45
    @enduml
 
-Input sent after receiving turn *N* targets tick *N + 2*, which the server
-simulates 100 ms after turn *N*. Input therefore arrives in time when the
-round trip plus the wait for the client's next fixed step stays under 100 ms.
-If input arrives after its tick has already been simulated, the server rejects
-it with ``Error`` and the client keeps playing; the command is lost. Inputs
-more than eight ticks ahead are also rejected. Adaptive input delay is not
-implemented.
+Input sent after receiving frame *N* targets tick *N + 2*, which the server
+simulates 100 ms after tick *N*. If input arrives after its tick has been
+simulated, the server rejects it with ``Error`` and the client keeps playing;
+the command is lost. Inputs more than eight ticks ahead are also rejected.
+Adaptive input delay is not implemented.
 
 Shared clock, separate pacing
 -----------------------------
 
 The server is the only clock. Clients run ``FixedUpdate`` at 20 Hz too, but a
-client's fixed step only *consumes* turns:
+client's fixed step only *consumes* frames:
 
-* If the next turn has not arrived, the client waits without advancing,
-  letting visuals settle toward their latest layout, and shows *Waiting for the server…* after 0.25 s.
-* If several turns are buffered after a slow frame, it applies up to eight
+* If the next frame has not arrived, the client waits without advancing,
+  letting visuals settle, and shows *Waiting for the server…* after 0.25 s.
+* If several frames are buffered after a slow frame, it applies up to eight
   per fixed step to catch up.
 * After 15 seconds without progress it stops.
 
-The server bounds its own catch-up after stalls to four turns per clock
+The server bounds its own catch-up after stalls to four ticks per clock
 check, so a suspended server cannot flood clients with a burst.
 
 Setup delivery
 --------------
 
-Before a match, every client receives the server's exact rules and map in a
-compressed binary frame (:doc:`../reference/setup-frame`), builds the
-simulation from it, and acknowledges with ``Loaded { checksum }``. Clients never compare
-the setup with their bundled files, so a server can run content mods without
-client rebuilds. The client must still run compatible game code: the protocol
-version must match, and the simulation code must be the same.
+When a player creates or joins a room, the server sends a ``LobbySetup``: the
+exact rules text, the room's map name, and the player count. It is sent as a
+compressed binary frame (:doc:`../reference/setup-frame`). The client parses
+the rules and acknowledges with ``Loaded { checksum }``. The setup never
+includes the map's terrain, units, deposits, starts, or the seed. A server
+can run rules mods without client rebuilds. The protocol version and the
+simulation code must still match.
+
+When the match starts, each player receives
+``Started { players, input_delay, view }``. ``view`` is that player's
+``ViewIntro``: its slot, the map size, and its own start. Its first
+``View`` frame for tick 0 follows immediately.
 
 .. kroki::
    :type: plantuml
-   :caption: Setup acknowledgment.
+   :caption: Setup acknowledgment and start.
    :align: center
 
    @startuml
@@ -156,23 +162,26 @@ version must match, and the simulation code must be the same.
    hide footbox
    participant Client as C
    participant Server as S
-   S -> S : startup: read files,\nbuild Sim, compute checksum K
-   C -> S : Join { version: 8, code, name }
-   S --> C : Setup (minified + zlib)
-   C -> C : inflate with bounds,\nparse, build Sim
-   C -> C : k = checksum(setup)
+   S -> S : startup: validate rules and map\n(or the random layout generator),\ncompute LobbySetup checksum K
+   C -> S : Join { version: 9, code, name }
+   S --> C : Setup (rules + map name, zlib)
+   C -> C : inflate with bounds, parse rules
    C -> S : Loaded { checksum: k }
    alt k == K
      S --> C : Lobby (setup loaded)
    else
      S --> C : Error "setup checksum does not match"
    end
+   ... all ready, host starts ...
+   S -> S : build the match (fresh private layout by default)
+   S --> C : Started { players, input_delay: 2, view }
+   S --> C : View { frame for tick 0 }
    @enduml
 
 Room browsing and readiness
 ---------------------------
 
-A connection can request ``Rooms { version: 8 }`` before creating or joining
+A connection can request ``Rooms { version: 9 }`` before creating or joining
 a room. The response lists at most 64 public rooms with space that have not
 started, sorted by code. Private rooms require their code. Creating or
 joining supplies a display name. Lobby updates carry room visibility and
@@ -187,22 +196,22 @@ open for browsing, creating, or joining again.
 Solo play
 ---------
 
-Solo play needs no socket but uses the same machinery. The session builds a
-``MatchSetup`` from the bundled files, delays local input by two ticks, and
-creates turns with an input for every player (empty except the local one).
-The result records to the same ``Replay`` type, so solo and online replays are
-interchangeable.
+Solo play needs no socket. The session builds the ``Sim`` from the bundled
+files and keeps it in a ``LocalAuthority``. It delays local input by two ticks
+and builds one ``Turn`` per tick from the local player's orders and the
+computer opponents' orders. The local player still sees only its own
+``PlayerView``. Solo matches record full ``Replay``\ s of turns, so they can
+be saved, resumed, and verified by hash.
 
 What is not implemented
 -----------------------
 
-* **Hidden information.** Every client receives every player's commands and
-  simulates the whole map. Fog of war (M9) needs a visibility-aware protocol
-  where the server sends only what each player may see.
-* **Recovery.** There are no corrective snapshots. A diverged client stops;
+* **Recovery.** A client that falls behind or loses its connection stops;
   reconnecting and joining a running match are not supported.
 * **Encryption.** The server speaks plain WebSockets; use a TLS reverse proxy.
 * **Adaptive delay.** The input delay is fixed at two ticks.
+* **Compact frames.** Frames are RON text. Binary or compressed frames would
+  cut bandwidth for large battles.
 
-A modified client can change its own display but cannot change the server's
-simulation.
+A modified client can change its own display, but it cannot change the server's
+simulation or see what its player has not seen.

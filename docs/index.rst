@@ -81,6 +81,7 @@ Find what you need
    architecture/sessions
    architecture/server
    architecture/networking
+   architecture/visibility
    architecture/platforms
 
 .. toctree::

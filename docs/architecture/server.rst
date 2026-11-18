@@ -6,7 +6,7 @@ simulation of every match. It has two layers:
 
 * ``Coordinator`` (``coordinator.rs``): pure room and match logic. It has no
   sockets, no clock, and no OS randomness; callers pass the elapsed time and
-  a seeded random generator for room codes. Tests drive it directly with
+  a seeded random generator for room codes and layout seeds. Tests drive it directly with
   exact timestamps and fixed seeds.
 * The runtime (``runtime.rs``, native only): a Tokio task that accepts
   WebSocket connections and feeds the coordinator.
@@ -103,8 +103,8 @@ Rooms
    Waiting : Slot: client, name, loaded, ready
    Waiting --> Waiting : Join / Loaded / Ready /\nguest Leave or disconnect
    Waiting --> Running : host Start,\nroom full, all loaded and ready
-   Running : Game { sim, last_input,\ninputs, next_turn }
-   Running --> Running : Input, 20 Hz turns
+   Running : Game { sim, knowledge,\nlast_input, inputs, next_turn }
+   Running --> Running : Input, 20 Hz view frames
    Waiting --> [*] : host leaves or disconnects
    Running --> [*] : anyone leaves or disconnects,\nsilent socket, or tick overflow
    @enduml
@@ -151,19 +151,24 @@ When a match starts, every member's last-seen time is refreshed.
 The match clock
 ---------------
 
-``Game::advance`` produces turns on a fixed 50 ms schedule per room:
+``Game::advance`` simulates on a fixed 50 ms schedule per room:
 
-* The first turn (tick 1) is due 50 ms after ``Start``.
-* Each turn applies the collected input for its tick—an empty batch for any
-  player who sent nothing—to the room's ``Sim`` and broadcasts
-  ``Turn { turn, hash }``.
+* ``Start`` builds the match, enables ``Sim::enforce_fog``, and creates one
+  ``PlayerKnowledge`` per slot. Each member receives its own
+  ``Started { players, input_delay, view }`` and its frame for tick 0.
+* The first tick is due 50 ms after ``Start``.
+* Each tick revalidates the collected input for that tick against each
+  player's current knowledge. A player who sent nothing gets an empty batch.
+  The server applies the turn to the room's ``Sim``, then observes the match
+  once per player and sends each member only its own ``View { frame }``.
 * After a stall (for example a suspended process), at most
-  ``MAX_CATCH_UP_TURNS = 4`` turns are produced in one call. If the schedule is
+  ``MAX_CATCH_UP_TURNS = 4`` ticks are simulated in one call. If the schedule is
   still behind, the next deadline resets to one tick from now instead of
   bursting the backlog.
 
 The tick rate never changes in response to input, so clients cannot speed up
-or slow down a match.
+or slow down a match. No state hash is computed or sent; clients do not hold
+a replica to compare.
 
 Input handling
 --------------
@@ -188,36 +193,56 @@ Input handling
      :Error;
      stop
    endif
-   :remove unit IDs the player does not own\nor that do not exist;
-   :drop commands with no units left;
-   :place batch in this slot of the tick's inputs;
-   if (combined turn fits the\nturn message limit?) then (no)
-     :Error;
-     stop
-   endif
-   :store inputs; last_input[slot] = tick;
+   :translate each command with this player's knowledge:\nview IDs → authoritative IDs, own units only,\nattack/gather/build targets in sight now;
+   :drop commands with nothing valid left;
+   :store in this slot of the tick's inputs;\nlast_input[slot] = tick;
    stop
    @enduml
 
-The server stores at most one batch per player per tick, in slot order. The
-simulation repeats ownership checks when applying, and validates target
-terrain and reachability. Rejected input does not count as a submission, so a
-client can resend.
+The server stores at most one batch per player per tick, in slot order. When
+the tick executes, ``PlayerKnowledge::revalidate`` checks each command again:
+targets must still be in sight and units still owned. The simulation then
+repeats ownership checks and validates target terrain and reachability.
+Rejected input does not count as a submission, so a client can resend. Silent
+drops never depend on hidden state, so they reveal nothing.
+
+Private random layouts
+----------------------
+
+A bundled map is public: every client ships with it, so its terrain, deposits,
+and enemy start are known before the match. With ``Config::random_layout``
+(the default), the coordinator draws a fresh seed from its OS-seeded ``StdRng``
+at every ``Start``. ``layout::random_setup`` turns that seed into a two-player
+*Random frontier* skirmish:
+
+* a random size of 36–46 by 24–32 tiles, with patches of dirt, sand, water,
+  and rock;
+* one start in each half at a random height, with either slot on either side;
+* cleared bases with a headquarters and four workers;
+* a winding road that keeps the starts connected;
+* near and far wood and gold for each base, and two contested deposits.
+
+Each candidate is validated by building its simulation; up to 32 candidates
+are tried per seed. The seed never leaves the server. Rooms list the map as
+*Random frontier*. ``--map`` turns random layouts off and plays that map;
+see :doc:`../reference/server-cli`.
 
 Configuration
 -------------
 
-``Config`` carries the ``MatchSetup`` (rules, map, seed, players) and all
-resource limits; :doc:`../reference/server-cli` lists the defaults. The
-default setup is the bundled rules and map, compiled into the binary with
-``include_str!``. ``serve_with_config`` refuses zero limits and an invalid
-setup before accepting connections. Queue capacities above Tokio's semaphore
-limit return a configuration error instead of panicking.
-``Coordinator::connect`` also refuses
-clients if the setup cannot build a simulation.
+``Config`` carries the ``MatchSetup`` (rules, map, seed, players), the
+``random_layout`` switch, and all resource limits.
+:doc:`../reference/server-cli` lists the defaults. The default setup is the
+bundled rules and the Frontier map, compiled into the binary with
+``include_str!``, with random layouts on. ``serve_with_config`` refuses zero
+limits, and rules or a map that cannot start a match, before accepting
+connections. Queue capacities above Tokio's semaphore limit return a
+configuration error instead of panicking. ``Coordinator::connect`` also
+refuses clients if no match can be built.
 
-Each room clones one validated initial ``Sim`` when its match starts, so
-setup parsing happens during startup, not once per room. The runtime also
-validates and compresses its setup frame once at startup; deliveries share the
-encoded bytes. The coordinator caches the immutable setup checksum for
-``Loaded`` acknowledgments.
+With a fixed map, each room clones one validated initial ``Sim`` when its
+match starts, so setup parsing happens during startup, not once per room. A
+random layout is generated and validated at each start. The runtime encodes
+the public ``LobbySetup`` frame once at startup; deliveries share the encoded
+bytes. The coordinator caches the setup checksum for ``Loaded``
+acknowledgments.

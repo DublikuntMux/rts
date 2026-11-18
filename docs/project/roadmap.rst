@@ -55,7 +55,8 @@ Status
    * - M9
      - Fog of war, minimap, UX polish
      - Partial
-     - Minimap done; visibility, control groups, and further UX pending.
+     - Fog of war, private views, and minimap done; control groups and
+       further UX pending.
    * - M10
      - Scale
      - Not started
@@ -203,6 +204,18 @@ Fog-aware skirmish AI
    and attack timing. The skirmish New game page chooses the level (Normal by
    default); restarts and saved games keep it. See :doc:`skirmish-ai`.
 
+Fog of war
+   Per-player visibility from each unit's ``sight``. Unexplored terrain is
+   black, explored terrain dims out of sight, and enemy units vanish when they
+   leave sight, on the terrain and the minimap. Protocol 9 replaces broadcast
+   turns and state hashes with private per-player view frames. Lobbies send
+   only the rules and map name. Commands use per-player view IDs; the server
+   binds them to the sender's knowledge, requires targets in sight, and checks
+   again when they execute. The server plays a fresh server-private random
+   layout by default. Online clients record player-perspective replays; solo
+   matches keep full replays (version 9, fog-aware combat) and still load
+   version 8. See :doc:`../architecture/visibility`.
+
 Upcoming
 --------
 
@@ -226,10 +239,9 @@ M8 — Skirmish AI
    command API. See :doc:`skirmish-ai`.
 
 M9 — Fog of war, minimap, UX polish
-   The terrain minimap with tap and drag camera navigation is implemented in
-   the in-game console. Remaining work: a per-player visibility grid,
-   visibility-aware minimap markers, control groups, and a mobile UX pass. Fog of war also needs a visibility-aware protocol so clients do not
-   receive hidden information.
+   Fog of war and the fog-aware minimap are done. Remaining work: control
+   groups, a mobile UX pass, and remembered enemy buildings (last-seen
+   ghosts).
 
 M10 — Scale
    Flow-field pathfinding for groups, local avoidance, a spatial index,

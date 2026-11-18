@@ -74,10 +74,10 @@ Constants are in ``crates/net/src/lib.rs`` unless noted.
    * - ``MAX_MESSAGE_BYTES``
      - 64 KiB
      - Client messages and small server messages.
-   * - ``MAX_TURN_MESSAGE_BYTES``
-     - 576 KiB
-     - ``Turn`` messages: 64 KiB for each of up to eight players plus
-       framing.
+   * - ``MAX_VIEW_MESSAGE_BYTES``
+     - 4 MiB
+     - One player's ``View`` frame: newly explored tiles and changed units
+       in sight.
    * - ``MAX_SERVER_MESSAGE_BYTES``
      - 16 MiB + 33 B
      - Binary setup frame (``setup/wire.rs``).
@@ -164,7 +164,7 @@ Client
      - Missing-turn time before *Waiting for the server…*.
    * - Stall timeout
      - 15 s
-     - Missing-turn time before the client stops.
+     - Missing-frame time before the client stops.
    * - Server address
      - 256 characters
      - Connect page field length; the session accepts up to 2048.

@@ -2,8 +2,9 @@ Host a multiplayer match
 ========================
 
 Online matches run on ``rts-server``, an authoritative WebSocket server. It
-owns the map, rules, clock, and simulation. Clients send orders and replay the
-server's turns locally to draw the match. This page covers running the server
+owns the map, rules, clock, and simulation. Clients send orders and draw the
+match from private view frames: each player receives only what its own units
+can see. This page covers running the server
 and playing through it; :doc:`../architecture/server` and
 :doc:`../architecture/networking` explain the design.
 
@@ -18,14 +19,16 @@ From the repository root:
 
 The bind address is optional. Without it the server uses the
 ``RTS_SERVER_ADDR`` environment variable, then ``127.0.0.1:9001``. The server
-validates its map and rules before it opens the port and prints:
+validates its rules and map generator before it opens the port and prints:
 
 .. code-block:: text
 
    RTS server listening on ws://127.0.0.1:9001 (use a reverse proxy for TLS)
 
-:doc:`../reference/server-cli` lists every option, including ``--rules``,
-``--map``, and ``--seed`` for content mods.
+By default every match plays a fresh *Random frontier* layout that only the
+server knows, so fog of war hides the map too. ``--map`` plays a fixed map
+instead; anyone with that map file knows its layout. :doc:`../reference/server-cli`
+lists every option, including ``--rules``, ``--map``, and ``--seed``.
 
 Choose where to listen
 ----------------------
@@ -74,23 +77,23 @@ Play through a room
    Host -> S : Browse public rooms
    S --> Host : Available rooms
    Host -> S : Create room (name, visibility)
-   S --> Host : map and rules (binary setup)
+   S --> Host : rules and map name (binary setup)
    S --> Host : Room K7Q2PX, named player slots
    Host -> S : Loaded (setup checksum)
    Host -> S : Ready
    Host ->> Guest : shares code K7Q2PX
    Guest -> S : Join room K7Q2PX (name)
-   S --> Guest : map and rules
+   S --> Guest : rules and map name
    Guest -> S : Loaded (setup checksum)
    Guest -> S : Ready
    S --> Host : Both players ready
    S --> Guest : Both players ready
    Host -> S : Start match
-   S --> Host : Started
-   S --> Guest : Started
+   S --> Host : Started (host's perspective)
+   S --> Guest : Started (guest's perspective)
    loop every 50 ms
-     S --> Host : Turn + state hash
-     S --> Guest : Turn + state hash
+     S --> Host : host's view frame
+     S --> Guest : guest's view frame
    end
    @enduml
 
@@ -100,21 +103,27 @@ Play through a room
    **Public** or **Private**, then **Create room**. Guests select a public
    room and choose **Join room**, or choose **Join by code** and enter the
    six-character invite code in the dialog. Private rooms require that code.
-3. Each client loads the server's map and rules, validates them, and confirms
-   with a checksum. Room size comes from the number of player starts in the
-   server's map (two on *Proving Grounds*).
+3. Each client loads the server's rules, validates them, and confirms with a
+   checksum. The map itself is never sent. Room size comes from the number
+   of player starts in the server's map (two for random layouts).
 4. Each player chooses **Ready** after loading. **Not ready** clears
    readiness while waiting. The room shows each player's name and readiness.
 5. The host chooses **Start match** when the room is full and every player has loaded and
    is ready.
 
 The match runs at 20 ticks per second whether or not anyone sends orders.
-Each order is scheduled two ticks after the latest turn the client has
+Each order is scheduled two ticks after the latest frame the client has
 received, so orders take effect about 100 ms later plus network latency.
+Unexplored terrain is black, explored terrain out of sight is dimmed, and
+enemy units disappear when they leave sight.
 
 Clients can have different bundled content from the server. The server sends
-its own map and rules, and clients use them for the match. Clients only need
-compatible game code and the same protocol version (currently 6).
+its own rules, and clients use them for the match. Clients only need
+compatible game code and the same protocol version (currently 9).
+
+Each client records the match as it saw it. **Watch replay** and **Save to
+library** on the last match keep that private replay; it never contains the
+opponent's hidden units or the map beyond what you explored.
 
 Leaving and disconnects
 -----------------------
@@ -160,14 +169,13 @@ Messages you may see
    * - *protocol version does not match*
      - Client and server come from incompatible builds.
    * - *Waiting for the server…*
-     - No turn has arrived for a quarter of a second. Play resumes when turns
-       arrive.
+     - No frame has arrived for a quarter of a second. Play resumes when
+       frames arrive.
    * - *The server stopped responding. Play has stopped.*
-     - No turn arrived for 15 seconds. The client stops its replica.
-   * - *Match state differs from the authoritative server.*
-     - The client's state hash differs from the server's for the same turn.
-       This indicates a determinism bug; see
-       :doc:`../architecture/determinism`.
+     - No frame arrived for 15 seconds. The client stops the match.
+   * - *Invalid server view*
+     - A frame failed validation, such as one out of order. This indicates an
+       incompatible or broken server.
    * - *a player disconnected*, *a player left the room*
      - Another player left; the server ended the room.
 
