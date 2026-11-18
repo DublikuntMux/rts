@@ -1,6 +1,6 @@
 use rts_base::{
     Command, DepositId, IVec2, MapData, MatchOutcome, PlayerId, ResourceKind, Resources, Rules,
-    Sim, TILE, TrainingKind, UnitId,
+    Sim, TILE, Training, TrainingKind, UnitId,
 };
 
 const RULES: &str = r##"(
@@ -343,4 +343,130 @@ fn a_worker_can_deliver_cargo_after_its_gather_order_is_replaced() {
         sim.resources(PLAYER),
         Some(Resources { wood: 28, gold: 20 })
     );
+}
+
+fn scout_rules() -> String {
+    RULES
+        .replace(
+            "    ],\n    economy",
+            r#"        (id: "scout", sprite: "scout.png", size: 1, max_health: 25, radius: 0.3, speed: 4, sight: 8,
+         weapon: Some((range: 2, damage: 2, cooldown: 1))),
+    ],
+    economy"#,
+        )
+        .replace(
+            "carry_capacity: 8,",
+            "carry_capacity: 8, scout: Some((cost: (wood: 7, gold: 6), ticks: 3)),",
+        )
+}
+
+const BARRACKS_MAP: &str = r#"(
+    name: "Scout test",
+    players: [(start: (0.5, 0.5)), (start: (5.5, 0.5))],
+    tiles: ["......", "......", "......"],
+    units: [
+        (kind: "headquarters", owner: 0, pos: (0.5, 0.5)),
+        (kind: "headquarters", owner: 1, pos: (5.5, 0.5)),
+        (kind: "barracks", owner: 0, pos: (2.5, 2.5)),
+        (kind: "barracks", owner: 1, pos: (4.5, 2.5)),
+    ],
+    skirmish: Some((deposits: [
+        (kind: Wood, pos: (2.5, 1.5), remaining: 11),
+        (kind: Gold, pos: (3.5, 1.5), remaining: 13),
+    ])),
+)"#;
+
+fn scouts(sim: &Sim) -> Vec<UnitId> {
+    sim.units()
+        .filter(|(_, unit)| sim.rules().unit(unit.kind).id == "scout")
+        .map(|(id, _)| id)
+        .collect()
+}
+
+#[test]
+fn barracks_train_fast_far_sighted_scouts_for_wood_and_gold() {
+    let rules = Rules::from_ron(&scout_rules()).unwrap();
+    let mut sim = Sim::new(rules, &MapData::from_ron(BARRACKS_MAP).unwrap()).unwrap();
+    let headquarters = sim.headquarters(PLAYER).unwrap();
+    let (barracks, enemy_barracks) = (UnitId(2), UnitId(3));
+    issue(
+        &mut sim,
+        [Command::TrainScout {
+            units: vec![headquarters, enemy_barracks, barracks, barracks],
+        }],
+    );
+    assert_eq!(sim.production(headquarters).unwrap(), []);
+    assert_eq!(sim.production(enemy_barracks).unwrap(), []);
+    assert_eq!(
+        sim.production(barracks).unwrap(),
+        [Training {
+            kind: TrainingKind::Scout,
+            remaining: 2,
+        }]
+    );
+    assert_eq!(
+        sim.resources(PLAYER),
+        Some(Resources { wood: 13, gold: 14 })
+    );
+    assert_eq!(scouts(&sim), []);
+    sim.step();
+    sim.step();
+    let [scout] = scouts(&sim)[..] else {
+        panic!("one scout spawns");
+    };
+    let unit = sim.unit(scout).unwrap();
+    assert_eq!(unit.owner, PLAYER);
+    let definition = sim.rules().unit(unit.kind);
+    assert_eq!(definition.sight, 8);
+    assert!(definition.weapon.is_some());
+    let soldier = sim.rules().unit_kind("soldier").unwrap();
+    assert!(definition.speed > sim.rules().unit(soldier).speed);
+    assert_eq!(sim.production(barracks).unwrap(), []);
+
+    issue(
+        &mut sim,
+        [Command::Move {
+            units: vec![scout],
+            target: center(0, 2),
+        }],
+    );
+    assert!(sim.move_target(scout).is_some());
+}
+
+#[test]
+fn rules_without_scout_training_ignore_scout_orders() {
+    let mut sim = simulation(MAP);
+    let mut reference = simulation(MAP);
+    let headquarters = sim.headquarters(PLAYER).unwrap();
+    issue(
+        &mut sim,
+        [Command::TrainScout {
+            units: vec![headquarters],
+        }],
+    );
+    reference.step();
+    assert_eq!(
+        sim.resources(PLAYER),
+        Some(Resources { wood: 20, gold: 20 })
+    );
+    assert_eq!(sim.state_hash(), reference.state_hash());
+}
+
+#[test]
+fn scout_training_needs_an_armed_scout_and_a_full_price() {
+    let map = MapData::from_ron(BARRACKS_MAP).unwrap();
+    let load = |rules: String| Rules::from_ron(&rules).and_then(|rules| Sim::new(rules, &map));
+    assert!(load(scout_rules()).is_ok());
+    for rules in [
+        scout_rules().replace(r#"(id: "scout""#, r#"(id: "spy""#),
+        scout_rules().replace(
+            ", sight: 8,\n         weapon: Some((range: 2, damage: 2, cooldown: 1))",
+            ", sight: 8",
+        ),
+        scout_rules().replace("cost: (wood: 7, gold: 6)", "cost: (wood: 7, gold: 0)"),
+        scout_rules().replace("ticks: 3)", "ticks: 0)"),
+    ] {
+        let error = load(rules).expect_err("invalid scout rules");
+        assert!(error.to_string().contains("scout"), "{error}");
+    }
 }

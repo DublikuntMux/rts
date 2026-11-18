@@ -26,8 +26,8 @@ pub use combat::{Shot, Volley};
 pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use economy::{
-    Deposit, DepositId, EconomyRules, PRODUCTION_QUEUE_LIMIT, ResourceKind, Resources, Training,
-    TrainingKind,
+    Deposit, DepositId, EconomyRules, PRODUCTION_QUEUE_LIMIT, ResourceKind, Resources,
+    ScoutTrainingRules, Training, TrainingKind,
 };
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, SkirmishMap, Terrain, UnitPlacement};
@@ -350,6 +350,10 @@ impl Sim {
             }
             Command::TrainWorker { units } => {
                 self.order_training(player, units, TrainingKind::Worker);
+                return;
+            }
+            Command::TrainScout { units } => {
+                self.order_training(player, units, TrainingKind::Scout);
                 return;
             }
             Command::TrainRifleSquad { units } => {

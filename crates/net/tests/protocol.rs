@@ -113,6 +113,9 @@ fn all_wire_messages_roundtrip() {
                 Command::TrainRifleSquad {
                     units: vec![UnitId(2)],
                 },
+                Command::TrainScout {
+                    units: vec![UnitId(2)],
+                },
             ],
         },
         ClientMessage::Leave,

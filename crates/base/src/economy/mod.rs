@@ -74,6 +74,14 @@ impl Resources {
     }
 }
 
+/// Price and duration of scouts trained at a barracks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScoutTrainingRules {
+    pub cost: Resources,
+    pub ticks: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EconomyRules {
@@ -84,6 +92,9 @@ pub struct EconomyRules {
     pub worker_ticks: u32,
     pub barracks_ticks: u32,
     pub rifle_ticks: u32,
+    /// Absent in rules written before scouts, which then cannot be trained.
+    #[serde(default)]
+    pub scout: Option<ScoutTrainingRules>,
     pub harvest_ticks: u32,
     pub carry_capacity: u32,
 }
@@ -111,6 +122,14 @@ impl EconomyRules {
                 "skirmish durations and carry capacity must be positive",
             ));
         }
+        if self
+            .scout
+            .is_some_and(|scout| !scout.cost.has_both() || scout.ticks == 0)
+        {
+            return Err(LoadError::invalid(
+                "scout training needs wood, gold, and a positive duration",
+            ));
+        }
         Ok(())
     }
 }
@@ -132,6 +151,7 @@ pub struct Deposit {
 pub enum TrainingKind {
     Worker,
     RifleSquad,
+    Scout,
 }
 
 impl Hash for TrainingKind {
@@ -205,6 +225,9 @@ impl Economy {
         let rifle = get_kind("soldier", false)?;
         if sim.rules.unit(rifle).weapon.is_none() {
             return Err(LoadError::invalid("skirmish soldiers need a weapon"));
+        }
+        if economy.scout.is_some() && sim.rules.unit(get_kind("scout", false)?).weapon.is_none() {
+            return Err(LoadError::invalid("skirmish scouts need a weapon"));
         }
         Ok(Self {
             banks: vec![economy.initial; sim.players.len()],
@@ -284,6 +307,12 @@ impl Sim {
         let barracks = economy.barracks;
         let (cost, remaining) = match kind {
             TrainingKind::Worker => (rules.worker_cost, rules.worker_ticks),
+            TrainingKind::Scout => {
+                let Some(scout) = rules.scout else {
+                    return;
+                };
+                (scout.cost, scout.ticks)
+            }
             TrainingKind::RifleSquad => (rules.rifle_cost, rules.rifle_ticks),
         };
         units.sort_unstable();
@@ -294,7 +323,7 @@ impl Sim {
             };
             let eligible = match kind {
                 TrainingKind::Worker => self.headquarters(player) == Some(id),
-                TrainingKind::RifleSquad => unit.kind == barracks,
+                TrainingKind::RifleSquad | TrainingKind::Scout => unit.kind == barracks,
             };
             if !eligible {
                 continue;
@@ -351,6 +380,10 @@ impl Sim {
         let kind = match job.kind {
             TrainingKind::Worker => economy.worker,
             TrainingKind::RifleSquad => economy.rifle,
+            TrainingKind::Scout => self
+                .rules
+                .unit_kind("scout")
+                .expect("validated skirmish scout"),
         };
         let unit = &self.units[&producer];
         let owner = unit.owner;

@@ -599,6 +599,7 @@ impl EconomicActivity {
                 let name = match training.kind {
                     TrainingKind::Worker => "Worker",
                     TrainingKind::RifleSquad => "Rifle squad",
+                    TrainingKind::Scout => "Scout",
                 };
                 let progress = if training.remaining == 0 {
                     "Waiting for room".into()

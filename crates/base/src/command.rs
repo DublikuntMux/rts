@@ -36,6 +36,9 @@ pub enum Command {
     TrainRifleSquad {
         units: Vec<UnitId>,
     },
+    TrainScout {
+        units: Vec<UnitId>,
+    },
 }
 
 impl Command {
@@ -49,7 +52,8 @@ impl Command {
             | Self::Gather { units, .. }
             | Self::BuildBarracks { units, .. }
             | Self::TrainWorker { units }
-            | Self::TrainRifleSquad { units } => units,
+            | Self::TrainRifleSquad { units }
+            | Self::TrainScout { units } => units,
         }
     }
 
@@ -62,7 +66,8 @@ impl Command {
             | Self::Gather { units, .. }
             | Self::BuildBarracks { units, .. }
             | Self::TrainWorker { units }
-            | Self::TrainRifleSquad { units } => units,
+            | Self::TrainRifleSquad { units }
+            | Self::TrainScout { units } => units,
         }
     }
 }
@@ -102,6 +107,10 @@ impl Hash for Command {
             }
             Self::TrainRifleSquad { units } => {
                 6_u8.hash(state);
+                units.hash(state);
+            }
+            Self::TrainScout { units } => {
+                7_u8.hash(state);
                 units.hash(state);
             }
         }
