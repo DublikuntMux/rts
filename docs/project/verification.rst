@@ -9,6 +9,19 @@ device.
 Tooling
 -------
 
+**Release builds use the release profile again (2026-11-18).** The v0.1.3
+Android APK aborted at startup on an Adreno device running Android 16. Logcat
+showed ash panicking with ``Unable to load create_debug_utils_messenger_ext``
+inside ``android_main``. The release workflow had shipped debug-profile
+builds, so ``debug_assertions`` made wgpu enable ``InstanceFlags::DEBUG`` and
+request ``VK_EXT_debug_utils``, which the driver listed but did not provide.
+The workflow now builds desktop and web with ``--release`` and Android with
+``assembleRelease``. Release builds have no ``debug_assertions``, so wgpu
+creates no debug messenger. A local ``assembleRelease`` compiled the arm64
+library in the release profile; the x86_64 ABI was not built because that
+Rust target is not installed locally. The strict Sphinx build passed. Workflow
+lint and a physical-device launch of the new APK were not run.
+
 **Project audit (2026-10-23).** Reviewed all six crates, shared build
 configuration, Android integration, and CI/release tooling. Fixes validate
 directly deserialized rules at simulation construction, cache A* terrain costs,
