@@ -10,6 +10,12 @@ use crate::{
 /// Largest rank damage bonus, in percent.
 pub const MAX_DAMAGE_BONUS: u32 = 10_000;
 
+/// Sight radius, in tiles, of units whose rules omit `sight`.
+pub const DEFAULT_SIGHT: u8 = 4;
+
+/// Largest sight radius, in tiles.
+pub const MAX_SIGHT: u8 = 32;
+
 /// Fixed-point terrain speed multiplier representing normal speed.
 pub const SPEED_SCALE: i32 = 1024;
 
@@ -98,6 +104,9 @@ pub struct UnitDef {
     /// Weapon carried by every soldier. Units without one never attack.
     #[serde(default)]
     pub weapon: Option<Weapon>,
+    /// Vision radius in whole tiles around the unit's tile. Defaults to [`DEFAULT_SIGHT`].
+    #[serde(default = "default_sight")]
+    pub sight: u8,
 }
 
 /// A ranged weapon. Each living soldier fires one shot per volley.
@@ -118,6 +127,10 @@ const fn one_soldier() -> u8 {
     1
 }
 
+const fn default_sight() -> u8 {
+    DEFAULT_SIGHT
+}
+
 impl UnitDef {
     fn validate_role(&self) -> Result<(), LoadError> {
         if self.building && (self.squad != 1 || self.weapon.is_some()) {
@@ -134,6 +147,12 @@ impl UnitDef {
         {
             return Err(LoadError::invalid(format!(
                 "unit `{}` needs positive squad, max_health, and radius, and valid speed",
+                self.id
+            )));
+        }
+        if self.sight == 0 || self.sight > MAX_SIGHT {
+            return Err(LoadError::invalid(format!(
+                "unit `{}` sight must be from 1 to {MAX_SIGHT} tiles",
                 self.id
             )));
         }
@@ -414,6 +433,29 @@ mod tests {
         Rules::from_ron(&format!(
             r#"(tile_capacity: 4, terrain: [{TERRAIN}], units: [(id: "worker", sprite: "textures/units/worker.png", size: 1, max_health: 40, radius: 0.25, speed: 1.25, {field})])"#
         ))
+    }
+
+    #[test]
+    fn sight_defaults_and_rejects_values_outside_its_range() {
+        assert_eq!(
+            rules_with_visual_bounds("")
+                .unwrap()
+                .unit(UnitKind(0))
+                .sight,
+            DEFAULT_SIGHT
+        );
+        let max = format!("sight: {MAX_SIGHT}");
+        assert_eq!(
+            rules_with_visual_bounds(&max)
+                .unwrap()
+                .unit(UnitKind(0))
+                .sight,
+            MAX_SIGHT
+        );
+        for field in ["sight: 0".to_owned(), format!("sight: {}", MAX_SIGHT + 1)] {
+            let error = rules_with_visual_bounds(&field).unwrap_err();
+            assert!(error.to_string().contains("sight"), "{error}");
+        }
     }
 
     #[test]

@@ -32,8 +32,8 @@ pub use economy::{
 pub use glam::IVec2;
 pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, SkirmishMap, Terrain, UnitPlacement};
 pub use rules::{
-    MAX_DAMAGE_BONUS, RankDef, Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef,
-    UnitKind, VisualBounds, Weapon,
+    DEFAULT_SIGHT, MAX_DAMAGE_BONUS, MAX_SIGHT, RankDef, Rules, SPEED_SCALE, SquadGrid, TerrainDef,
+    TerrainId, UnitDef, UnitKind, VisualBounds, Weapon,
 };
 
 pub use skirmish::MatchOutcome;

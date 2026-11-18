@@ -149,6 +149,12 @@ Unit types
      - optional weapon
      - ``Some((range, damage, cooldown))``, or ``None`` (the default) for a
        unit that never attacks. See :ref:`weapons`.
+   * - ``sight``
+     - integer tiles, optional
+     - Vision radius in whole tiles around the unit's tile, 1 to 32.
+       Defaults to 4, so rules written before the field existed keep their
+       meaning. Fog of war reads it; it never changes movement, combat, or
+       state hashes.
 
 ``radius`` and ``speed`` are converted to world units (1024 per tile) when the
 file loads: ``speed: 2.5`` becomes 2560 world units per second. Values that
@@ -284,6 +290,7 @@ Validation
   ``speed``.
 * A weapon with nonpositive ``range`` or ``damage``, or a ``cooldown`` that
   rounds to less than one tick.
+* A ``sight`` of 0 or greater than 32.
 * A rank whose ``kills`` is zero or not greater than the previous rank's, or
   whose ``damage_bonus`` exceeds 10000.
 * A missing ``sprite`` path, or a path that is empty or contains only whitespace.
