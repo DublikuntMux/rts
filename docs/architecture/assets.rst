@@ -26,8 +26,8 @@ Content
            ++ maps/ | .
            +++ proving_grounds.map.ron | Two-player map, 48×32 tiles
            +++ crossroads.map.ron | Four-player map, 40×40 tiles
-           ++ textures/terrain/ | 128×128 PNG per terrain type
-           ++ textures/units/ | Transparent PNG sprites, required by unit rules
+           ++ textures/terrain/ | 128×128 PNG per terrain type, wood and gold deposit overlays
+           ++ textures/units/ | Transparent PNG sprites for units and buildings
            ++ fonts/ | .
            +++ Exo2.ttf | Interface font
            +++ Exo2-OFL.txt | Font license
@@ -163,6 +163,48 @@ Textures and fonts
 * ``GameFont`` loads ``fonts/Exo2.ttf`` at startup. Bevy's built-in font is
   disabled. Menu widgets resolve the same font path through scene templates
   when they spawn.
+
+Art style
+---------
+
+The battlefield uses stylized pixel art drawn on a small grid and enlarged
+with nearest-neighbour scaling, so every art pixel is a crisp square block.
+
+* **Terrain** tiles are 32×32 art pixels enlarged four times to 128×128. Each
+  tile wraps on both axes, so neighbouring tiles of one type join without a
+  seam. Each texture's average color stays within a few sRGB steps of its
+  rules ``color``, so the switch to colors at distant zoom does not shift
+  hue.
+* **Deposit overlays** ``textures/terrain/wood.png`` and
+  ``textures/terrain/gold.png`` are 128×128 with transparent backgrounds and
+  soft ground shadows. They are drawn over whatever terrain lies beneath and
+  are not tinted.
+* **Units and buildings** are grayscale with a dark outline, transparent
+  backgrounds, and no partial alpha outside building shadows. The player tint
+  multiplies them, so light areas carry the team color and dark areas stay
+  dark. Workers are squat tracked machines, and soldiers are upright riflemen,
+  so the two read apart by silhouette at gameplay scale. Sprite sizes follow
+  roughly 2.5 to 3 screen pixels per art pixel at camera scale 1:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 30 25 45
+
+     * - Sprite
+       - Art pixels
+       - File
+     * - ``worker.png``
+       - 24×24, ×8
+       - 192×192
+     * - ``soldier.png``
+       - 16×24, ×8
+       - 128×192; the 2:3 shape fills a squad cell
+     * - ``headquarters.png``
+       - 64×64, ×4
+       - 256×256
+     * - ``barracks.png``
+       - 64×64, ×4
+       - 256×256
 
 Adding an asset
 ---------------

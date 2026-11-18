@@ -224,4 +224,5 @@ Open questions
 
 * Whether omnilua's table iteration order is deterministic. Verify at the
   start of M6.
-* Factions and art direction. Not needed before M5.
+* Factions. Not needed before M5. The art direction is stylized pixel art;
+  see :doc:`../architecture/assets`.

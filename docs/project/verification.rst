@@ -6,6 +6,25 @@ first within each milestone. Add an entry when you finish one. State plainly
 what was *not* run, such as rendered browser sessions or a physical Android
 device.
 
+Art direction
+-------------
+
+**Stylized pixel-art battlefield (2026-11-18).** Terrain, worker, and soldier
+images were replaced. Headquarters and barracks sprites and wood and gold
+deposit overlays were added. Image checks on the bundled files: each terrain
+tile's wrap-boundary difference is in line with its interior art-pixel
+boundaries. A 3×3 tiling of each terrain showed no visible seam. Terrain mean
+colors are within 5 sRGB steps of the rules colors. Unit and building sprites
+are pure grayscale with transparent and opaque pixels. An assembled 15×7-tile
+battlefield preview at camera scale 1 placed both players' headquarters,
+barracks, workers, and full and damaged squads with player-color tints. It
+also placed both overlays over terrain. Blue and red teams and workers and
+soldiers read apart. Client and asset tests passed (130), including the
+terrain array and sprite transparency checks, against the committed code with
+the new images. The workspace did not build with other in-progress changes, so
+the full workspace suite, Clippy, and WebAssembly checks were not run. A
+rendered game session was not run. Deposit overlays have no renderer yet.
+
 Tooling
 -------
 
