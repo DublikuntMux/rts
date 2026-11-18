@@ -125,6 +125,7 @@ pub struct Sim {
     move_orders: BTreeMap<UnitId, MoveOrder>,
     /// Ordered attack targets by attacker.
     attack_orders: BTreeMap<UnitId, UnitId>,
+    combat_sight: bool,
     skirmish: Option<skirmish::Skirmish>,
     /// Volleys of the latest tick, for presentation. Excluded from the state hash.
     volleys: Vec<Volley>,
@@ -189,6 +190,7 @@ impl Sim {
             commands: BTreeMap::new(),
             move_orders: BTreeMap::new(),
             attack_orders: BTreeMap::new(),
+            combat_sight: false,
             skirmish: None,
             volleys: Vec::new(),
         };
@@ -404,7 +406,7 @@ impl Sim {
         if self
             .units
             .get(&target)
-            .is_none_or(|target| target.owner == player)
+            .is_none_or(|target| target.owner == player || !self.can_target(player, target.pos))
         {
             return;
         }

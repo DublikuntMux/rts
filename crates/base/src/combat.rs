@@ -11,7 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{IVec2, PlayerId, Sim, UnitId, UnitKind, movement::MoveOrder, rules::Weapon, tile_of};
+use crate::{
+    IVec2, PlayerId, Sim, UnitId, UnitKind, movement::MoveOrder, rules::Weapon, tile_of,
+    visibility::tile_in_sight,
+};
 
 /// Squared distance between two world positions, without overflow.
 fn distance_squared(a: IVec2, b: IVec2) -> i64 {
@@ -56,6 +59,26 @@ fn slot(index: usize) -> u8 {
 }
 
 impl Sim {
+    /// Restricts combat to targets a player's forces can currently see.
+    ///
+    /// Select this at match setup for fog-enabled matches. Older recordings keep the
+    /// original combat rules.
+    pub const fn enforce_combat_sight(&mut self) {
+        self.combat_sight = true;
+    }
+
+    pub(super) fn can_target(&self, player: PlayerId, position: IVec2) -> bool {
+        !self.combat_sight
+            || self.units.values().any(|unit| {
+                unit.owner == player
+                    && tile_in_sight(
+                        tile_of(unit.pos),
+                        tile_of(position),
+                        self.rules.unit(unit.kind).sight.into(),
+                    )
+            })
+    }
+
     /// Volleys fired during the latest tick, in firing order.
     #[must_use]
     pub fn volleys(&self) -> &[Volley] {
@@ -81,6 +104,10 @@ impl Sim {
                 self.end_attack(id);
                 continue;
             };
+            if !self.can_target(unit.owner, goal) {
+                self.end_attack(id);
+                continue;
+            }
             if in_range(unit.pos, goal, &weapon) {
                 self.move_orders.remove(&id);
                 continue;
@@ -126,7 +153,9 @@ impl Sim {
                 Some(target) => self
                     .units
                     .get(target)
-                    .is_some_and(|target| in_range(pos, target.pos, &weapon))
+                    .is_some_and(|target| {
+                        in_range(pos, target.pos, &weapon) && self.can_target(owner, target.pos)
+                    })
                     .then_some(*target),
                 None => self.nearest_enemy(pos, owner, &weapon),
             };
@@ -140,7 +169,11 @@ impl Sim {
     fn nearest_enemy(&self, pos: IVec2, owner: PlayerId, weapon: &Weapon) -> Option<UnitId> {
         self.units
             .iter()
-            .filter(|(_, unit)| unit.owner != owner && in_range(pos, unit.pos, weapon))
+            .filter(|(_, unit)| {
+                unit.owner != owner
+                    && in_range(pos, unit.pos, weapon)
+                    && self.can_target(owner, unit.pos)
+            })
             .min_by_key(|&(&id, unit)| (distance_squared(pos, unit.pos), id))
             .map(|(&id, _)| id)
     }

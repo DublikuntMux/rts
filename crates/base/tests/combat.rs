@@ -14,12 +14,16 @@ const RULES: &str = r##"(tile_capacity: 4, terrain: [
 ])"##;
 
 fn sim(tiles: &str, units: &str) -> Sim {
+    sim_with_rules(RULES, tiles, units)
+}
+
+fn sim_with_rules(rules: &str, tiles: &str, units: &str) -> Sim {
     let map = MapData::from_ron(&format!(
         r#"(name: "combat", players: [(start: (0.5, 0.5)), (start: (0.5, 0.5))],
             tiles: [{tiles}], units: [{units}])"#
     ))
     .unwrap();
-    Sim::new(Rules::from_ron(RULES).unwrap(), &map).unwrap()
+    Sim::new(Rules::from_ron(rules).unwrap(), &map).unwrap()
 }
 
 fn soldiers(sim: &Sim, id: u32) -> Vec<i32> {
@@ -103,6 +107,63 @@ fn attack_orders_pursue_fire_and_end_with_the_target() {
     sim.step();
     assert_eq!(sim.attack_target(UnitId(0)), None);
     assert_eq!(sim.move_target(UnitId(0)), None);
+}
+
+#[test]
+fn fog_combat_ends_pursuit_when_the_target_leaves_team_sight() {
+    let mut legacy = sim(
+        r#""............""#,
+        r#"(kind: "rifles", owner: 0, pos: (1.5, 0.5)),
+           (kind: "worker", owner: 0, pos: (6.5, 0.5)),
+           (kind: "worker", owner: 1, pos: (9.5, 0.5))"#,
+    );
+    let mut fog = legacy.clone();
+    fog.enforce_combat_sight();
+    let attacker = UnitId(0);
+    let spotter = UnitId(1);
+    let target = UnitId(2);
+    for sim in [&mut legacy, &mut fog] {
+        sim.step_with_commands([(
+            PlayerId(0),
+            Command::Attack {
+                units: vec![attacker],
+                target,
+            },
+        )]);
+        assert_eq!(sim.attack_target(attacker), Some(target));
+        assert!(sim.move_target(attacker).is_some());
+        assert!(sim.remove_unit(spotter).is_some());
+    }
+
+    let last_position = fog.unit(attacker).unwrap().pos;
+    fog.step();
+    assert_eq!(fog.attack_target(attacker), None);
+    assert_eq!(fog.move_target(attacker), None);
+    assert_eq!(fog.unit(attacker).unwrap().pos, last_position);
+    legacy.step();
+    assert_eq!(legacy.attack_target(attacker), Some(target));
+    assert!(legacy.unit(attacker).unwrap().pos.x > last_position.x);
+}
+
+#[test]
+fn fog_combat_cannot_fire_past_team_sight_even_with_a_long_range_weapon() {
+    let mut fog = sim_with_rules(
+        &RULES.replace("range: 2,", "range: 9,"),
+        r#""............""#,
+        r#"(kind: "rifles", owner: 0, pos: (1.5, 0.5)),
+           (kind: "worker", owner: 1, pos: (8.5, 0.5))"#,
+    );
+    fog.enforce_combat_sight();
+    fog.step_with_commands([(
+        PlayerId(0),
+        Command::Attack {
+            units: vec![UnitId(0)],
+            target: UnitId(1),
+        },
+    )]);
+    assert!(fog.volleys().is_empty());
+    assert_eq!(fog.attack_target(UnitId(0)), None);
+    assert_eq!(fog.unit(UnitId(1)).unwrap().health(), 10);
 }
 
 #[test]

@@ -71,13 +71,9 @@ impl FogVisibility {
         for (pos, radius) in sources {
             let center = tile_of(pos);
             let r = i32::from(radius);
-            // r² + r gives rounder discs than r² for small radii.
-            let limit = r * r + r;
             for y in (center.y - r).max(0)..=(center.y + r).min(self.size.y - 1) {
-                let dy = y - center.y;
                 for x in (center.x - r).max(0)..=(center.x + r).min(self.size.x - 1) {
-                    let dx = x - center.x;
-                    if dx * dx + dy * dy <= limit {
+                    if tile_in_sight(center, IVec2::new(x, y), r) {
                         let index = usize::try_from(y * self.size.x + x).expect("inside map");
                         self.visible[index] = true;
                     }
@@ -120,6 +116,13 @@ impl FogVisibility {
         (tile.cmpge(IVec2::ZERO).all() && tile.cmplt(self.size).all())
             .then(|| usize::try_from(tile.y * self.size.x + tile.x).expect("inside map"))
     }
+}
+
+/// Sight from a source tile. The square bound and r² + r give rounded tile discs.
+pub(crate) fn tile_in_sight(center: IVec2, tile: IVec2, radius: i32) -> bool {
+    let delta = (tile - center).abs();
+    delta.max_element() <= radius
+        && delta.x * delta.x + delta.y * delta.y <= radius * radius + radius
 }
 
 fn sight_sources<'a>(
