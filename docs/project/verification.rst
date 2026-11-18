@@ -21,9 +21,8 @@ barracks, workers, and full and damaged squads with player-color tints. It
 also placed both overlays over terrain. Blue and red teams and workers and
 soldiers read apart. Client and asset tests passed (130), including the
 terrain array and sprite transparency checks, against the committed code with
-the new images. The workspace did not build with other in-progress changes, so
-the full workspace suite, Clippy, and WebAssembly checks were not run. A
-rendered game session was not run. Deposit overlays have no renderer yet.
+the new images. The integrated Frontier acceptance below covers the rendered terrain,
+units, buildings, and deposit overlays.
 
 Tooling
 -------
@@ -89,6 +88,19 @@ deployment steps were not executed end to end here.
 Frontier skirmish
 -----------------
 
+**Integrated acceptance (2026-11-18).** At commit ``c92e4aa``, 322
+workspace tests passed, along with workspace Clippy with all targets and
+warnings denied, the workspace ``wasm32-unknown-unknown`` check, the Android
+``arm64-v8a`` check for ``rts_android``, formatting, and ``git diff --check``.
+A native Linux session at 1280×720 launched Frontier through the menu,
+ordered workers to wood and gold, placed a barracks using the desktop command
+grid, showed stockpile changes, and queued a rifle squad at the completed
+barracks with visible activity and a countdown. An earlier integrated build
+reached Defeat after the AI destroyed the player's headquarters, saved the
+replay, and restarted the map. Bevy tests exercised the phone controls.
+The acceptance run did not include a physical Android device or a rendered
+browser session.
+
 Base tests verify deliveries for both resources, mixed prices, production
 from both building types, contested construction reservations, cancellation
 refunds, and headquarters victory and draw outcomes. Network tests round-trip
@@ -102,6 +114,12 @@ both develop and reach a terminal result within 4,000 ticks.
 
 M4 — Combat
 -----------
+
+**Combat traces (2026-11-18).** A simulation regression verifies the shot
+records for each shooter and hit and their lifetime of one tick. Client
+regressions check the rendered-soldier endpoints, shot expiry, aging of
+recent volleys during catch-up, tracer motion and impact, and pixel-grid
+alignment at close and distant zoom.
 
 **Veterancy ranks (2026-11-12).** Rules gained ``ranks`` (name, kills,
 damage bonus) and units count the enemy soldiers they defeat. Reaching a new

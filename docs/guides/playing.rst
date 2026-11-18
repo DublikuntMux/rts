@@ -45,8 +45,9 @@ Frontier skirmish
   building. The order reserves the ground and charges both resources.
   Interrupting construction releases the tile and returns the cost.
 * Select the headquarters to **Train worker** or select a barracks to train a
-  **Rifle squad**. Training charges the displayed cost and adds a job to the
-  selected building's queue. Finished units emerge on a neighboring tile
+  **Rifle squad**. The desktop command grid uses the shorter labels
+  **Barracks**, **Worker**, and **Rifles**. Training charges the displayed cost
+  and adds a job to the selected building's queue. Finished units emerge on a neighboring tile
   with room for them.
 * Select rifle squads and right-click or tap the enemy headquarters to
   attack. Destroying it wins the skirmish. Your opponent uses the same
@@ -83,14 +84,19 @@ The match screen
   camera outline. Click, tap, or drag it to move the camera.
 * The center shows the selection's name or count, health, order status, and
   portraits. Click a group portrait to select that unit alone.
-* The right **command card** has **Move**, **Stop**, and **Clear**. Commands
-  are disabled without a selection or during replay playback.
+* The right **command card** has **Move**, **Stop**, and **Clear**. In a
+  skirmish, the next row of the desktop grid shows the economy actions for
+  the current selection, including their wood and gold costs. Commands are
+  disabled without a selection or during replay playback.
 
 On phones, the bottom bar is replaced by floating controls. Tap the top-right
 map thumbnail to open the minimap. Selecting units shows a small command dock
 in the bottom-right corner: two rows in portrait, one row in landscape. Tap
 its unit portrait to see selection details. With no selection, the command
-dock disappears. The rest of the battlefield stays playable. This layout
+dock disappears. On Frontier, phone economy actions appear in a separate
+panel at the lower left when the selected worker or building can use them.
+The wood and gold counter is near the pause button or below the minimap
+on narrow screens. The rest of the battlefield stays playable. This layout
 also applies to short landscape windows and accounts for interface scale.
 
 Buttons are at least 48 logical pixels tall before interface scaling.
