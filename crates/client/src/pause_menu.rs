@@ -7,12 +7,12 @@ use bevy::{
 
 use crate::{
     game::AppState,
-    hud::{MoveTargeting, PhoneHud},
+    hud::{PhoneHud, Targeting},
     menu::{
         Action, DialogHost, Menu, MenuActions, View,
-        widgets::{INK, INK_MUTED, ShowIf, Tone, bound_text, dialog, wide_button},
+        widgets::{INK, INK_MUTED, ShowIf, Tone, bound_text, dialog_with_title, wide_button},
     },
-    session::{MatchKind, SessionAction},
+    session::{MatchKind, SessionAction, SessionStatus},
 };
 
 /// Logical pixel bounds before interface scaling. Only this rectangle excludes world input.
@@ -58,8 +58,9 @@ fn pause_on_escape(
     keys: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseMenu>,
     mut menu: ResMut<Menu>,
-    mut targeting: Option<ResMut<MoveTargeting>>,
+    mut targeting: Option<ResMut<Targeting>>,
     mut phone: Option<ResMut<PhoneHud>>,
+    status: Res<SessionStatus>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         if let Some(phone) = phone.as_deref_mut()
@@ -68,12 +69,12 @@ fn pause_on_escape(
             return;
         }
         if let Some(targeting) = targeting.as_deref_mut()
-            && targeting.0
+            && *targeting != Targeting::None
         {
-            targeting.0 = false;
+            *targeting = Targeting::None;
             return;
         }
-        if menu.dialog.take().is_none() {
+        if menu.dialog.take().is_none() && status.result.is_none() {
             pause.open = !pause.open;
         }
     }
@@ -104,7 +105,11 @@ fn spawn_pause_menu(mut commands: Commands) {
 }
 
 fn pause_menu() -> impl Scene {
-    let solo = ShowIf(|view| view.status.kind == MatchKind::Solo);
+    let resumable = ShowIf(|view| view.status.result.is_none());
+    let can_leave = resumable.clone();
+    let completed = ShowIf(|view| view.status.result.is_some());
+    let solo = ShowIf(|view| view.status.can_save_game());
+    let restart = ShowIf(|view| view.status.can_restart());
     let dialog_shown = ShowIf(|view| view.menu.dialog.is_some());
     bsn! {
         DespawnOnExit<AppState>(AppState::InGame)
@@ -119,12 +124,16 @@ fn pause_menu() -> impl Scene {
         Children [
             @pause_button()
             --
-            @dialog("Pause menu", bsn_list! {
+            @dialog_with_title(bound_text(panel_title, 22.0, INK), bsn_list! {
                 @bound_text(pause_message, 14.0, INK_MUTED)
                 --
                 @bound_text(session_message, 13.0, INK_MUTED)
                 --
                 @wide_button("Resume", Action::Resume, Tone::Primary)
+                resumable
+                --
+                @wide_button("Play again", Action::Game(SessionAction::Restart), Tone::Primary)
+                restart
                 --
                 @wide_button("Save game", Action::Game(SessionAction::SaveGame), Tone::Secondary)
                 solo
@@ -132,6 +141,10 @@ fn pause_menu() -> impl Scene {
                 @wide_button("Save replay", Action::Game(SessionAction::SaveReplay), Tone::Secondary)
                 --
                 @wide_button("Leave", Action::Game(SessionAction::Leave), Tone::Danger)
+                can_leave
+                --
+                @wide_button("Main menu", Action::Game(SessionAction::Leave), Tone::Secondary)
+                completed
             })
             PausePanel
             GlobalZIndex(10)
@@ -188,11 +201,21 @@ fn pause_button() -> impl Scene {
 }
 
 fn pause_message(view: &View) -> String {
+    if let Some(result) = view.status.result {
+        return result.detail().into();
+    }
     match view.status.kind {
         MatchKind::Online => "Online match continues while this menu is open.".into(),
         MatchKind::Playback => "Replay paused.".into(),
         MatchKind::Solo => "Game paused.".into(),
     }
+}
+
+fn panel_title(view: &View) -> String {
+    view.status
+        .result
+        .map_or("Pause menu", crate::session::MatchResult::title)
+        .into()
 }
 
 fn session_message(view: &View) -> String {

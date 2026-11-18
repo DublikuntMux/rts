@@ -6,14 +6,16 @@ use bevy::{
     prelude::*,
     window::{CursorMoved, PrimaryWindow},
 };
+use rts_base::ResourceKind;
 
 use crate::{
     game::{AppState, Match},
     hud::{HudLayout, PhoneHud},
     input::{Selection, world_pointer_allowed},
-    map::{MapBounds, to_world},
+    map::{MapBounds, to_world, to_world_distance},
     menu::{Menu, MenuActions},
     pause_menu::{PauseMenu, world_input_blocked},
+    skirmish,
 };
 
 /// Top-down RTS camera.
@@ -71,11 +73,106 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 /// Centers the camera on the local player's start position.
-fn focus_on_start(game: Res<Match>, mut camera: Single<&mut Transform, With<RtsCamera>>) {
-    if let Some(player) = game.sim.players().get(usize::from(game.local_player.0)) {
-        let start = to_world(player.start);
-        camera.translation = start.extend(camera.translation.z);
+fn focus_on_start(
+    game: Res<Match>,
+    camera: Single<(&RtsCamera, &mut Transform, &mut Projection)>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    ui_scale: Option<Res<UiScale>>,
+) {
+    let Some(player) = game.sim.players().get(usize::from(game.local_player.0)) else {
+        return;
+    };
+    let start = to_world(player.start);
+    let (settings, mut transform, mut projection) = camera.into_inner();
+    transform.translation = start.extend(transform.translation.z);
+    if game.sim.is_skirmish()
+        && let Ok(window) = window.single()
+        && let Projection::Orthographic(ortho) = projection.as_mut()
+        && let Some(view) = skirmish_start_view(
+            &game,
+            start,
+            window.size(),
+            ui_scale.as_ref().map_or(1.0, |scale| scale.0),
+            settings,
+        )
+    {
+        transform.translation = view.center.extend(transform.translation.z);
+        ortho.scale = view.scale;
     }
+}
+
+fn skirmish_start_view(
+    game: &Match,
+    start: Vec2,
+    window_size: Vec2,
+    ui_scale: f32,
+    settings: &RtsCamera,
+) -> Option<View> {
+    let hud = HudLayout::new(window_size / ui_scale, false, None);
+    let top = if hud.phone && !hud.landscape {
+        let resource_bar = skirmish::resource_bar_position(&hud);
+        (resource_bar.y + 42.0).max(hud.minimap.max.y + 12.0)
+    } else {
+        64.0
+    };
+    let bottom_inset = hud.bottom_inset * ui_scale;
+    let min = Vec2::new(16.0, top) * ui_scale;
+    let max = window_size - Vec2::new(16.0 * ui_scale, 16.0_f32.mul_add(ui_scale, bottom_inset));
+    if max.cmple(min).any() {
+        return None;
+    }
+    let viewport = Rect::from_corners(min, max);
+    let tile = to_world_distance(rts_base::TILE);
+    let nearby_units = game
+        .sim
+        .units()
+        .filter(|(_, unit)| unit.owner == game.local_player)
+        .map(|(_, unit)| to_world(unit.pos))
+        .filter(|&pos| pos.distance_squared(start) <= (tile * 4.0).powi(2));
+    let deposits = [ResourceKind::Wood, ResourceKind::Gold]
+        .into_iter()
+        .filter_map(|kind| {
+            game.sim
+                .deposits()
+                .filter(|(_, deposit)| deposit.kind == kind)
+                .map(|(_, deposit)| to_world(deposit.pos))
+                .min_by(|a, b| {
+                    a.distance_squared(start)
+                        .total_cmp(&b.distance_squared(start))
+                })
+        });
+    let (min, max) = nearby_units
+        .chain(deposits)
+        .fold((start, start), |(min, max), pos| {
+            (min.min(pos), max.max(pos))
+        });
+    let padding = Vec2::splat(tile * 0.75);
+    let region = Rect::from_corners(min - padding, max + padding);
+    let bounds = Rect::from_corners(Vec2::ZERO, to_world(game.sim.terrain().world_size()));
+    let playable_size = Vec2::new(window_size.x, (window_size.y - bottom_inset).max(1.0));
+    let max_scale = max_projection_scale(settings, bounds, playable_size);
+    let scale = (region.size() / viewport.size())
+        .max_element()
+        .clamp(settings.min_scale, max_scale);
+    let offset = (viewport.center() - window_size / 2.0) * Vec2::new(1.0, -1.0) * scale;
+    let mut view = View {
+        center: region.center() - offset,
+        scale,
+        window_size,
+        bottom_inset,
+        overscroll: hud.camera_overscroll() * ui_scale,
+        min_scale: settings.min_scale,
+        max_scale,
+    };
+    view.clamp_to(bounds);
+    Some(view)
+}
+
+fn max_projection_scale(settings: &RtsCamera, bounds: Rect, playable_size: Vec2) -> f32 {
+    settings
+        .max_scale
+        .min((bounds.size() / playable_size).min_element())
+        .max(settings.min_scale)
 }
 
 #[derive(Default)]
@@ -132,15 +229,19 @@ fn control_camera(
     pause: Option<Res<PauseMenu>>,
     menu: Option<Res<Menu>>,
     ui_scale: Option<Res<UiScale>>,
-    selection: Option<Res<Selection>>,
+    match_view: (Option<Res<Selection>>, Option<Res<Match>>),
     phone_hud: Option<Res<PhoneHud>>,
 ) {
     let ui_scale = ui_scale.as_ref().map_or(1.0, |scale| scale.0);
     let window_size = window.size();
+    let logical_size = window_size / ui_scale;
+    let (selection, game) = match_view;
     let panel = phone_hud.as_deref().and_then(|hud| hud.panel);
     let hud = HudLayout::new(
-        window_size / ui_scale,
-        selection.is_some_and(|selection| !selection.units.is_empty()),
+        logical_size,
+        selection
+            .as_deref()
+            .is_some_and(|selection| !selection.units.is_empty()),
         panel,
     );
     let blocked =
@@ -161,34 +262,30 @@ fn control_camera(
     if window_size.min_element() <= 0.0 {
         return;
     }
-    let bottom_inset = hud.bottom_inset * ui_scale;
-    let playable_size = Vec2::new(window_size.x, (window_size.y - bottom_inset).max(1.0));
-    let pointer_allowed = |position| world_pointer_allowed(position, window_size, ui_scale, &hud);
-    let mut view = View {
-        center: transform.translation.truncate(),
-        scale: ortho.scale,
-        window_size,
-        bottom_inset,
-        overscroll: hud.camera_overscroll() * ui_scale,
-        min_scale: settings.min_scale,
-        max_scale: settings
-            .max_scale
-            .min((bounds.0.size() / playable_size).min_element())
-            .max(settings.min_scale),
+    let economy = game
+        .as_deref()
+        .zip(selection.as_deref())
+        .and_then(|(game, selection)| {
+            skirmish::actions_bounds(game, selection, logical_size, &hud)
+        });
+    let pointer_allowed = |position| {
+        world_pointer_allowed(position, window_size, ui_scale, &hud)
+            && !economy.is_some_and(|rect| rect.contains(position / ui_scale))
     };
+    let mut view = camera_view(
+        transform.translation.truncate(),
+        ortho.scale,
+        window_size,
+        ui_scale,
+        &hud,
+        economy,
+        bounds.0,
+        settings,
+    );
+    let playable_size = view.playable_size();
 
     // Keyboard and screen-edge scrolling.
-    let mut direction = Vec2::ZERO;
-    for (keys_for_direction, step) in [
-        ([KeyCode::KeyA, KeyCode::ArrowLeft], Vec2::NEG_X),
-        ([KeyCode::KeyD, KeyCode::ArrowRight], Vec2::X),
-        ([KeyCode::KeyS, KeyCode::ArrowDown], Vec2::NEG_Y),
-        ([KeyCode::KeyW, KeyCode::ArrowUp], Vec2::Y),
-    ] {
-        if keys.any_pressed(keys_for_direction) {
-            direction += step;
-        }
-    }
+    let mut direction = camera_key_direction(&keys);
     if window.focused
         && settings.edge_margin > 0.0
         && touches.iter().next().is_none()
@@ -237,6 +334,51 @@ fn control_camera(
     ortho.scale = view.scale;
 }
 
+fn camera_key_direction(keys: &ButtonInput<KeyCode>) -> Vec2 {
+    let axis = |positive, negative| {
+        f32::from(keys.any_pressed(positive)) - f32::from(keys.any_pressed(negative))
+    };
+    Vec2::new(
+        axis(
+            [KeyCode::KeyD, KeyCode::ArrowRight],
+            [KeyCode::KeyA, KeyCode::ArrowLeft],
+        ),
+        axis(
+            [KeyCode::KeyW, KeyCode::ArrowUp],
+            [KeyCode::KeyS, KeyCode::ArrowDown],
+        ),
+    )
+}
+
+fn camera_view(
+    center: Vec2,
+    scale: f32,
+    window_size: Vec2,
+    ui_scale: f32,
+    hud: &HudLayout,
+    economy: Option<Rect>,
+    bounds: Rect,
+    settings: &RtsCamera,
+) -> View {
+    let mut overscroll = hud.camera_overscroll();
+    if hud.phone
+        && let Some(rect) = economy
+    {
+        overscroll = overscroll.max(window_size.y / ui_scale - rect.min.y + 32.0);
+    }
+    let mut view = View {
+        center,
+        scale,
+        window_size,
+        bottom_inset: hud.bottom_inset * ui_scale,
+        overscroll: overscroll * ui_scale,
+        min_scale: settings.min_scale,
+        max_scale: settings.max_scale,
+    };
+    view.max_scale = max_projection_scale(settings, bounds, view.playable_size());
+    view
+}
+
 /// The camera's visible area, manipulated with screen-space input.
 ///
 /// Screen positions are logical pixels from the window's top-left corner, matching cursor and
@@ -255,6 +397,13 @@ struct View {
 }
 
 impl View {
+    fn playable_size(&self) -> Vec2 {
+        Vec2::new(
+            self.window_size.x,
+            (self.window_size.y - self.bottom_inset).max(1.0),
+        )
+    }
+
     /// Moves the camera in screen directions (y up) by a distance in screen pixels.
     fn pan(&mut self, screen_distance: Vec2) {
         self.center += screen_distance * self.scale;
@@ -278,10 +427,7 @@ impl View {
         self.scale = self.scale.clamp(self.min_scale, self.max_scale);
         // Clamp the visible world above the HUD, retaining the full-window projection used
         // by pointer conversion. Its center is higher than the camera's render center.
-        let visible_size = Vec2::new(
-            self.window_size.x,
-            (self.window_size.y - self.bottom_inset).max(1.0),
-        );
+        let visible_size = self.playable_size();
         let offset = Vec2::Y * (self.bottom_inset * self.scale / 2.0);
         let half_view = visible_size / 2.0 * self.scale;
         // Keep a small map centered; only scroll past edges on axes larger than the view.
@@ -346,6 +492,44 @@ fn spread(touches: &[(u64, Vec2)], center: Vec2) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frontier_starts_with_headquarters_workers_and_both_deposits_visible() {
+        let setup = rts_net::MatchSetup {
+            rules: include_str!("../../../assets/data/core.rules.ron").into(),
+            map: include_str!("../../../assets/maps/frontier.map.ron").into(),
+            seed: 0,
+            players: 2,
+        };
+        let game = Match::new(setup.simulation().unwrap(), rts_base::PlayerId(0), true);
+        let start = to_world(game.sim.players()[0].start);
+        let positions: Vec<_> = game
+            .sim
+            .units()
+            .filter(|(_, unit)| unit.owner == game.local_player)
+            .map(|(_, unit)| unit.pos)
+            .chain(game.sim.deposits().take(2).map(|(_, deposit)| deposit.pos))
+            .collect();
+        for size in [
+            Vec2::new(1280.0, 720.0),
+            Vec2::new(390.0, 844.0),
+            Vec2::new(844.0, 390.0),
+            Vec2::new(480.0, 320.0),
+        ] {
+            for ui_scale in [1.0, 1.5] {
+                let view = skirmish_start_view(&game, start, size, ui_scale, &RtsCamera::default())
+                    .unwrap();
+                let hud = HudLayout::new(size / ui_scale, false, None);
+                for &position in &positions {
+                    let offset = (to_world(position) - view.center) / view.scale;
+                    let screen = size / 2.0 + offset * Vec2::new(1.0, -1.0);
+                    assert!(
+                        world_pointer_allowed(screen, size, ui_scale, &hud),
+                        "{position:?} projects to {screen:?} at {size:?} × {ui_scale}",
+                    );
+                }
+            }
+        }
+    }
     use super::*;
 
     fn view() -> View {

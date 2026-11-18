@@ -204,8 +204,9 @@ pub(super) fn resize_hud(
     selection: Res<Selection>,
     mut phone: ResMut<PhoneHud>,
     mut focus: Option<ResMut<bevy::input_focus::InputFocus>>,
-    targeting: Res<MoveTargeting>,
+    targeting: Res<Targeting>,
     mut nodes: Query<ConsoleNode>,
+    mut hints: Query<&mut Text, With<TargetHint>>,
 ) {
     let size = window.size() / scale.0;
     if phone.panel.is_some()
@@ -221,6 +222,9 @@ pub(super) fn resize_hud(
         focus.clear();
     }
     let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
+    for mut hint in &mut hints {
+        hint.set_if_neq(Text::new(targeting.prompt()));
+    }
     for (
         mut node,
         root,
@@ -282,7 +286,8 @@ pub(super) fn resize_hud(
             };
         }
         if target_hint {
-            node.display = if layout.phone && targeting.0 && phone.panel.is_none() {
+            node.display = if layout.phone && *targeting == Targeting::Move && phone.panel.is_none()
+            {
                 Display::Flex
             } else {
                 Display::None

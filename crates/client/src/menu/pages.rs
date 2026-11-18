@@ -374,11 +374,12 @@ fn page_contents(view: &View) -> Box<dyn SceneList> {
 }
 
 fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
+    let preferred = view.catalog.preferred();
     let preview = latest.as_ref().map_or_else(
-        || boxed(catalog_preview(view, view.menu.map)),
+        || boxed(catalog_preview(view, preferred)),
         |record| record_preview(view, record),
     );
-    let map = &view.catalog.0[view.menu.map.min(view.catalog.0.len() - 1)];
+    let map = &view.catalog.0[preferred];
     let (map_name, caption) = latest.map_or_else(
         || {
             (
@@ -410,7 +411,7 @@ fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
             bsn_list! {
                 @text("Singleplayer", 22.0, INK)
                 --
-                @hint("Choose a battlefield and command player 1. Your match can be saved and continued later.")
+                @hint("Build a base and defeat a computer opponent, or explore a sandbox map.")
                 --
                 @wide_button("New game", Action::OpenNewGame, Tone::Primary)
                 Node { margin: UiRect::top(px(16)), flex_grow: 0.0, flex_basis: auto() }
@@ -432,26 +433,31 @@ fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
 }
 
 fn new_game(view: &View, selected: usize) -> impl SceneList {
-    let maps: Vec<_> = view
-        .catalog
-        .0
-        .iter()
-        .enumerate()
+    let mut maps: Vec<_> = view.catalog.0.iter().enumerate().collect();
+    maps.sort_by_key(|(_, map)| !map.skirmish);
+    let maps: Vec<_> = maps
+        .into_iter()
         .map(|(index, map)| {
             let size = map_size(&map.setup.map);
+            let mode = if map.skirmish { "Skirmish" } else { "Sandbox" };
             list_item(
                 map.name.clone(),
-                format!("{} players · {size}", map.setup.players),
+                format!("{mode} · {size}"),
                 Action::SelectMap(index),
             )
         })
         .collect();
     let map = &view.catalog.0[selected.min(view.catalog.0.len() - 1)];
-    let detail = format!(
-        "{} players · {}. You control player 1.",
-        map.setup.players,
-        map_size(&map.setup.map)
-    );
+    let detail = if map.skirmish {
+        "Harvest resources, build an army, and destroy the enemy headquarters."
+    } else {
+        "Command player 1 and practice on the battlefield."
+    };
+    let start = if map.skirmish {
+        "Start skirmish"
+    } else {
+        "Start sandbox"
+    };
     bsn_list! {
         @heading("Select map")
         --
@@ -466,7 +472,7 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
                 --
                 @hint(detail)
                 --
-                @row(bsn_list! { @wide_button("Start game", Action::StartGame, Tone::Primary) })
+                @row(bsn_list! { @wide_button(start, Action::StartGame, Tone::Primary) })
             },
         )
     }

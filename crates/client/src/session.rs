@@ -15,7 +15,7 @@ use std::{
 
 use bevy::prelude::*;
 use ewebsock::{WsEvent, WsMessage, WsSender};
-use rts_base::{Command, PlayerId, Sim};
+use rts_base::{Command, MatchOutcome, PlayerId, Sim};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
     PROTOCOL_VERSION, PlayerInput, Replay, RoomInfo, ServerMessage, Turn, decode_server,
@@ -37,6 +37,8 @@ pub enum SessionAction {
     NewGame {
         map: usize,
     },
+    /// Starts a fresh match with the completed skirmish's setup.
+    Restart,
     /// Continues a saved solo match.
     LoadGame {
         id: String,
@@ -150,6 +152,39 @@ pub enum MatchKind {
     Playback,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchResult {
+    Victory,
+    Defeat,
+    Draw,
+}
+
+impl MatchResult {
+    const fn for_player(outcome: MatchOutcome, player: PlayerId) -> Self {
+        match outcome {
+            MatchOutcome::Winner(winner) if winner.0 == player.0 => Self::Victory,
+            MatchOutcome::Winner(_) => Self::Defeat,
+            MatchOutcome::Draw => Self::Draw,
+        }
+    }
+
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Victory => "Victory",
+            Self::Defeat => "Defeat",
+            Self::Draw => "Draw",
+        }
+    }
+
+    pub const fn detail(self) -> &'static str {
+        match self {
+            Self::Victory => "The enemy headquarters has fallen.",
+            Self::Defeat => "Your headquarters has fallen.",
+            Self::Draw => "Both headquarters have fallen.",
+        }
+    }
+}
+
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -170,6 +205,7 @@ pub struct SessionStatus {
     /// The match on screen no longer advances or accepts orders.
     pub stopped: bool,
     pub kind: MatchKind,
+    pub result: Option<MatchResult>,
     /// A recorded match exists: the current one or the last one played.
     pub has_replay: bool,
     /// A replay file is being imported.
@@ -200,17 +236,23 @@ impl SessionStatus {
         self.running && !self.stopped && self.kind == MatchKind::Solo
     }
 
+    pub const fn can_restart(&self) -> bool {
+        self.running && matches!(self.kind, MatchKind::Solo) && self.result.is_some()
+    }
+
     /// Clears the match view after leaving it.
     const fn leave_match(&mut self) {
         self.running = false;
         self.stopped = false;
         self.kind = MatchKind::Solo;
+        self.result = None;
     }
 
     fn start_match(&mut self, kind: MatchKind, message: &str) {
         self.running = true;
         self.stopped = false;
         self.kind = kind;
+        self.result = None;
         self.has_replay = true;
         self.info(message);
     }
@@ -389,6 +431,9 @@ pub struct SessionActions;
 
 pub struct SessionPlugin;
 
+#[derive(Resource)]
+struct RestartMatch(Match);
+
 impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Session>()
@@ -408,6 +453,7 @@ impl Plugin for SessionPlugin {
                 FixedUpdate,
                 advance_session.run_if(in_state(AppState::InGame)),
             )
+            .add_systems(OnEnter(AppState::Restarting), restart_match)
             .add_systems(OnExit(AppState::InGame), cleanup_match);
     }
 }
@@ -415,7 +461,10 @@ impl Plugin for SessionPlugin {
 impl SessionAction {
     /// Actions that work while a match is on screen. Everything else needs the menu.
     const fn allowed_in_match(&self) -> bool {
-        matches!(self, Self::Leave | Self::SaveReplay | Self::SaveGame)
+        matches!(
+            self,
+            Self::Leave | Self::Restart | Self::SaveReplay | Self::SaveGame
+        )
     }
 }
 
@@ -467,11 +516,31 @@ fn handle_actions(
                     play(
                         game,
                         MatchKind::Solo,
-                        "Select units, then give orders.",
+                        if map.skirmish {
+                            "Harvest resources and destroy the enemy headquarters."
+                        } else {
+                            "Select units, then give orders."
+                        },
                         &mut status,
                         &mut network,
                     )
                 }),
+            SessionAction::Restart if status.can_restart() => session
+                .recording
+                .as_ref()
+                .map(|replay| replay.setup.clone())
+                .ok_or_else(|| "The previous match setup is unavailable.".to_owned())
+                .and_then(|setup| {
+                    let game = session.begin(setup, Mode::Offline, PlayerId(0), now)?;
+                    commands.insert_resource(RestartMatch(game));
+                    next.set(AppState::Restarting);
+                    status.start_match(
+                        MatchKind::Solo,
+                        "Harvest resources and destroy the enemy headquarters.",
+                    );
+                    Ok(())
+                }),
+            SessionAction::Restart => Err("Complete a solo skirmish before restarting.".into()),
             SessionAction::LoadGame { id } => {
                 library.load(Shelf::Saves, id).and_then(|(saved, sim)| {
                     let game = Ok(session.resume(saved, sim, now));
@@ -719,7 +788,7 @@ fn poll_network(
     }
 }
 
-/// Freezes an online match that can no longer continue. The player can still save its replay.
+/// Freezes a settled or interrupted match and leaves its replay available.
 fn stop_match(session: &mut Session, status: &mut SessionStatus, game: Option<&mut Match>) {
     session.mode = Mode::Stopped;
     status.stopped = true;
@@ -863,10 +932,10 @@ fn advance_session(
     mut status: ResMut<SessionStatus>,
     mut network: NonSendMut<Network>,
     time: Res<Time>,
-    pause: Option<Res<PauseMenu>>,
+    mut pause: ResMut<PauseMenu>,
     menu: Option<Res<Menu>>,
 ) {
-    if session.mode != Mode::Online && world_input_blocked(pause.as_deref(), menu.as_deref()) {
+    if session.mode != Mode::Online && world_input_blocked(Some(&pause), menu.as_deref()) {
         return;
     }
     if let Err(reason) = advance_buffered(
@@ -882,6 +951,9 @@ fn advance_session(
         }
         stop_match(&mut session, &mut status, Some(&mut game));
         status.fail(reason);
+    }
+    if status.result.is_some() {
+        pause.open = true;
     }
 }
 
@@ -922,6 +994,8 @@ fn local_turn(
                 player: PlayerId(player),
                 commands: if PlayerId(player) == game.local_player {
                     std::mem::take(&mut commands)
+                } else if game.sim.is_skirmish() {
+                    rts_ai::commands(&game.sim, PlayerId(player))
                 } else {
                     Vec::new()
                 },
@@ -983,6 +1057,10 @@ fn advance(
                     }
                     session.mode = Mode::Stopped;
                     status.stopped = true;
+                    status.result = game
+                        .sim
+                        .outcome()
+                        .map(|result| MatchResult::for_player(result, game.local_player));
                     status.info("Replay finished and verified.");
                     return Ok(());
                 };
@@ -1008,6 +1086,13 @@ fn advance(
         recording
             .push(turn, hash)
             .map_err(|error| format!("Cannot record match: {error}"))?;
+    }
+    if session.mode == Mode::Offline
+        && let Some(result) = game.sim.outcome()
+    {
+        status.result = Some(MatchResult::for_player(result, game.local_player));
+        status.info("");
+        stop_match(session, status, Some(game));
     }
     session.last_step = now;
     Ok(())
@@ -1036,4 +1121,14 @@ fn finish_replay_import(
 fn cleanup_match(mut commands: Commands, mut selection: ResMut<Selection>) {
     selection.units.clear();
     commands.remove_resource::<Match>();
+}
+
+fn restart_match(world: &mut World) {
+    let RestartMatch(game) = world
+        .remove_resource::<RestartMatch>()
+        .expect("queued restart");
+    world.insert_resource(game);
+    world
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::InGame);
 }

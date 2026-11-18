@@ -32,7 +32,7 @@ use self::widgets::Field;
 use crate::{
     crash::CrashReport,
     game::{AppState, MapCatalog},
-    hud::MoveTargeting,
+    hud::Targeting,
     library::{Library, Record, Shelf},
     pause_menu::PauseMenu,
     session::{Lobby, MatchKind, Server, SessionAction, SessionActions, SessionStatus},
@@ -483,6 +483,8 @@ impl Action {
             Self::ToggleReady | Self::LeaveRoom | Self::CopyCode => status.lobby.is_some(),
             Self::StartMatch => status.lobby.as_ref().is_some_and(Lobby::can_start),
             Self::Game(SessionAction::SaveGame) => status.can_save_game(),
+            Self::Game(SessionAction::Restart) => status.can_restart(),
+            Self::Resume | Self::TogglePause => status.result.is_none(),
             Self::ExportCrash | Self::DiscardCrash => view.crash.pending().is_some(),
             _ => true,
         }
@@ -526,7 +528,7 @@ fn perform(
     mut actions: MessageReader<Action>,
     mut menu: ResMut<Menu>,
     mut pause: ResMut<PauseMenu>,
-    mut targeting: Option<ResMut<MoveTargeting>>,
+    mut targeting: Option<ResMut<Targeting>>,
     mut form: ResMut<MenuForm>,
     mut settings: ResMut<Settings>,
     status: Res<SessionStatus>,
@@ -570,6 +572,7 @@ fn perform(
             }
             Action::OpenNewGame => {
                 menu.solo = SoloPage::NewGame;
+                menu.map = catalog.preferred();
                 menu.navigate();
             }
             Action::OpenLoadGame => {
@@ -717,7 +720,7 @@ fn perform(
                 if pause.open
                     && let Some(targeting) = targeting.as_deref_mut()
                 {
-                    targeting.0 = false;
+                    *targeting = Targeting::None;
                 }
             }
             Action::Resume => {
@@ -747,6 +750,12 @@ fn perform(
             }
             Action::Game(SessionAction::Leave) if leave_needs_confirmation(&status) => {
                 menu.dialog = Some(Dialog::Confirm(Confirm::LeaveMatch));
+            }
+            Action::Game(SessionAction::Leave) if status.result.is_some() => {
+                menu.section = Section::Singleplayer;
+                menu.solo = SoloPage::Home;
+                menu.navigate();
+                session.write(SessionAction::Leave);
             }
             Action::Game(action) => {
                 session.write(action);

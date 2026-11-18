@@ -43,6 +43,105 @@ fn local_input_delay_and_replay_share_the_same_turns() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
+    let mut app = headless();
+    let mut setup = crate::skirmish::test_setup();
+    setup.rules = setup.rules.replace("worker_ticks: 4", "worker_ticks: 120");
+    app.world_mut().resource_mut::<MapCatalog>().0[0].setup = setup.clone();
+    app.world_mut().resource_mut::<MapCatalog>().0[0].skirmish = true;
+
+    let send = |app: &mut App, action| {
+        app.world_mut().write_message(action);
+        app.update();
+        app.update();
+    };
+    send(&mut app, SessionAction::NewGame { map: 0 });
+    assert!(app.world().resource::<Match>().sim.is_skirmish());
+    assert!(
+        app.world_mut()
+            .resource_mut::<Match>()
+            .queue_command(Command::Gather {
+                units: vec![UnitId(3)],
+                deposit: rts_base::DepositId(0),
+            })
+    );
+    for _ in 0..6 {
+        app.world_mut().run_schedule(FixedUpdate);
+    }
+    assert!(
+        app.world()
+            .resource::<Session>()
+            .replay()
+            .unwrap()
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.inputs)
+            .any(|input| input.player == PlayerId(1)
+                && input.commands.iter().any(|command| matches!(
+                    command,
+                    Command::TrainWorker { units } if units == &[UnitId(1)]
+                )))
+    );
+    let saved_hash = app.world().resource::<Match>().sim.state_hash();
+    send(&mut app, SessionAction::SaveGame);
+    let saved = app.world().resource::<Library>().records(Shelf::Saves)[0]
+        .id
+        .clone();
+    send(&mut app, SessionAction::Leave);
+    send(&mut app, SessionAction::LoadGame { id: saved });
+    assert_eq!(app.world().resource::<Match>().sim.state_hash(), saved_hash);
+
+    assert!(
+        app.world_mut()
+            .resource_mut::<Match>()
+            .queue_command(Command::Attack {
+                units: vec![UnitId(2)],
+                target: UnitId(1),
+            })
+    );
+    for _ in 0..100 {
+        app.world_mut().run_schedule(FixedUpdate);
+    }
+    assert_eq!(status(&app).result, Some(MatchResult::Victory));
+    assert!(app.world().resource::<PauseMenu>().open);
+    let game = app.world().resource::<Match>();
+    assert!(!game.accepts_orders);
+    let victory_hash = game.sim.state_hash();
+    send(&mut app, SessionAction::SaveReplay);
+    let replay = app.world().resource::<Library>().records(Shelf::Replays)[0]
+        .id
+        .clone();
+    send(&mut app, SessionAction::Restart);
+    app.update();
+    assert_eq!(
+        *app.world().resource::<State<AppState>>().get(),
+        AppState::InGame
+    );
+    assert_eq!(status(&app).result, None);
+    let game = app.world().resource::<Match>();
+    assert!(game.accepts_orders);
+    assert_eq!(
+        game.sim.state_hash(),
+        setup.simulation().unwrap().state_hash()
+    );
+
+    // PauseMenuPlugin owns clearing the overlay when state changes in the actual app.
+    app.world_mut().resource_mut::<PauseMenu>().open = false;
+    send(&mut app, SessionAction::Leave);
+    send(&mut app, SessionAction::WatchReplay { id: replay });
+    for _ in 0..100 {
+        app.world_mut().run_schedule(FixedUpdate);
+    }
+    assert_eq!(status(&app).result, Some(MatchResult::Victory));
+    assert!(status(&app).stopped);
+    assert_eq!(
+        app.world().resource::<Match>().sim.state_hash(),
+        victory_hash
+    );
+}
+
 #[test]
 fn playback_keeps_the_original_recording_available_after_finishing_and_leaving() {
     let replay = Replay::new(setup()).unwrap();
@@ -124,6 +223,7 @@ fn headless() -> App {
             name: "Proving Grounds".into(),
             setup: setup(),
             preview: Handle::default(),
+            skirmish: false,
         }]))
         .insert_resource(Library::new(temporary_store("session")))
         .init_resource::<Selection>()
@@ -236,7 +336,7 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
     let mod_setup = MatchSetup {
         rules: setup()
             .rules
-            .replace("worker", "mod_worker")
+            .replace("\"worker\"", "\"mod_worker\"")
             .replace("speed: 2.5", "speed: 3.5")
             .replace(
                 "radius: 0.3,",
@@ -244,7 +344,7 @@ async fn real_client_sessions_use_server_mods_verify_turns_and_replays() {
             ),
         map: setup()
             .map
-            .replace("worker", "mod_worker")
+            .replace("\"worker\"", "\"mod_worker\"")
             .replace("Proving Grounds", "Server mod"),
         ..setup()
     };

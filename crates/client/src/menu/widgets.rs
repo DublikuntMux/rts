@@ -12,6 +12,7 @@ use bevy::{
     },
     picking::hover::Hovered,
     prelude::*,
+    scene::EntityScene,
     text::{EditableText, EditableTextFilter, FontSize, FontWeight, LineHeight, TextCursorStyle},
     ui::{InteractionDisabled, Pressed},
     ui_widgets::{Button, ScrollArea},
@@ -483,7 +484,11 @@ pub fn spinner() -> impl Scene {
 
 /// A modal dialog over a dimmed screen.
 pub fn dialog(title: impl Into<String>, contents: impl SceneList) -> impl Scene {
-    let title = title.into();
+    dialog_with_title(text(title, 18.0, INK), contents)
+}
+
+pub fn dialog_with_title(title: impl Scene, contents: impl SceneList) -> impl Scene {
+    let title = EntityScene(title);
     let modal = TabGroup::modal();
     bsn! {
         modal
@@ -516,7 +521,7 @@ pub fn dialog(title: impl Into<String>, contents: impl SceneList) -> impl Scene 
             BackgroundColor(PANEL)
             BorderColor::all(FIELD_EDGE)
             Children [
-                @text(title, 18.0, INK)
+                {title}
                 --
                 {contents}
             ]

@@ -17,6 +17,7 @@ use crate::{
 fn setup(map: &str) -> MatchSetup {
     let map = match map {
         "crossroads" => include_str!("../../../../assets/maps/crossroads.map.ron"),
+        "frontier" => include_str!("../../../../assets/maps/frontier.map.ron"),
         _ => include_str!("../../../../assets/maps/proving_grounds.map.ron"),
     };
     let players = u8::try_from(rts_base::MapData::from_ron(map).unwrap().players.len()).unwrap();
@@ -33,12 +34,14 @@ fn catalog() -> MapCatalog {
         [
             ("Crossroads", "crossroads"),
             ("Proving Grounds", "proving_grounds"),
+            ("Frontier", "frontier"),
         ]
         .into_iter()
         .map(|(name, file)| CatalogMap {
             name: name.into(),
             setup: setup(file),
             preview: Handle::default(),
+            skirmish: file == "frontier",
         })
         .collect(),
     )
@@ -210,7 +213,7 @@ fn every_page_and_dialog_spawns_on_wide_and_compact_screens() {
     for (width, compact) in [(1280, false), (600, true)] {
         let mut app = app(width);
         assert_eq!(app.world().resource::<Menu>().compact, compact);
-        assert_shows(&mut app, &["Your next move", "New game"]);
+        assert_shows(&mut app, &["Your next move", "New game", "Frontier"]);
         assert_shows(
             &mut app,
             if compact {
@@ -223,7 +226,13 @@ fn every_page_and_dialog_spawns_on_wide_and_compact_screens() {
         act(&mut app, Action::OpenNewGame);
         assert_shows(
             &mut app,
-            &["Select map", "Crossroads", "4 players · 40×40 tiles"],
+            &[
+                "Select map",
+                "Selected: Frontier",
+                "Start skirmish",
+                "Crossroads",
+                "Sandbox · 40×40 tiles",
+            ],
         );
         act(&mut app, Action::SelectMap(1));
         assert_shows(&mut app, &["Selected: Proving Grounds"]);
@@ -517,7 +526,7 @@ fn pause_menu_escape_resume_and_leave_confirmation_preserve_selection() {
             units: BTreeSet::from([UnitId(0)]),
             touch_mode: false,
         })
-        .insert_resource(MoveTargeting(false));
+        .insert_resource(Targeting::None);
     {
         let mut status = status(&mut app);
         status.running = true;
@@ -537,9 +546,9 @@ fn pause_menu_escape_resume_and_leave_confirmation_preserve_selection() {
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
     };
-    app.world_mut().resource_mut::<MoveTargeting>().0 = true;
+    *app.world_mut().resource_mut::<Targeting>() = Targeting::Move;
     escape(&mut app);
-    assert!(!app.world().resource::<MoveTargeting>().0);
+    assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
     assert!(!app.world().resource::<PauseMenu>().open);
     escape(&mut app);
     assert!(app.world().resource::<PauseMenu>().open);

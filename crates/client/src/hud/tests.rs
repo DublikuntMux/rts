@@ -62,7 +62,7 @@ fn order(app: &mut App, order: Order) {
 fn console_selection_and_orders_keep_simulation_authoritative() {
     let mut app = app();
     order(&mut app, Order::Move);
-    assert!(!app.world().resource::<MoveTargeting>().0);
+    assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
     let ids: Vec<_> = app
         .world()
         .resource::<Match>()
@@ -86,9 +86,9 @@ fn console_selection_and_orders_keep_simulation_authoritative() {
         2
     );
     order(&mut app, Order::Move);
-    assert!(app.world().resource::<MoveTargeting>().0);
+    assert_eq!(*app.world().resource::<Targeting>(), Targeting::Move);
     order(&mut app, Order::Stop);
-    assert!(!app.world().resource::<MoveTargeting>().0);
+    assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
     assert_eq!(
         app.world().resource::<Match>().pending,
         vec![rts_base::Command::Stop { units: ids.clone() }]

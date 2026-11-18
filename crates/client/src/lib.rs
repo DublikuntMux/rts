@@ -15,10 +15,11 @@ mod preview;
 mod replay_io;
 mod session;
 mod settings;
+mod skirmish;
 mod storage;
 mod units;
 
-use bevy::{app::PanicHandlerPlugin, log::LogPlugin, prelude::*};
+use bevy::{app::PanicHandlerPlugin, image::ImagePlugin, log::LogPlugin, prelude::*};
 use rts_assets::{AssetBundle, BundledAssetPlugin, DataPlugin};
 
 use crate::{
@@ -51,6 +52,7 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
             DefaultPlugins
                 .build()
                 .disable::<PanicHandlerPlugin>()
+                .set(ImagePlugin::default_nearest())
                 .set(LogPlugin {
                     custom_layer: |_| Some(crash::log_layer()),
                     ..default()
@@ -74,6 +76,7 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
             RtsCameraPlugin,
             SelectionPlugin,
             HudPlugin,
+            skirmish::SkirmishPlugin,
             SessionPlugin,
             SettingsPlugin,
             MenuPlugin,

@@ -27,15 +27,30 @@ use crate::{
 
 /// Maximum height, in logical pixels before interface scaling.
 pub const HUD_HEIGHT: f32 = 184.0;
-/// The Move command waits for a world destination without changing the selection.
-#[derive(Resource, Default)]
-pub struct MoveTargeting(pub bool);
+/// The command waiting for a point on the battlefield.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Targeting {
+    #[default]
+    None,
+    Move,
+    Barracks,
+}
+
+impl Targeting {
+    pub const fn prompt(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Move => "Choose a destination.",
+            Self::Barracks => "Choose open ground for the barracks.",
+        }
+    }
+}
 
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MoveTargeting>()
+        app.init_resource::<Targeting>()
             .init_resource::<PhoneHud>()
             .add_systems(OnEnter(AppState::InGame), spawn_hud)
             .add_systems(OnExit(AppState::InGame), (reset_targeting, phone::reset))
@@ -62,8 +77,8 @@ impl Plugin for HudPlugin {
     }
 }
 
-fn reset_targeting(mut targeting: ResMut<MoveTargeting>) {
-    targeting.0 = false;
+fn reset_targeting(mut targeting: ResMut<Targeting>) {
+    *targeting = Targeting::None;
 }
 
 #[derive(Component)]
@@ -380,7 +395,7 @@ fn spawn_order_contents(
     ));
 }
 
-fn text_font(font: &Handle<Font>, size: f32) -> TextFont {
+pub fn text_font(font: &Handle<Font>, size: f32) -> TextFont {
     TextFont {
         font: font.clone().into(),
         font_size: FontSize::Px(size),
@@ -439,7 +454,7 @@ fn activate_order(
     buttons: Query<(&Order, Has<InteractionDisabled>)>,
     mut selection: ResMut<Selection>,
     mut game: ResMut<Match>,
-    mut targeting: ResMut<MoveTargeting>,
+    mut targeting: ResMut<Targeting>,
 ) {
     let Ok((&order, disabled)) = buttons.get(event.entity) else {
         return;
@@ -447,7 +462,11 @@ fn activate_order(
     if disabled {
         return;
     }
-    targeting.0 = order == Order::Move && !targeting.0;
+    *targeting = if order == Order::Move && *targeting != Targeting::Move {
+        Targeting::Move
+    } else {
+        Targeting::None
+    };
     match order {
         Order::Move => {}
         Order::Stop => selection.stop(&mut game),
@@ -461,11 +480,13 @@ fn update_button_availability(
     game: Res<Match>,
     pause: Res<PauseMenu>,
     phone: Res<PhoneHud>,
-    buttons: Query<(Entity, Has<InteractionDisabled>), With<Order>>,
+    buttons: Query<(Entity, &Order, Has<InteractionDisabled>)>,
 ) {
     let disabled =
         selection.units.is_empty() || !game.accepts_orders || pause.open || phone.panel.is_some();
-    for (entity, was_disabled) in &buttons {
+    let mobile = selection.mobile_units(&game).next().is_some();
+    for (entity, order, was_disabled) in &buttons {
+        let disabled = disabled || (*order != Order::Clear && !mobile);
         if disabled != was_disabled {
             if disabled {
                 commands.entity(entity).insert(InteractionDisabled);
@@ -488,12 +509,12 @@ type OrderState<'a> = (
 type Ink<'a> = (Option<&'a mut TextColor>, Option<&'a mut ImageNode>);
 
 fn update_button_looks(
-    targeting: Res<MoveTargeting>,
+    targeting: Res<Targeting>,
     mut buttons: Query<OrderState>,
     mut inks: Query<Ink, (With<ButtonInk>, Without<Order>)>,
 ) {
     for (order, hovered, pressed, disabled, children, mut fill, mut border) in &mut buttons {
-        let selected = *order == Order::Move && targeting.0;
+        let selected = *order == Order::Move && *targeting == Targeting::Move;
         let look = button_look(Tone::Item, selected, hovered.get(), pressed, disabled);
         fill.set_if_neq(BackgroundColor(look.fill));
         border.set_if_neq(BorderColor::all(if selected { SIGNAL } else { look.edge }));
@@ -519,7 +540,7 @@ fn update_selection(
     font: Res<GameFont>,
     graphics: Res<Graphics>,
     assets: Res<AssetServer>,
-    targeting: Res<MoveTargeting>,
+    targeting: Res<Targeting>,
     mut labels: Query<(&HudText, &mut Text)>,
     mut portrait: Query<&mut Node, PortraitFilter>,
     mut portrait_image: Query<&mut ImageNode, With<PortraitImage>>,
@@ -579,7 +600,7 @@ fn update_selection(
         let value = match role.0 {
             TextRole::Title => title.clone(),
             TextRole::Detail => detail.clone(),
-            TextRole::Hint => hint(&selection, targeting.0).into(),
+            TextRole::Hint => hint(&selection, *targeting).into(),
         };
         text.set_if_neq(Text::new(value));
     }
@@ -696,6 +717,9 @@ fn select_portrait(
 }
 
 fn unit_name(id: &str) -> String {
+    if id == "soldier" {
+        return "Rifle squad".into();
+    }
     let mut chars = id.chars();
     chars.next().map_or_else(String::new, |first| {
         first
@@ -706,15 +730,15 @@ fn unit_name(id: &str) -> String {
     })
 }
 
-fn hint(selection: &Selection, targeting: bool) -> &'static str {
-    if targeting {
-        "Choose a destination."
-    } else {
+fn hint(selection: &Selection, targeting: Targeting) -> &'static str {
+    if targeting == Targeting::None {
         match (selection.touch_mode, selection.units.is_empty()) {
             (false, true) => "Click or drag to select units.",
             (false, false) => "Right-click to move · X to stop",
             (true, true) => "Tap or drag to select units.",
             (true, false) => "Tap ground to move · Two fingers pan",
         }
+    } else {
+        targeting.prompt()
     }
 }

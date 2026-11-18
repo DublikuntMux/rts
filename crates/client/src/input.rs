@@ -13,10 +13,11 @@ use rts_base::{Command, IVec2 as SimPos, PlayerId, Unit, UnitDef, UnitId};
 use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
-    hud::{HudLayout, MoveTargeting, PhoneHud},
+    hud::{HudLayout, PhoneHud, Targeting},
     map::TILE_PX,
     menu::Menu,
     pause_menu::{PAUSE_BUTTON_BOUNDS, PauseMenu, world_input_blocked},
+    skirmish,
     units::{SyncUnits, UnitBounds, UnitVisual},
 };
 
@@ -27,11 +28,18 @@ pub struct Selection {
 }
 
 impl Selection {
+    pub fn mobile_units<'a>(&'a self, game: &'a Match) -> impl Iterator<Item = UnitId> + 'a {
+        self.units.iter().copied().filter(|&id| {
+            game.sim
+                .unit(id)
+                .is_some_and(|unit| !game.sim.rules().unit(unit.kind).building)
+        })
+    }
+
     pub fn stop(&self, game: &mut Match) {
-        if !self.units.is_empty() {
-            game.queue_command(Command::Stop {
-                units: self.units.iter().copied().collect(),
-            });
+        let units = self.mobile_units(game).collect::<Vec<_>>();
+        if !units.is_empty() {
+            game.queue_command(Command::Stop { units });
         }
     }
 }
@@ -211,6 +219,7 @@ struct ScreenView {
     /// Interface scale; the HUD and pause button grow with it.
     ui_scale: f32,
     hud: HudLayout,
+    economy: Option<Rect>,
 }
 
 impl ScreenView {
@@ -221,6 +230,9 @@ impl ScreenView {
 
     fn playable(&self, screen: Vec2) -> bool {
         world_pointer_allowed(screen, self.size, self.ui_scale, &self.hud)
+            && !self
+                .economy
+                .is_some_and(|rect| rect.contains(screen / self.ui_scale))
     }
 }
 
@@ -248,7 +260,7 @@ fn control_units(
     visuals: Query<(&UnitVisual, &Transform)>,
     pause: Option<Res<PauseMenu>>,
     menu: Option<Res<Menu>>,
-    mut targeting: Option<ResMut<MoveTargeting>>,
+    mut targeting: Option<ResMut<Targeting>>,
     phone_hud: Option<Res<PhoneHud>>,
 ) {
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
@@ -272,6 +284,7 @@ fn control_units(
         scale: projection.scale,
         size: window.size(),
         ui_scale: ui_scale.0,
+        economy: skirmish::actions_bounds(&game, &selection, window.size() / ui_scale.0, &hud),
         hud,
     };
     if pointer.capture(
@@ -279,11 +292,11 @@ fn control_units(
         &touches,
     ) {
         if blocked && let Some(targeting) = targeting.as_deref_mut() {
-            targeting.0 = false;
+            *targeting = Targeting::None;
         }
         return;
     }
-    update_move_targeting(targeting.as_deref_mut(), &game, &selection, &keys);
+    update_targeting(targeting.as_deref_mut(), &game, &selection, &keys);
     if keys.just_pressed(KeyCode::KeyX) {
         selection.stop(&mut game);
     }
@@ -334,8 +347,11 @@ fn control_units(
         );
     }
     if mouse.just_pressed(MouseButton::Right) {
-        if let Some(targeting) = targeting.as_deref_mut() {
-            targeting.0 = false;
+        if targeting
+            .as_deref_mut()
+            .is_some_and(|mode| std::mem::take(mode) == Targeting::Barracks)
+        {
+            return;
         }
         if let Some(position) = window.cursor_position() {
             right_click(
@@ -376,17 +392,22 @@ fn right_click(
     }
 }
 
-fn update_move_targeting(
-    targeting: Option<&mut MoveTargeting>,
+fn update_targeting(
+    targeting: Option<&mut Targeting>,
     game: &Match,
     selection: &Selection,
     keys: &ButtonInput<KeyCode>,
 ) {
     if let Some(targeting) = targeting {
-        if !game.accepts_orders || selection.units.is_empty() {
-            targeting.0 = false;
-        } else if keys.just_pressed(KeyCode::KeyM) {
-            targeting.0 = true;
+        if !game.accepts_orders
+            || selection.units.is_empty()
+            || (*targeting == Targeting::Barracks
+                && skirmish::workers(game, selection).next().is_none())
+        {
+            *targeting = Targeting::None;
+        } else if keys.just_pressed(KeyCode::KeyM) && selection.mobile_units(game).next().is_some()
+        {
+            *targeting = Targeting::Move;
         }
     }
 }
@@ -400,13 +421,34 @@ fn finish_press(
     game: &mut Match,
     feedback: &mut OrderFeedback,
     now: f64,
-    targeting: Option<&mut MoveTargeting>,
+    targeting: Option<&mut Targeting>,
 ) {
     let position = view.world(press.current);
-    if let Some(targeting) = targeting.filter(|targeting| targeting.0) {
-        targeting.0 = false;
-        move_to(position, selection, game, feedback, now);
-        return;
+    if let Some(targeting) = targeting {
+        match *targeting {
+            Targeting::Move => {
+                *targeting = Targeting::None;
+                move_to(position, selection, game, feedback, now);
+                return;
+            }
+            Targeting::Barracks => {
+                let placed = skirmish::place_barracks(game, selection, sim_position(position));
+                if placed {
+                    *targeting = Targeting::None;
+                }
+                feedback.0 = Some((
+                    position,
+                    if placed {
+                        Marker::Move
+                    } else {
+                        Marker::Blocked
+                    },
+                    now,
+                ));
+                return;
+            }
+            Targeting::None => {}
+        }
     }
     if press.dragged {
         let rect = Rect::from_corners(press.world_start, position);
@@ -528,6 +570,15 @@ fn issue_move(
         }
         return;
     }
+    if let Some(deposit) = skirmish::deposit_at(game, position, scale) {
+        let units = skirmish::workers(game, selection).collect::<Vec<_>>();
+        if !units.is_empty() {
+            if game.queue_command(Command::Gather { units, deposit }) {
+                feedback.0 = Some((position, Marker::Move, now));
+            }
+            return;
+        }
+    }
     move_to(position, selection, game, feedback, now);
 }
 
@@ -536,6 +587,11 @@ fn issue_move(
     clippy::cast_precision_loss,
     reason = "validated small world coordinates are rounded into sim units"
 )]
+fn sim_position(position: Vec2) -> SimPos {
+    let pos = (position * Vec2::new(1.0, -1.0) * (rts_base::TILE as f32 / TILE_PX as f32)).round();
+    SimPos::new(pos.x as i32, pos.y as i32)
+}
+
 fn move_to(
     position: Vec2,
     selection: &Selection,
@@ -543,17 +599,15 @@ fn move_to(
     feedback: &mut OrderFeedback,
     now: f64,
 ) {
-    if !game.accepts_orders || selection.units.is_empty() {
+    if !game.accepts_orders || selection.mobile_units(game).next().is_none() {
         return;
     }
-    let target =
-        (position * Vec2::new(1.0, -1.0) * (rts_base::TILE as f32 / TILE_PX as f32)).round();
-    let target = SimPos::new(target.x as i32, target.y as i32);
+    let target = sim_position(position);
     let traversable = game.sim.terrain().speed_modifier(target, game.sim.rules()) > 0;
     if !traversable {
         feedback.0 = Some((position, Marker::Blocked, now));
     } else if game.queue_command(Command::Move {
-        units: selection.units.iter().copied().collect(),
+        units: selection.mobile_units(game).collect(),
         target,
     }) {
         feedback.0 = Some((position, Marker::Move, now));
@@ -573,6 +627,7 @@ fn draw_selection(
     ui_scale: Res<UiScale>,
     visuals: Query<(&UnitVisual, &Transform)>,
     phone_hud: Option<Res<PhoneHud>>,
+    targeting: Option<Res<Targeting>>,
 ) {
     let (transform, Projection::Orthographic(projection)) = camera.into_inner() else {
         return;
@@ -623,21 +678,28 @@ fn draw_selection(
             }
         }
     }
+    let hud = HudLayout::new(
+        window.size() / ui_scale.0,
+        !selection.units.is_empty(),
+        phone_hud.as_deref().and_then(|hud| hud.panel),
+    );
     let view = ScreenView {
         center: transform.translation.truncate(),
         scale: projection.scale,
         size: window.size(),
         ui_scale: ui_scale.0,
-        hud: HudLayout::new(
-            window.size() / ui_scale.0,
-            !selection.units.is_empty(),
-            phone_hud.as_deref().and_then(|hud| hud.panel),
-        ),
+        economy: skirmish::actions_bounds(&game, &selection, window.size() / ui_scale.0, &hud),
+        hud,
     };
     if let Some(press) = pointer
         .mouse
         .or_else(|| pointer.finger.map(|(_, press)| press))
-        .filter(|press| press.dragged)
+        .filter(|press| {
+            press.dragged
+                && targeting
+                    .as_deref()
+                    .is_none_or(|mode| *mode == Targeting::None)
+        })
     {
         let rect = Rect::from_corners(press.world_start, view.world(press.current));
         gizmos.rect_2d(
@@ -646,18 +708,32 @@ fn draw_selection(
             style.color,
         );
     }
-    if let Some((position, marker, started)) = feedback.0 {
-        let age = time.elapsed_secs_f64() - started;
-        if age < style.marker_duration {
-            let color = match marker {
-                Marker::Move => style.accepted_order_color,
-                Marker::Blocked => style.blocked_order_color,
-                Marker::Attack => style.attack_order_color,
-            };
-            gizmos.circle_2d(position, style.marker_radius * projection.scale, color);
-            gizmos.cross_2d(position, style.marker_cross_size * projection.scale, color);
-        }
+    let placement = if targeting.as_deref() == Some(&Targeting::Barracks) {
+        placement_preview(&pointer, &window, &view)
+    } else {
+        None
+    };
+    skirmish::draw_construction(&mut gizmos, &game, &selection, style, placement);
+    if let Some((position, marker, started)) = feedback.0
+        && time.elapsed_secs_f64() - started < style.marker_duration
+    {
+        let color = match marker {
+            Marker::Move => style.accepted_order_color,
+            Marker::Blocked => style.blocked_order_color,
+            Marker::Attack => style.attack_order_color,
+        };
+        gizmos.circle_2d(position, style.marker_radius * projection.scale, color);
+        gizmos.cross_2d(position, style.marker_cross_size * projection.scale, color);
     }
+}
+
+fn placement_preview(pointer: &PointerState, window: &Window, view: &ScreenView) -> Option<SimPos> {
+    let point = pointer
+        .finger
+        .map(|(_, press)| press.current)
+        .or_else(|| window.cursor_position())?;
+    view.playable(point)
+        .then(|| sim_position(view.world(point)))
 }
 
 /// Bars appear above damaged units, and above selected units even at full health.
@@ -734,6 +810,7 @@ mod tests {
             size: Vec2::new(800.0, 600.0),
             ui_scale: 1.0,
             hud: HudLayout::new(Vec2::new(800.0, 600.0), false, None),
+            economy: None,
         };
         assert_eq!(view.world(Vec2::new(400.0, 300.0)), view.center);
         assert_eq!(view.world(Vec2::new(500.0, 200.0)), Vec2::new(328.0, -56.0));
@@ -768,7 +845,10 @@ mod tests {
         )"#
         ))
         .unwrap();
-        let sim = Sim::new(rules, &map).unwrap();
+        app_with_sim(Sim::new(rules, &map).unwrap())
+    }
+
+    fn app_with_sim(sim: Sim) -> App {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default())
             .insert_resource(Match::new(sim, PlayerId(0), true))
@@ -852,6 +932,66 @@ mod tests {
     fn click(app: &mut App, position: Vec2) {
         mouse_event(app, position, MouseButton::Left, true);
         mouse_event(app, position, MouseButton::Left, false);
+    }
+
+    #[test]
+    fn touch_workers_harvest_and_place_barracks_and_armed_units_attack_headquarters() {
+        let mut app = app_with_sim(skirmish::test_setup().simulation().unwrap());
+        app.insert_resource(Targeting::None);
+        let screen = |pos: SimPos| {
+            let world = crate::map::to_world(pos);
+            Vec2::new(world.x + 144.0, 44.0 - world.y)
+        };
+        let worker = screen(SimPos::new(1536, 1536));
+        let wood = screen(SimPos::new(2560, 1536));
+        tap(&mut app, worker);
+        tap(&mut app, wood);
+        assert_eq!(
+            app.world().resource::<Match>().pending,
+            [Command::Gather {
+                units: vec![UnitId(3)],
+                deposit: rts_base::DepositId(0),
+            }]
+        );
+
+        *app.world_mut().resource_mut::<Targeting>() = Targeting::Barracks;
+        tap(&mut app, wood);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::Barracks);
+        assert_eq!(app.world().resource::<Match>().pending.len(), 1);
+        let site = SimPos::new(1536, 2560);
+        tap(&mut app, screen(site));
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
+        assert_eq!(
+            app.world().resource::<Match>().pending.last(),
+            Some(&Command::BuildBarracks {
+                units: vec![UnitId(3)],
+                target: site,
+            })
+        );
+
+        let soldier = screen(SimPos::new(1536, 512)) - Vec2::new(100.0, 0.0);
+        let enemy_hq = screen(SimPos::new(5632, 512)) - Vec2::new(100.0, 0.0);
+        for touch_input in [false, true] {
+            let mut app = app_with_sim(skirmish::test_setup().simulation().unwrap());
+            let mut camera = app
+                .world_mut()
+                .query_filtered::<&mut Transform, With<RtsCamera>>();
+            camera.single_mut(app.world_mut()).unwrap().translation.x += 100.0;
+            if touch_input {
+                tap(&mut app, soldier);
+                tap(&mut app, enemy_hq);
+            } else {
+                click(&mut app, soldier);
+                mouse_event(&mut app, enemy_hq, MouseButton::Right, true);
+            }
+            assert_eq!(
+                app.world().resource::<Match>().pending,
+                [Command::Attack {
+                    units: vec![UnitId(2)],
+                    target: UnitId(1),
+                }]
+            );
+        }
     }
 
     #[test]
@@ -1331,7 +1471,7 @@ mod tests {
     fn move_targeting_uses_primary_mouse_and_touch_without_changing_selection() {
         for touch_input in [false, true] {
             let mut app = test_app();
-            app.insert_resource(MoveTargeting(false));
+            app.insert_resource(Targeting::None);
             click(&mut app, Vec2::new(336.0, 236.0));
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()
@@ -1340,14 +1480,14 @@ mod tests {
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()
                 .reset_all();
-            assert!(app.world().resource::<MoveTargeting>().0);
+            assert_eq!(*app.world().resource::<Targeting>(), Targeting::Move);
             if touch_input {
                 tap(&mut app, Vec2::new(400.0, 300.0));
             } else {
                 // An ordinary empty-world click would clear selection.
                 click(&mut app, Vec2::new(400.0, 300.0));
             }
-            assert!(!app.world().resource::<MoveTargeting>().0);
+            assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
             assert_eq!(
                 app.world().resource::<Selection>().units,
                 BTreeSet::from([UnitId(0)])
@@ -1365,12 +1505,12 @@ mod tests {
     #[test]
     fn move_targeting_requires_orders_and_selection_and_is_canceled_by_pause_or_right_click() {
         let mut app = test_app();
-        app.insert_resource(MoveTargeting(false));
+        app.insert_resource(Targeting::None);
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyM);
         app.update();
-        assert!(!app.world().resource::<MoveTargeting>().0);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
@@ -1380,18 +1520,18 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyM);
         app.update();
-        assert!(!app.world().resource::<MoveTargeting>().0);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
         app.world_mut().resource_mut::<Match>().accepts_orders = true;
-        app.world_mut().resource_mut::<MoveTargeting>().0 = true;
+        *app.world_mut().resource_mut::<Targeting>() = Targeting::Move;
         mouse_event(&mut app, Vec2::new(400.0, 300.0), MouseButton::Right, true);
-        assert!(!app.world().resource::<MoveTargeting>().0);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
         assert_eq!(app.world().resource::<Match>().pending.len(), 1);
-        app.world_mut().resource_mut::<MoveTargeting>().0 = true;
+        *app.world_mut().resource_mut::<Targeting>() = Targeting::Move;
         app.insert_resource(PauseMenu { open: true });
         app.update();
-        assert!(!app.world().resource::<MoveTargeting>().0);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
     }
 }

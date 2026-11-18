@@ -20,6 +20,7 @@ pub enum AppState {
     #[default]
     Loading,
     Menu,
+    Restarting,
     InGame,
 }
 
@@ -76,11 +77,18 @@ pub struct CatalogMap {
     pub name: String,
     pub setup: MatchSetup,
     pub preview: Handle<Image>,
+    pub skirmish: bool,
 }
 
 /// Bundled maps, sorted by name. Startup only opens the menu when at least one is valid.
 #[derive(Resource)]
 pub struct MapCatalog(pub Vec<CatalogMap>);
+
+impl MapCatalog {
+    pub fn preferred(&self) -> usize {
+        self.0.iter().position(|map| map.skirmish).unwrap_or(0)
+    }
+}
 
 pub struct GamePlugin;
 
@@ -166,6 +174,7 @@ fn start_match(
                 Ok(sim) => Some(CatalogMap {
                     name: map.0.name.clone(),
                     preview: images.add(map_preview(&sim, graphics)),
+                    skirmish: sim.is_skirmish(),
                     setup,
                 }),
                 Err(error) => {
@@ -216,6 +225,10 @@ mod tests {
                 (
                     "maps/crossroads.map.ron",
                     include_str!("../../../assets/maps/crossroads.map.ron"),
+                ),
+                (
+                    "maps/frontier.map.ron",
+                    include_str!("../../../assets/maps/frontier.map.ron"),
                 ),
             ],
         )
@@ -279,7 +292,8 @@ mod tests {
         );
         let catalog = &app.world().resource::<MapCatalog>().0;
         let names: Vec<_> = catalog.iter().map(|map| map.name.as_str()).collect();
-        assert_eq!(names, ["Crossroads", "Proving Grounds"]);
+        assert_eq!(names, ["Crossroads", "Frontier", "Proving Grounds"]);
+        assert!(catalog[1].skirmish);
         for map in catalog {
             assert!(map.setup.simulation().is_ok());
             assert!(
