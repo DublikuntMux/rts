@@ -22,6 +22,7 @@ fn rules(speed: &str) -> Rules {
 
 fn map(tiles: &[&str], start: IVec2) -> MapData {
     MapData {
+        skirmish: None,
         name: "terrain speed".into(),
         tiles: tiles.iter().map(|row| (*row).into()).collect(),
         players: vec![PlayerSlot { start }],

@@ -111,6 +111,7 @@ impl Sim {
         let mut kills = 0;
         let victim = self.units.get_mut(&target).expect("target is alive");
         let definition = self.rules.unit(victim.kind);
+        let building = definition.building;
         let grid = definition.ranks();
         let half_size = IVec2::splat(definition.radius);
         for _ in 0..shots {
@@ -129,7 +130,7 @@ impl Sim {
             };
             let health = &mut victim.soldiers[slot];
             *health = health.saturating_sub(damage).max(0);
-            if *health == 0 {
+            if *health == 0 && !building {
                 kills += 1;
             }
         }

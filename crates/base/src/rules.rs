@@ -90,6 +90,9 @@ pub struct UnitDef {
     /// Movement speed in world units per second (written in tiles per second).
     #[serde(deserialize_with = "de_tiles")]
     pub speed: i32,
+    /// Buildings occupy their placement tile and cannot receive movement orders.
+    #[serde(default)]
+    pub building: bool,
     /// Weapon carried by every soldier. Units without one never attack.
     #[serde(default)]
     pub weapon: Option<Weapon>,
@@ -259,9 +262,20 @@ impl Rules {
             if !ids.insert(&unit.id) {
                 return Err(LoadError::invalid(format!("duplicate unit `{}`", unit.id)));
             }
-            if unit.squad == 0 || unit.max_health <= 0 || unit.radius <= 0 || unit.speed <= 0 {
+            if unit.building && (unit.squad != 1 || unit.weapon.is_some()) {
                 return Err(LoadError::invalid(format!(
-                    "unit `{}` needs positive squad, max_health, radius, and speed",
+                    "building `{}` must have one health pool and no weapon",
+                    unit.id
+                )));
+            }
+            if unit.squad == 0
+                || unit.max_health <= 0
+                || unit.radius <= 0
+                || unit.speed < 0
+                || (!unit.building && unit.speed == 0)
+            {
+                return Err(LoadError::invalid(format!(
+                    "unit `{}` needs positive squad, max_health, and radius, and valid speed",
                     unit.id
                 )));
             }
@@ -344,7 +358,7 @@ impl Rules {
         u8::try_from(index).ok().map(TerrainId)
     }
 
-    pub(crate) fn unit_kind(&self, id: &str) -> Option<UnitKind> {
+    pub fn unit_kind(&self, id: &str) -> Option<UnitKind> {
         let index = self.units.iter().position(|u| u.id == id)?;
         u16::try_from(index).ok().map(UnitKind)
     }

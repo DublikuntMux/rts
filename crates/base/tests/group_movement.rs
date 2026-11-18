@@ -27,6 +27,7 @@ fn sim(tiles: &[&str], units: &[(&str, IVec2)], worker_speed: &str) -> Sim {
     Sim::new(
         rules(worker_speed),
         &MapData {
+            skirmish: None,
             name: "groups".into(),
             tiles: tiles.iter().map(|row| (*row).into()).collect(),
             players: vec![PlayerSlot { start: units[0].1 }],
@@ -209,6 +210,7 @@ fn rejected_slow_members_neither_join_nor_slow_the_accepted_group() {
     let mut sim = Sim::new(
         rules("2.0"),
         &MapData {
+            skirmish: None,
             name: "rejected group members".into(),
             tiles: vec!["..#..".into()],
             players: vec![

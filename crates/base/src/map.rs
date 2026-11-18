@@ -22,7 +22,14 @@ pub struct MapData {
     /// Units present when the match starts.
     #[serde(default)]
     pub units: Vec<UnitPlacement>,
+    /// Optional rules for a skirmish with headquarters objectives.
+    #[serde(default)]
+    pub skirmish: Option<SkirmishMap>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkirmishMap {}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

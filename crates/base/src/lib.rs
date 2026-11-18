@@ -14,6 +14,7 @@ mod movement;
 mod occupancy;
 mod path;
 mod rules;
+mod skirmish;
 
 use std::{
     collections::BTreeMap,
@@ -23,11 +24,13 @@ use std::{
 pub use command::{Command, INPUT_DELAY_TICKS};
 pub use coords::{TILE, tile_of};
 pub use glam::IVec2;
-pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, Terrain, UnitPlacement};
+pub use map::{MAX_MAP_SIDE, MapData, PlayerSlot, SkirmishMap, Terrain, UnitPlacement};
 pub use rules::{
     MAX_DAMAGE_BONUS, RankDef, Rules, SPEED_SCALE, SquadGrid, TerrainDef, TerrainId, UnitDef,
     UnitKind, VisualBounds, Weapon,
 };
+
+pub use skirmish::MatchOutcome;
 
 use crate::hash::StateHasher;
 use crate::movement::{MoveGroupId, MoveOrder};
@@ -110,6 +113,7 @@ pub struct Sim {
     move_orders: BTreeMap<UnitId, MoveOrder>,
     /// Ordered attack targets by attacker.
     attack_orders: BTreeMap<UnitId, UnitId>,
+    skirmish: Option<skirmish::Skirmish>,
 }
 
 /// Derived live group usage and pace; rebuilt after commands, never stored or hashed.
@@ -171,6 +175,7 @@ impl Sim {
             commands: BTreeMap::new(),
             move_orders: BTreeMap::new(),
             attack_orders: BTreeMap::new(),
+            skirmish: None,
         };
         let mut occupancy = Occupancy::new(sim.terrain.size());
         for (index, placement) in map.units.iter().enumerate() {
@@ -201,6 +206,9 @@ impl Sim {
             occupancy.add(placement.pos, size);
             sim.spawn_unit(kind, PlayerId(placement.owner), placement.pos);
         }
+        if map.skirmish.is_some() {
+            sim.setup_skirmish()?;
+        }
         Ok(sim)
     }
 
@@ -212,9 +220,13 @@ impl Sim {
     /// Advances one tick, applying agreed commands in their supplied order before pursuit,
     /// movement, and combat.
     /// Unlike [`Self::queue_command`], these commands incur no additional input delay.
-    /// Local commands already queued for this tick execute first.
+    /// Local commands already queued for this tick execute first. After a skirmish ends,
+    /// only the turn counter advances.
     pub fn step_with_commands(&mut self, commands: impl IntoIterator<Item = (PlayerId, Command)>) {
         self.tick += 1;
+        if self.outcome().is_some() {
+            return;
+        }
         let queued = self.commands.remove(&self.tick).unwrap_or_default();
         for (index, (player, command)) in (0_u64..).zip(queued.into_iter().chain(commands)) {
             let group = (self.tick, index);
@@ -223,6 +235,7 @@ impl Sim {
         self.pursue_targets();
         self.advance_movement();
         self.advance_combat();
+        self.update_outcome();
     }
 
     fn advance_movement(&mut self) {
@@ -288,7 +301,7 @@ impl Sim {
     /// Schedules a local command at the current tick plus [`INPUT_DELAY_TICKS`].
     /// Commands on the same tick retain submission order. Invalid players are ignored.
     pub fn queue_command(&mut self, player: PlayerId, command: Command) {
-        if usize::from(player.0) >= self.players.len() {
+        if self.outcome().is_some() || usize::from(player.0) >= self.players.len() {
             return;
         }
         if let Some(tick) = self.tick.checked_add(INPUT_DELAY_TICKS) {
@@ -317,7 +330,11 @@ impl Sim {
         units.dedup();
         let mut orders = Vec::new();
         for id in units {
-            let Some(unit) = self.units.get(&id).filter(|unit| unit.owner == player) else {
+            let Some(unit) = self
+                .units
+                .get(&id)
+                .filter(|unit| unit.owner == player && !self.rules.unit(unit.kind).building)
+            else {
                 continue;
             };
             if let Some(target) = target {
@@ -443,6 +460,9 @@ impl Sim {
         self.commands.hash(&mut hasher);
         self.move_orders.hash(&mut hasher);
         self.attack_orders.hash(&mut hasher);
+        if let Some(skirmish) = &self.skirmish {
+            skirmish.hash(&mut hasher);
+        }
         hasher.finish()
     }
 }

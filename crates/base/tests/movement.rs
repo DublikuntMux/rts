@@ -17,6 +17,7 @@ fn sim(tiles: &[&str], start: IVec2, speed: &str) -> Sim {
     Sim::new(
         rules,
         &MapData {
+            skirmish: None,
             name: "movement".into(),
             tiles: tiles.iter().map(|row| (*row).into()).collect(),
             players: vec![PlayerSlot { start }],
