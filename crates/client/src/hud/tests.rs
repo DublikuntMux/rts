@@ -3,15 +3,18 @@ use rts_base::PlayerId;
 use rts_net::MatchSetup;
 
 use super::*;
-use crate::{camera::RtsCamera, map::MapBounds};
+use crate::{camera::RtsCamera, map::MapBounds, menu::Menu};
 
 fn app() -> App {
-    let setup = MatchSetup {
+    app_with_setup(MatchSetup {
         rules: include_str!("../../../../assets/data/core.rules.ron").into(),
         map: include_str!("../../../../assets/maps/crossroads.map.ron").into(),
         seed: 0,
         players: 4,
-    };
+    })
+}
+
+fn app_with_setup(setup: MatchSetup) -> App {
     let sim = setup.simulation().unwrap();
     let dimensions = sim.terrain().size().as_vec2() * crate::map::to_world_distance(rts_base::TILE);
     let mut app = App::new();
@@ -32,7 +35,8 @@ fn app() -> App {
         .init_resource::<UiScale>()
         .init_resource::<Selection>()
         .init_resource::<PauseMenu>()
-        .add_plugins(HudPlugin);
+        .init_resource::<Menu>()
+        .add_plugins((HudPlugin, skirmish::SkirmishPlugin));
     let mut window = Window::default();
     window.resolution.set(1280.0, 720.0);
     app.world_mut().spawn((window, PrimaryWindow));
@@ -44,6 +48,53 @@ fn app() -> App {
     app.update();
     app.update();
     app
+}
+
+#[test]
+fn desktop_skirmish_training_uses_the_existing_command_grid_and_reports_activity() {
+    let mut app = app_with_setup(skirmish::test_setup());
+    let headquarters = UnitId(0);
+    app.world_mut().resource_mut::<Selection>().units = [headquarters].into();
+    app.update();
+
+    let world = app.world_mut();
+    let (button, slot) = world
+        .query::<(Entity, &Name, &Node, &ChildOf)>()
+        .iter(world)
+        .find_map(|(entity, name, node, parent)| {
+            (name.as_str() == "Train worker" && node.display == Display::Flex)
+                .then_some((entity, parent.parent()))
+        })
+        .unwrap();
+    assert_eq!(world.get::<CommandSlot>(slot).unwrap().0, 4);
+    world.trigger(Activate { entity: button });
+    app.update();
+    {
+        let mut game = app.world_mut().resource_mut::<Match>();
+        let commands = std::mem::take(&mut game.pending);
+        assert_eq!(
+            commands,
+            [rts_base::Command::TrainWorker {
+                units: vec![headquarters]
+            }]
+        );
+        game.sim
+            .step_with_commands(commands.into_iter().map(|command| (PlayerId(0), command)));
+    }
+    app.update();
+    let world = app.world_mut();
+    let mut labels = world.query::<(&HudText, &Text)>();
+    assert!(
+        labels
+            .iter(world)
+            .any(|(role, text)| matches!(role.0, TextRole::Detail) && text.0.contains("Training"))
+    );
+    assert!(
+        labels
+            .iter(world)
+            .any(|(role, text)| matches!(role.0, TextRole::Hint)
+                && text.0 == "Worker · 1s · 1 queued")
+    );
 }
 
 fn order(app: &mut App, order: Order) {

@@ -15,7 +15,7 @@ use bevy::{
     ui_widgets::{Activate, Button, observe},
 };
 use rts_assets::Graphics;
-use rts_base::UnitId;
+use rts_base::{Unit, UnitId};
 
 use crate::{
     font::GameFont,
@@ -23,6 +23,7 @@ use crate::{
     input::Selection,
     menu::widgets::{BAR, EDGE, FIELD, GOOD, INK, INK_MUTED, RAIL, SIGNAL, Tone, button_look},
     pause_menu::PauseMenu,
+    skirmish,
 };
 
 /// Maximum height, in logical pixels before interface scaling.
@@ -150,7 +151,7 @@ fn spawn_hud(
         .id();
     commands.entity(root).add_child(map).with_children(|bar| {
         spawn_selection_panel(bar, &font.0);
-        spawn_command_card(bar, &font.0, &assets);
+        spawn_command_card(bar, &font.0, &assets, &game);
         phone::spawn_overlays(bar, &font.0);
     });
 }
@@ -274,7 +275,12 @@ fn spawn_unit_details(row: &mut ChildSpawnerCommands, font: &Handle<Font>) {
     });
 }
 
-fn spawn_command_card(bar: &mut ChildSpawnerCommands, font: &Handle<Font>, assets: &AssetServer) {
+fn spawn_command_card(
+    bar: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    assets: &AssetServer,
+    game: &Match,
+) {
     bar.spawn((
         CommandCard,
         Node {
@@ -312,7 +318,8 @@ fn spawn_command_card(bar: &mut ChildSpawnerCommands, font: &Handle<Font>, asset
                     },
                     BackgroundColor(FIELD.with_alpha(0.5)),
                     BorderColor::all(EDGE.with_alpha(0.45)),
-                ));
+                ))
+                .with_children(|slot| skirmish::spawn_desktop_action(slot, index, font, game));
             }
         }
         phone::spawn_selection_button(card, font);
@@ -580,14 +587,10 @@ fn update_selection(
         _ => String::new(),
     };
     let squad: usize = units.iter().map(|(_, unit)| unit.soldiers.len()).sum();
-    let moving = units
-        .iter()
-        .filter(|(id, _)| game.sim.move_target(*id).is_some())
-        .count();
     let detail = if units.is_empty() {
         "Your forces await orders".into()
     } else {
-        let state = if moving > 0 { "Moving" } else { "Idle" };
+        let state = selection_state(&game, &units);
         if squad > units.len() {
             format!(
                 "{soldiers} / {squad} soldiers  ·  {total_health} / {max_health} HP  ·  {state}{veterancy}"
@@ -600,7 +603,7 @@ fn update_selection(
         let value = match role.0 {
             TextRole::Title => title.clone(),
             TextRole::Detail => detail.clone(),
-            TextRole::Hint => hint(&selection, *targeting).into(),
+            TextRole::Hint => selection_hint(&game, &selection, *targeting),
         };
         text.set_if_neq(Text::new(value));
     }
@@ -730,15 +733,40 @@ fn unit_name(id: &str) -> String {
     })
 }
 
-fn hint(selection: &Selection, targeting: Targeting) -> &'static str {
-    if targeting == Targeting::None {
-        match (selection.touch_mode, selection.units.is_empty()) {
-            (false, true) => "Click or drag to select units.",
-            (false, false) => "Right-click to move · X to stop",
-            (true, true) => "Tap or drag to select units.",
-            (true, false) => "Tap ground to move · Two fingers pan",
-        }
-    } else {
-        targeting.prompt()
+fn selection_state(game: &Match, units: &[(UnitId, &Unit)]) -> &'static str {
+    if let [(id, _)] = units
+        && let Some(state) = skirmish::economic_state(game, *id)
+    {
+        return state;
     }
+    if units
+        .iter()
+        .any(|(id, _)| game.sim.move_target(*id).is_some())
+    {
+        "Moving"
+    } else if units
+        .iter()
+        .any(|(id, _)| skirmish::economic_state(game, *id).is_some())
+    {
+        "Working"
+    } else {
+        "Idle"
+    }
+}
+
+fn selection_hint(game: &Match, selection: &Selection, targeting: Targeting) -> String {
+    if targeting != Targeting::None {
+        return targeting.prompt().into();
+    }
+    if let Some(hint) = skirmish::economy_hint(game, selection, targeting) {
+        return hint;
+    }
+    match (selection.touch_mode, selection.units.is_empty()) {
+        (false, true) => "Click or drag to select units.",
+        (true, true) => "Tap or drag to select units.",
+        (_, false) if selection.mobile_units(game).next().is_none() => "",
+        (false, false) => "Right-click to move · X to stop",
+        (true, false) => "Tap ground to move · Two fingers pan",
+    }
+    .into()
 }

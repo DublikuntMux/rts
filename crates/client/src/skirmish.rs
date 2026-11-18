@@ -9,7 +9,7 @@ use bevy::{
 };
 use rts_assets::SelectionStyle;
 use rts_base::{
-    Command, DepositId, IVec2 as SimPos, PRODUCTION_QUEUE_LIMIT, ResourceKind, Resources,
+    Command, DepositId, IVec2 as SimPos, PRODUCTION_QUEUE_LIMIT, ResourceKind, Resources, Training,
     TrainingKind, UnitId,
 };
 
@@ -257,44 +257,92 @@ fn spawn_economy_card(commands: &mut Commands, font: &Handle<Font>, game: &Match
             ))
             .with_children(|row| {
                 for action in EconomyAction::ALL {
-                    row.spawn((
-                        Name::new(action.label()),
-                        action,
-                        Button,
-                        Hovered::default(),
-                        Node {
-                            width: px(ACTION_WIDTH),
-                            height: px(ACTION_HEIGHT),
-                            border: UiRect::all(px(1)),
-                            flex_direction: FlexDirection::Column,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            row_gap: px(1),
-                            ..default()
-                        },
-                        BackgroundColor(BAR),
-                        BorderColor::all(EDGE),
-                        observe(activate_economy),
-                    ))
-                    .with_children(|button| {
-                        button.spawn((
-                            Text::new(action.label()),
-                            text_font(font, 11.0),
-                            TextColor(INK),
-                            Pickable::IGNORE,
-                        ));
-                        let cost = action.cost(game).unwrap_or_default();
-                        button.spawn((
-                            ActionCost,
-                            Text::new(format!("{} W · {} G", cost.wood, cost.gold)),
-                            text_font(font, 10.0),
-                            TextColor(INK_MUTED),
-                            Pickable::IGNORE,
-                        ));
-                    });
+                    spawn_economy_button(row, action, ActionLayout::Phone, font, game);
                 }
             });
         });
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum ActionLayout {
+    Desktop,
+    Phone,
+}
+
+pub fn spawn_desktop_action(
+    slot: &mut ChildSpawnerCommands,
+    index: usize,
+    font: &Handle<Font>,
+    game: &Match,
+) {
+    if game.sim.is_skirmish()
+        && let Some(&action) = index
+            .checked_sub(3)
+            .and_then(|offset| EconomyAction::ALL.get(offset))
+    {
+        spawn_economy_button(slot, action, ActionLayout::Desktop, font, game);
+    }
+}
+
+fn spawn_economy_button(
+    row: &mut ChildSpawnerCommands,
+    action: EconomyAction,
+    layout: ActionLayout,
+    font: &Handle<Font>,
+    game: &Match,
+) {
+    let desktop = layout == ActionLayout::Desktop;
+    row.spawn((
+        Name::new(action.label()),
+        action,
+        layout,
+        Button,
+        Hovered::default(),
+        Node {
+            display: Display::None,
+            width: px(if desktop { 46.0 } else { ACTION_WIDTH }),
+            height: px(if desktop { 46.0 } else { ACTION_HEIGHT }),
+            border: UiRect::all(px(1)),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            row_gap: px(1),
+            ..default()
+        },
+        BackgroundColor(BAR),
+        BorderColor::all(EDGE),
+        observe(activate_economy),
+    ))
+    .with_children(|button| {
+        let label = if desktop {
+            match action {
+                EconomyAction::Barracks => "Barracks",
+                EconomyAction::Worker => "Worker",
+                EconomyAction::RifleSquad => "Rifles",
+            }
+        } else {
+            action.label()
+        };
+        button.spawn((
+            Text::new(label),
+            text_font(font, 11.0),
+            TextColor(INK),
+            Pickable::IGNORE,
+        ));
+        let cost = action.cost(game).unwrap_or_default();
+        let cost_label = if desktop {
+            format!("{}W {}G", cost.wood, cost.gold)
+        } else {
+            format!("{} W · {} G", cost.wood, cost.gold)
+        };
+        button.spawn((
+            ActionCost,
+            Text::new(cost_label),
+            text_font(font, if desktop { 9.0 } else { 10.0 }),
+            TextColor(INK_MUTED),
+            Pickable::IGNORE,
+        ));
+    });
 }
 
 fn activate_economy(
@@ -342,6 +390,7 @@ fn activate_economy(
 type EconomyButton<'a> = (
     Entity,
     &'a EconomyAction,
+    &'a ActionLayout,
     &'a Hovered,
     Has<Pressed>,
     Has<InteractionDisabled>,
@@ -396,7 +445,7 @@ fn update_skirmish(
         };
     }
     for mut card in &mut cards {
-        card.display = if count > 0 && phone.panel.is_none() && !pause.open {
+        card.display = if hud.phone && count > 0 && phone.panel.is_none() && !pause.open {
             Display::Flex
         } else {
             Display::None
@@ -405,11 +454,14 @@ fn update_skirmish(
         card.max_width = px((size.x - 16.0).max(0.0));
     }
     for mut hint in &mut hints {
-        hint.set_if_neq(Text::new(economy_hint(&game, &selection, *targeting)));
+        hint.set_if_neq(Text::new(
+            economy_hint(&game, &selection, *targeting).unwrap_or_default(),
+        ));
     }
     for (
         entity,
         action,
+        layout,
         hovered,
         pressed,
         was_disabled,
@@ -419,8 +471,11 @@ fn update_skirmish(
         mut border,
     ) in &mut buttons
     {
-        let visible = action.units(&game, &selection).next().is_some();
-        node.width = px(action_width(size.x, count));
+        let visible = (*layout == ActionLayout::Phone) == hud.phone
+            && action.units(&game, &selection).next().is_some();
+        if *layout == ActionLayout::Phone {
+            node.width = px(action_width(size.x, count));
+        }
         node.display = if visible {
             Display::Flex
         } else {
@@ -462,57 +517,126 @@ pub fn resource_bar_position(hud: &HudLayout) -> Vec2 {
     }
 }
 
-fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -> String {
+pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -> Option<String> {
     if targeting == Targeting::Barracks {
-        return targeting.prompt().into();
+        return Some(targeting.prompt().into());
     }
-    if let Some((training, queued)) = selection.units.iter().find_map(|&id| {
-        let queue = game.sim.production(id)?;
-        queue.first().map(|training| (training, queue.len()))
-    }) {
-        let name = match training.kind {
-            TrainingKind::Worker => "Worker",
-            TrainingKind::RifleSquad => "Rifle squad",
-        };
-        let progress = if training.remaining == 0 {
-            "Waiting for room".into()
-        } else {
-            format!("{}s", training.remaining.div_ceil(rts_base::TICK_RATE))
-        };
-        return format!("{name} · {progress} · {queued} queued");
+    if let Some(work) = selection
+        .units
+        .iter()
+        .find_map(|&unit| economic_activity(game, unit))
+    {
+        return Some(work.description());
     }
-    if let Some((worker, remaining)) = workers(game, selection).find_map(|id| {
-        game.sim
-            .construction_remaining(id)
-            .map(|remaining| (id, remaining))
-    }) {
-        if game.sim.move_target(worker).is_some() {
-            return "Worker en route to build".into();
-        }
-        return format!(
-            "Building barracks · {}s",
-            remaining.div_ceil(rts_base::TICK_RATE)
+    if workers(game, selection).next().is_some() && game.sim.is_skirmish() {
+        return Some(
+            if selection.touch_mode {
+                "Tap a deposit to gather"
+            } else {
+                "Right-click a deposit to gather"
+            }
+            .into(),
         );
     }
-    if let Some((kind, amount)) = workers(game, selection).find_map(|id| game.sim.cargo(id)) {
-        return format!("Carrying {amount} {}", resource_label(kind).to_lowercase());
-    }
-    if let Some(kind) = workers(game, selection)
-        .find_map(|id| game.sim.gather_target(id))
-        .and_then(|target| game.sim.deposit(target))
-        .map(|deposit| deposit.kind)
+    if game.sim.is_skirmish()
+        && EconomyAction::Worker
+            .units(game, selection)
+            .next()
+            .is_some()
     {
-        return format!("Gathering {}", resource_label(kind).to_lowercase());
+        return Some("Train workers at headquarters.".into());
     }
-    if workers(game, selection).next().is_some() {
-        return if selection.touch_mode {
-            "Tap a deposit to gather"
-        } else {
-            "Right-click a deposit to gather"
+    if game.sim.is_skirmish()
+        && EconomyAction::RifleSquad
+            .units(game, selection)
+            .next()
+            .is_some()
+    {
+        return Some("Train rifle squads at the barracks.".into());
+    }
+    None
+}
+
+pub fn economic_state(game: &Match, unit: UnitId) -> Option<&'static str> {
+    economic_activity(game, unit).map(|activity| activity.state())
+}
+
+enum EconomicActivity {
+    ApproachingSite,
+    Building(u32),
+    Delivering(ResourceKind, u32),
+    Carrying(ResourceKind, u32),
+    Gathering(ResourceKind),
+    Training(Training, usize),
+}
+
+impl EconomicActivity {
+    const fn state(&self) -> &'static str {
+        match self {
+            Self::ApproachingSite => "En route to build",
+            Self::Building(_) => "Building",
+            Self::Delivering(..) => "Delivering",
+            Self::Carrying(..) => "Carrying",
+            Self::Gathering(_) => "Gathering",
+            Self::Training(training, _) if training.remaining == 0 => "Waiting for room",
+            Self::Training(..) => "Training",
         }
-        .into();
     }
-    "Choose a unit to train".into()
+
+    fn description(&self) -> String {
+        match *self {
+            Self::ApproachingSite => "Worker en route to build".into(),
+            Self::Building(ticks) => format!(
+                "Building barracks · {}s",
+                ticks.div_ceil(rts_base::TICK_RATE)
+            ),
+            Self::Delivering(kind, amount) | Self::Carrying(kind, amount) => {
+                let state = self.state();
+                format!("{state} {amount} {}", resource_label(kind).to_lowercase())
+            }
+            Self::Gathering(kind) => format!("Gathering {}", resource_label(kind).to_lowercase()),
+            Self::Training(training, queued) => {
+                let name = match training.kind {
+                    TrainingKind::Worker => "Worker",
+                    TrainingKind::RifleSquad => "Rifle squad",
+                };
+                let progress = if training.remaining == 0 {
+                    "Waiting for room".into()
+                } else {
+                    format!("{}s", training.remaining.div_ceil(rts_base::TICK_RATE))
+                };
+                format!("{name} · {progress} · {queued} queued")
+            }
+        }
+    }
+}
+
+fn economic_activity(game: &Match, unit: UnitId) -> Option<EconomicActivity> {
+    if let Some(remaining) = game.sim.construction_remaining(unit) {
+        return Some(if game.sim.move_target(unit).is_some() {
+            EconomicActivity::ApproachingSite
+        } else {
+            EconomicActivity::Building(remaining)
+        });
+    }
+    let gathering = game
+        .sim
+        .gather_target(unit)
+        .and_then(|id| game.sim.deposit(id));
+    if let Some((kind, amount)) = game.sim.cargo(unit) {
+        return Some(if gathering.is_some() {
+            EconomicActivity::Delivering(kind, amount)
+        } else {
+            EconomicActivity::Carrying(kind, amount)
+        });
+    }
+    if let Some(deposit) = gathering {
+        return Some(EconomicActivity::Gathering(deposit.kind));
+    }
+    let queue = game.sim.production(unit)?;
+    queue
+        .first()
+        .map(|job| EconomicActivity::Training(*job, queue.len()))
 }
 
 fn update_deposits(game: Res<Match>, mut sprites: Query<(&DepositSprite, &mut Visibility)>) {
@@ -607,11 +731,7 @@ fn visible_actions(game: &Match, selection: &Selection) -> usize {
 }
 
 fn actions_bottom(hud: &HudLayout) -> f32 {
-    if hud.phone {
-        8.0 + hud.commands.map_or(0.0, |rect| rect.height() + 8.0)
-    } else {
-        hud.bottom_inset + 8.0
-    }
+    8.0 + hud.commands.map_or(0.0, |rect| rect.height() + 8.0)
 }
 
 #[expect(clippy::cast_precision_loss, reason = "only three actions")]
@@ -627,6 +747,9 @@ pub fn actions_bounds(
     size: Vec2,
     hud: &HudLayout,
 ) -> Option<Rect> {
+    if !hud.phone {
+        return None;
+    }
     let count = visible_actions(game, selection);
     if count == 0 {
         return None;
