@@ -418,10 +418,11 @@ mod tests {
             Graphics::from_ron(include_str!("../../../assets/data/client.graphics.ron")).unwrap();
         let detail = &graphics.terrain_detail;
         assert!(show_detail(1.0, false, detail));
-        assert!(!show_detail(4.0, true, detail));
-        assert!(show_detail(3.0, true, detail));
-        assert!(!show_detail(3.0, false, detail));
-        assert!(show_detail(2.5, false, detail));
+        assert!(show_detail(4.0, true, detail));
+        assert!(!show_detail(12.0, true, detail));
+        assert!(show_detail(9.0, true, detail));
+        assert!(!show_detail(9.0, false, detail));
+        assert!(show_detail(8.0, false, detail));
 
         let detail = TerrainDetail {
             colors_below: 64.0,

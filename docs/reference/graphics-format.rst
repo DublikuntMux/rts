@@ -68,7 +68,7 @@ colors switch to textures at exactly ``textures_at``. See
 
 Units and terrain use one shared zoom state. Unit size and crowded-group
 scaling do not affect when units become rectangles. The bundled thresholds are
-40 and 48 pixels per tile. Unit bounds, anchors, and hit tests stay the same.
+12 and 16 pixels per tile. Unit bounds, anchors, and hit tests stay the same.
 
 Invalid or missing graphics data logs an asset loading error and keeps the
 client in its loading state. There is no hardcoded graphics fallback.

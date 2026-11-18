@@ -571,11 +571,11 @@ mod tests {
         assert_eq!(-anchor.0 * bounds.size, bounds.offset);
         let original = *app.world().get::<Transform>(entity).unwrap();
         for (pixels, detailed) in [
-            (64.0, true),
-            (40.0, true),
-            (39.0, false),
-            (44.0, false),
-            (48.0, true),
+            (32.0, true),
+            (13.0, true),
+            (11.0, false),
+            (14.0, false),
+            (16.0, true),
         ] {
             let mut projection = app.world_mut().get_mut::<Projection>(camera).unwrap();
             let Projection::Orthographic(ortho) = projection.as_mut() else {

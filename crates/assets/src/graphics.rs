@@ -165,10 +165,10 @@ mod tests {
             ("marker_cross_size: 5.0", "marker_cross_size: inf"),
             ("marker_duration: 0.6", "marker_duration: -0.6"),
             ("marker_duration: 0.6", "marker_duration: NaN"),
-            ("colors_below: 40.0", "colors_below: 0.0"),
-            ("textures_at: 48.0", "textures_at: NaN"),
-            ("textures_at: 48.0", "textures_at: 40.0"),
-            ("textures_at: 48.0", "textures_at: 39.0"),
+            ("colors_below: 12.0", "colors_below: 0.0"),
+            ("textures_at: 16.0", "textures_at: NaN"),
+            ("textures_at: 16.0", "textures_at: 12.0"),
+            ("textures_at: 16.0", "textures_at: 11.0"),
             ("padding: 4.0", "paddding: 4.0"),
         ] {
             assert!(BUNDLED.contains(from));
