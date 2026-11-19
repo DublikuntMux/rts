@@ -95,6 +95,13 @@ deployment steps were not executed end to end here.
 Frontier skirmish
 -----------------
 
+**Fogged Frontier session (2026-11-19).** A native rendered Linux Frontier
+session at 1280×720 selected a difficulty, showed a fogged opening preview,
+ordered workers to gather both stocks, built a barracks, trained a scout,
+selected it, and issued a move into black terrain. The main view and minimap
+revealed new ground, and the terrain dimmed upon return. No rendered browser or
+physical mobile test was run.
+
 **Integrated acceptance (2026-11-18).** At commit ``c92e4aa``, 322
 workspace tests passed, along with workspace Clippy with all targets and
 warnings denied, the workspace ``wasm32-unknown-unknown`` check, the Android
