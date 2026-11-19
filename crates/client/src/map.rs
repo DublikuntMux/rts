@@ -93,7 +93,7 @@ pub fn update_zoom_detail(
 }
 
 #[derive(Component)]
-struct TerrainChunk;
+struct TerrainChunk(u32);
 
 /// The original palette stays separate from the detailed terrain for distant zoom and minimaps.
 #[derive(Resource)]
@@ -135,7 +135,7 @@ fn spawn_terrain(
         .collect();
     commands.spawn((
         DespawnOnExit(AppState::InGame),
-        TerrainChunk,
+        TerrainChunk(game.view.terrain_revision()),
         TilemapChunk {
             chunk_size,
             tile_display_size: UVec2::splat(TILE_PX),
@@ -183,20 +183,15 @@ pub fn fog_tiles(view: &PlayerView) -> Vec<Option<TileData>> {
         .collect()
 }
 
-/// Redraws fog after each applied tick.
-fn update_fog(
-    game: Res<Match>,
-    mut drawn: Local<Option<u32>>,
-    mut chunks: Query<&mut TilemapChunkTileData, With<TerrainChunk>>,
-) {
-    let tick = game.view.tick();
-    if *drawn == Some(tick) && !game.is_added() {
-        return;
-    }
-    *drawn = Some(tick);
+/// Redraws only when discovery or current sight changes, or a new match starts.
+fn update_fog(game: Res<Match>, mut chunks: Query<(&mut TerrainChunk, &mut TilemapChunkTileData)>) {
+    let revision = game.view.terrain_revision();
     let size = game.view.size().as_uvec2();
-    for mut data in &mut chunks {
-        *data = TilemapChunkTileData::from_y_down_tiles(size, fog_tiles(&game.view));
+    for (mut drawn, mut data) in &mut chunks {
+        if drawn.0 != revision || game.is_added() {
+            *data = TilemapChunkTileData::from_y_down_tiles(size, fog_tiles(&game.view));
+            drawn.0 = revision;
+        }
     }
 }
 
@@ -484,6 +479,71 @@ mod tests {
         let tiles = fog_tiles(&view);
         assert_eq!(tiles[1].unwrap().color, REMEMBERED_TINT);
         assert_eq!(tiles[29].unwrap().color, Color::WHITE);
+    }
+
+    #[test]
+    fn terrain_redraws_only_when_the_terrain_revision_changes() {
+        let row = ".".repeat(30);
+        let map = rts_base::MapData::from_ron(&format!(
+            r#"(name: "fog", players: [(start: (1.5, 0.5))], tiles: ["{row}"],
+            units: [(kind: "worker", owner: 0, pos: (1.5, 0.5))])"#
+        ))
+        .unwrap();
+        let sim = rts_base::Sim::new(rules(), &map).unwrap();
+        let game = crate::game::Match::new(sim, rts_base::PlayerId(0), true);
+        let revision = game.view.terrain_revision();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(game)
+            .add_systems(Update, update_fog);
+        let blank = || TilemapChunkTileData(vec![None; 30]);
+        let chunk = app
+            .world_mut()
+            .spawn((TerrainChunk(revision), blank()))
+            .id();
+        let drawn = |app: &App| {
+            app.world()
+                .get::<TilemapChunkTileData>(chunk)
+                .unwrap()
+                .iter()
+                .all(Option::is_some)
+        };
+        app.update();
+        assert!(drawn(&app), "a new match draws its terrain");
+
+        app.world_mut().entity_mut(chunk).insert(blank());
+        app.world_mut().resource_mut::<crate::game::Match>().step();
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<crate::game::Match>()
+                .view
+                .terrain_revision(),
+            revision
+        );
+        assert!(!drawn(&app), "quiet ticks keep the drawn terrain");
+
+        let mut game = app.world_mut().resource_mut::<crate::game::Match>();
+        game.step_with([(
+            rts_base::PlayerId(0),
+            rts_base::Command::Move {
+                units: vec![rts_base::UnitId(0)],
+                target: SimPos::new(28 * TILE + TILE / 2, TILE / 2),
+            },
+        )]);
+        for _ in 0..200 {
+            if game.view.terrain_revision() != revision {
+                break;
+            }
+            game.step();
+        }
+        assert_ne!(
+            game.view.terrain_revision(),
+            revision,
+            "the worker discovers terrain"
+        );
+        app.update();
+        assert!(drawn(&app), "discovery redraws the terrain");
     }
 
     #[test]

@@ -711,7 +711,11 @@ pub fn deposit_at(game: &Match, position: Vec2, scale: f32) -> Option<DepositId>
     let radius = (DEPOSIT_SIZE / 2.0).max(14.0 * scale);
     game.view
         .deposits()
-        .filter(|(_, deposit)| deposit.remaining > 0)
+        .filter(|(_, deposit)| {
+            deposit.remaining > 0
+                && game.view.visibility(rts_base::tile_of(deposit.pos))
+                    == rts_base::TileVisibility::Visible
+        })
         .map(|(id, deposit)| (id, position.distance_squared(to_world(deposit.pos))))
         .filter(|(_, distance)| *distance <= radius * radius)
         .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -988,5 +992,63 @@ mod tests {
             economy_hint(&game, &selection, Targeting::None).as_deref(),
             Some("Train rifle squads at the barracks.")
         );
+    }
+
+    #[test]
+    fn remembered_deposits_are_not_gather_targets() {
+        let mut setup = test_setup();
+        setup.map = r#"(
+            name: "Remembered deposit",
+            players: [(start: (0.5, 0.5)), (start: (29.5, 1.5))],
+            tiles: ["..............................", ".............................."],
+            units: [
+                (kind: "headquarters", owner: 0, pos: (0.5, 0.5)),
+                (kind: "headquarters", owner: 1, pos: (29.5, 1.5)),
+                (kind: "worker", owner: 0, pos: (12.5, 0.5)),
+            ],
+            skirmish: Some((deposits: [
+                (kind: Wood, pos: (13.5, 0.5), remaining: 11),
+                (kind: Gold, pos: (1.5, 1.5), remaining: 13),
+            ])),
+        )"#
+        .into();
+        let mut game = Match::new(setup.simulation().unwrap(), rts_base::PlayerId(0), true);
+        let (id, deposit) = game
+            .view
+            .deposits()
+            .find(|(_, deposit)| deposit.kind == ResourceKind::Wood)
+            .unwrap();
+        let position = to_world(deposit.pos);
+        assert_eq!(deposit_at(&game, position, 1.0), Some(id));
+
+        let worker = workers(
+            &game,
+            &Selection {
+                units: game.view.units().map(|(id, _)| id).collect(),
+                ..Selection::default()
+            },
+        )
+        .next()
+        .unwrap();
+        game.step_with([(
+            rts_base::PlayerId(0),
+            Command::Move {
+                units: vec![worker],
+                target: SimPos::new(25 * rts_base::TILE + rts_base::TILE / 2, rts_base::TILE / 2),
+            },
+        )]);
+        let tile = rts_base::tile_of(deposit.pos);
+        for _ in 0..200 {
+            if game.view.visibility(tile) != rts_base::TileVisibility::Visible {
+                break;
+            }
+            game.step();
+        }
+        assert_eq!(
+            game.view.visibility(tile),
+            rts_base::TileVisibility::Remembered
+        );
+        assert!(game.view.deposits().any(|(remembered, _)| remembered == id));
+        assert_eq!(deposit_at(&game, position, 1.0), None);
     }
 }

@@ -142,13 +142,16 @@ rules.
 Rendering
 ---------
 
-* Terrain (``map.rs``) redraws its tile data once per applied tick.
-  Unexplored tiles use a black tint, remembered tiles a dim tint
+* Terrain (``map.rs``) redraws its tile data only when
+  ``PlayerView::terrain_revision`` changes (discovery or lost sight) and when a
+  match starts; quiet ticks skip the redraw. Unexplored tiles use a black tint, remembered tiles a dim tint
   (``REMEMBERED_TINT``), and visible tiles no tint.
 * The minimap terrain image (``hud/minimap.rs``) is regenerated on the same
-  schedule. Its markers are the view's units, so hidden enemies have none.
+  revision check. It keeps its CPU pixels (``MAIN_WORLD`` usage) so it can be
+  rewritten in place. Its markers are the view's units, so hidden enemies have none.
 * Deposit sprites (``skirmish.rs``) spawn when a deposit is first seen and are
-  dimmed while out of sight.
+  dimmed while out of sight. Only a deposit in sight now is a gather target;
+  right-clicking a remembered one issues a move to explore it instead.
 * Unit visuals follow ``PlayerView::units``. An enemy that leaves sight is
   despawned like a dead unit.
 

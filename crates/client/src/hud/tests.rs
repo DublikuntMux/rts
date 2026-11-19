@@ -521,3 +521,99 @@ fn minimap_markers_track_removal_and_recreated_hud_without_duplicates() {
     app.update();
     assert_eq!(markers.iter(app.world()).count(), expected - 1);
 }
+
+/// A 30-tile corridor whose far end starts unexplored.
+const CORRIDOR: &str = r#"(
+    name: "Corridor",
+    players: [(start: (0.5, 0.5)), (start: (29.5, 1.5))],
+    tiles: ["..............................", ".............................."],
+    units: [
+        (kind: "headquarters", owner: 0, pos: (0.5, 0.5)),
+        (kind: "headquarters", owner: 1, pos: (29.5, 1.5)),
+        (kind: "worker", owner: 0, pos: (12.5, 0.5)),
+    ],
+    skirmish: Some((deposits: [
+        (kind: Wood, pos: (13.5, 0.5), remaining: 11),
+        (kind: Gold, pos: (1.5, 1.5), remaining: 13),
+    ])),
+)"#;
+
+#[test]
+fn minimap_keeps_its_pixels_and_redraws_only_for_new_terrain_knowledge() {
+    let mut setup = skirmish::test_setup();
+    setup.map = CORRIDOR.into();
+    let mut app = app_with_setup(setup);
+    let handle = app
+        .world_mut()
+        .query_filtered::<&ImageNode, With<minimap::MapImage>>()
+        .single(app.world())
+        .unwrap()
+        .image
+        .clone();
+    let pixels = |app: &mut App| {
+        app.world_mut()
+            .resource_mut::<Assets<Image>>()
+            .get_mut(&handle)
+            .expect("the minimap image stays in the main world")
+            .data
+            .clone()
+            .expect("CPU pixels are retained")
+    };
+    let len = pixels(&mut app).len();
+    let mark = |app: &mut App| {
+        app.world_mut()
+            .resource_mut::<Assets<Image>>()
+            .get_mut(&handle)
+            .unwrap()
+            .data = Some(vec![0; len]);
+    };
+
+    mark(&mut app);
+    let revision = app.world().resource::<Match>().view.terrain_revision();
+    app.world_mut().resource_mut::<Match>().step();
+    app.update();
+    assert_eq!(
+        app.world().resource::<Match>().view.terrain_revision(),
+        revision
+    );
+    assert_eq!(
+        pixels(&mut app),
+        vec![0; len],
+        "quiet ticks skip the redraw"
+    );
+
+    let mut game = app.world_mut().resource_mut::<Match>();
+    let worker = game
+        .view
+        .units()
+        .find(|(_, unit)| unit.owner == PlayerId(0) && game.view.rules().unit(unit.kind).speed > 0)
+        .unwrap()
+        .0;
+    game.step_with([(
+        PlayerId(0),
+        rts_base::Command::Move {
+            units: vec![worker],
+            target: rts_base::IVec2::new(
+                25 * rts_base::TILE + rts_base::TILE / 2,
+                rts_base::TILE / 2,
+            ),
+        },
+    )]);
+    for _ in 0..200 {
+        if game.view.terrain_revision() != revision {
+            break;
+        }
+        game.step();
+    }
+    assert_ne!(
+        game.view.terrain_revision(),
+        revision,
+        "the worker discovers terrain"
+    );
+    app.update();
+    assert_ne!(
+        pixels(&mut app),
+        vec![0; len],
+        "discovery redraws the minimap"
+    );
+}

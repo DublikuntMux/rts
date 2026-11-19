@@ -31,7 +31,7 @@ use crate::{
 #[derive(Component)]
 pub(super) struct Minimap;
 #[derive(Component)]
-pub(super) struct MapImage;
+pub(super) struct MapImage(u32);
 #[derive(Component)]
 pub(super) struct CameraFootprint;
 #[derive(Component)]
@@ -58,7 +58,7 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
         .id();
     commands.entity(root).with_children(|well| {
         well.spawn((
-            MapImage,
+            MapImage(game.view.terrain_revision()),
             Node {
                 width: px(168),
                 height: px(168.0 * aspect.y / aspect.x),
@@ -102,7 +102,7 @@ fn terrain_image(view: &PlayerView) -> Image {
         TextureDimension::D2,
         pixels,
         TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
     image.sampler = ImageSampler::nearest();
     image
@@ -138,20 +138,19 @@ fn terrain_pixels(view: &PlayerView) -> Vec<u8> {
         .collect()
 }
 
-/// Redraws the terrain image after each applied tick.
+/// Redraws the terrain image when discovery or current sight changes, or a new match starts.
 pub(super) fn update_minimap_fog(
     game: Res<Match>,
-    map: Single<&ImageNode, With<MapImage>>,
+    map: Single<(&ImageNode, &mut MapImage)>,
     mut images: ResMut<Assets<Image>>,
-    mut drawn: Local<Option<u32>>,
 ) {
-    let tick = game.view.tick();
-    if *drawn == Some(tick) && !game.is_added() {
-        return;
-    }
-    *drawn = Some(tick);
-    if let Some(mut image) = images.get_mut(&map.image) {
+    let revision = game.view.terrain_revision();
+    let (map, mut drawn) = map.into_inner();
+    if (drawn.0 != revision || game.is_added())
+        && let Some(mut image) = images.get_mut(&map.image)
+    {
         image.data = Some(terrain_pixels(&game.view));
+        drawn.0 = revision;
     }
 }
 
