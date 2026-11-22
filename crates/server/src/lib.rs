@@ -1,8 +1,7 @@
-//! Bounded lobby and authoritative fixed-rate simulation server.
+//! Bounded lobby and authoritative fixed-rate simulation server over QUIC.
 //!
-//! [`Coordinator`] is independent of sockets and clocks. Native builds also expose
-//! [`serve`] and [`serve_with_config`]. The runtime accepts plain `WebSockets`; terminate
-//! TLS at a reverse proxy for browser WSS clients.
+//! [`Coordinator`] is independent of sockets and clocks. [`serve`] and [`serve_with_config`]
+//! run it over a pure-Rust QUIC endpoint with TLS 1.3 encryption and compact binary framing.
 
 mod coordinator;
 mod layout;

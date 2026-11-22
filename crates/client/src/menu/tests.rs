@@ -103,13 +103,13 @@ fn native_and_browser_fields_share_form_and_validated_name_storage() {
     let mut settings = Settings::default();
     store_field_value(
         Field::Url,
-        "wss://example.test".into(),
+        "quic://example.test:9001".into(),
         &mut form,
         &mut settings,
     );
     store_field_value(Field::Code, "ABC123".into(), &mut form, &mut settings);
     store_field_value(Field::Name, "Лея 👩".into(), &mut form, &mut settings);
-    assert_eq!(form.url, "wss://example.test");
+    assert_eq!(form.url, "quic://example.test:9001");
     assert_eq!(form.code, "ABC123");
     assert_eq!(form.name.as_deref(), Some("Лея 👩"));
     assert_eq!(settings.name, "Лея 👩");
@@ -262,23 +262,23 @@ fn every_page_and_dialog_spawns_on_wide_and_compact_screens() {
         act(&mut app, Action::Section(Section::Multiplayer));
         assert_shows(&mut app, &["Connect to a server", "Server address"]);
         status(&mut app).server = Server::Failed {
-            url: "ws://down".into(),
+            url: "quic://down:9001".into(),
             reason: "Connection refused.".into(),
         };
         settle(&mut app);
         assert_shows(
             &mut app,
-            &["Could not connect to ws://down. Connection refused."],
+            &["Could not connect to quic://down:9001. Connection refused."],
         );
         status(&mut app).server = Server::Connecting {
-            url: "ws://up".into(),
+            url: "quic://up:9001".into(),
         };
         settle(&mut app);
-        assert_shows(&mut app, &["Connecting…", "ws://up"]);
+        assert_shows(&mut app, &["Connecting…", "quic://up:9001"]);
         {
             let mut status = status(&mut app);
             status.server = Server::Connected {
-                url: "ws://up:9001".into(),
+                url: "quic://up:9001".into(),
             };
             status.rooms = vec![RoomInfo {
                 code: "BBBBBB".into(),
@@ -370,7 +370,7 @@ fn actions_follow_session_state_and_send_session_actions() {
     app.update();
     assert_eq!(sent(&mut app), []);
     status(&mut app).server = Server::Connected {
-        url: "ws://up".into(),
+        url: "quic://up:9001".into(),
     };
     app.world_mut().resource_mut::<MenuForm>().code = "ABC123".into();
     app.world_mut().resource_mut::<Settings>().name = "Ada".into();
@@ -413,24 +413,27 @@ fn actions_follow_session_state_and_send_session_actions() {
 fn successful_connections_become_the_recent_server() {
     let mut app = app(1280);
     status(&mut app).server = Server::Connected {
-        url: "ws://10.0.0.2:9001".into(),
+        url: "quic://10.0.0.2:9001".into(),
     };
     settle(&mut app);
     assert_eq!(
         app.world().resource::<Settings>().recent_server.as_deref(),
-        Some("ws://10.0.0.2:9001")
+        Some("quic://10.0.0.2:9001")
     );
     status(&mut app).server = Server::Offline;
     act(&mut app, Action::Section(Section::Multiplayer));
     act(&mut app, Action::UseRecentServer);
-    assert_eq!(app.world().resource::<MenuForm>().url, "ws://10.0.0.2:9001");
+    assert_eq!(
+        app.world().resource::<MenuForm>().url,
+        "quic://10.0.0.2:9001"
+    );
     let field = app
         .world_mut()
         .query::<(&Field, &EditableText)>()
         .iter(app.world())
         .find(|(field, _)| **field == Field::Url)
         .map(|(_, text)| text.value().to_string());
-    assert_eq!(field.as_deref(), Some("ws://10.0.0.2:9001"));
+    assert_eq!(field.as_deref(), Some("quic://10.0.0.2:9001"));
 }
 
 #[test]
@@ -520,9 +523,11 @@ fn form_validates_addresses_and_codes() {
     let mut form = MenuForm::default();
     assert!(form.url_valid());
     for (url, valid) in [
-        (" ws:// ", false),
+        (" quic:// ", false),
         ("http://host", false),
-        (" wss://relay.example ", true),
+        ("ws://host:9001", false),
+        (" quic://relay.example:9001 ", true),
+        ("relay.example:9001", true),
     ] {
         form.url = url.into();
         assert_eq!(form.url_valid(), valid, "{url}");

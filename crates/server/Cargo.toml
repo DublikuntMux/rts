@@ -1,6 +1,6 @@
 [package]
 name = "rts_server"
-description = "WebSocket lobby and authoritative fixed-rate simulation server."
+description = "QUIC lobby and authoritative fixed-rate simulation server."
 version.workspace = true
 edition.workspace = true
 
@@ -15,10 +15,8 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-futures-util.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 rts_base.workspace = true
-rts_net.workspace = true
+rts_net = { workspace = true, features = ["quic"] }
 thiserror.workspace = true
 tokio.workspace = true
-tokio-tungstenite.workspace = true

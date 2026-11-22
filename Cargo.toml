@@ -38,10 +38,14 @@ miniz_oxide = "0.9.1"
 rand = { version = "0.10.4", default-features = false, features = ["std", "std_rng"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
-ewebsock = { version = "0.8.0", default-features = false }
-futures-util = { version = "0.3.34", features = ["sink"] }
+bytes = "1.11.1"
+glomar = "0.4.0"
+glomar-rustls = "0.4.0"
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "bloom", "log"] }
+quinn-proto = { version = "0.11.19", default-features = false, features = ["bloom", "log"] }
+rcgen = { version = "0.14.10", default-features = false }
+rustls = { version = "0.23.46", default-features = false, features = ["std"] }
 tokio = { version = "1.54.1", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
-tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
 
 rts_ai = { path = "crates/ai" }
 rts_assets = { path = "crates/assets" }

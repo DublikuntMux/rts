@@ -1,20 +1,36 @@
-use std::time::{Duration, Instant};
+use std::{
+    net::UdpSocket,
+    time::{Duration, Instant},
+};
 
-use futures_util::{SinkExt, StreamExt};
 use rts_base::{Command, IVec2, PlayerId, PlayerView, Rules, TILE, UnitId};
 use rts_net::{
-    ClientMessage, LobbySetup, MAX_MESSAGE_BYTES, MatchSetup, PROTOCOL_VERSION, Recording,
-    ServerMessage, ViewReplay, decode_server, encode_client,
+    ClientMessage, LobbySetup, MAX_MESSAGE_BYTES, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
+    PROTOCOL_VERSION, Recording, ServerMessage, ViewReplay, decode_server, encode_client,
+    quic::{
+        PRIORITY_GAME, STREAM_GAME, ServerCertificate, client_endpoint,
+        quinn::{Connection, Endpoint, RecvStream, SendStream},
+        read_frame, server_endpoint, write_frame,
+    },
 };
 use rts_server::{Config, RANDOM_MAP_NAME, serve_with_config};
 use tokio::{
-    net::{TcpListener, TcpStream},
     task::JoinHandle,
     time::{sleep, timeout},
 };
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
-type Client = WebSocketStream<MaybeTlsStream<TcpStream>>;
+struct Client {
+    _endpoint: Endpoint,
+    conn: Connection,
+    send: SendStream,
+    recv: RecvStream,
+}
+
+impl Client {
+    fn close(self) {
+        self.conn.close(0_u32.into(), b"bye");
+    }
+}
 
 struct Server {
     address: std::net::SocketAddr,
@@ -22,24 +38,35 @@ struct Server {
 }
 
 impl Server {
-    async fn new(config: Config) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
+    fn new(config: Config) -> Self {
+        let cert = ServerCertificate::generate_self_signed().unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = socket.local_addr().unwrap();
+        let endpoint = server_endpoint(socket, &cert, config.lobby_timeout).unwrap();
         Self {
             address,
-            task: tokio::spawn(serve_with_config(listener, config)),
+            task: tokio::spawn(serve_with_config(endpoint, config)),
         }
     }
 
     async fn connect(&self) -> Client {
-        timeout(
-            Duration::from_secs(2),
-            connect_async(format!("ws://{}", self.address)),
+        let endpoint = client_endpoint(false, None, Duration::from_secs(15)).unwrap();
+        let conn = timeout(
+            Duration::from_secs(3),
+            endpoint.connect(self.address, "rts.local").unwrap(),
         )
         .await
         .unwrap()
-        .unwrap()
-        .0
+        .unwrap();
+        let (mut send, recv) = conn.open_bi().await.unwrap();
+        let _ = send.set_priority(PRIORITY_GAME);
+        send.write_all(&[STREAM_GAME]).await.unwrap();
+        Client {
+            _endpoint: endpoint,
+            conn,
+            send,
+            recv,
+        }
     }
 }
 
@@ -50,24 +77,25 @@ impl Drop for Server {
 }
 
 async fn send(client: &mut Client, message: &ClientMessage) {
-    client
-        .send(Message::Binary(encode_client(message).unwrap().into()))
+    write_frame(&mut client.send, &encode_client(message).unwrap())
         .await
         .unwrap();
 }
 
+async fn send_raw(client: &mut Client, bytes: &[u8]) {
+    write_frame(&mut client.send, bytes).await.unwrap();
+}
+
 async fn receive(client: &mut Client) -> ServerMessage {
-    timeout(Duration::from_secs(3), async {
-        loop {
-            match client.next().await.unwrap().unwrap() {
-                Message::Binary(bytes) => return decode_server(&bytes).unwrap(),
-                Message::Ping(_) => client.flush().await.unwrap(),
-                message => panic!("expected server frame, got {message:?}"),
-            }
-        }
-    })
+    let bytes = timeout(
+        Duration::from_secs(3),
+        read_frame(&mut client.recv, MAX_SERVER_MESSAGE_BYTES),
+    )
     .await
     .unwrap()
+    .unwrap()
+    .expect("expected server frame");
+    decode_server(&bytes).unwrap()
 }
 
 /// Expects an error, skipping view frames that a running match streams meanwhile.
@@ -237,8 +265,8 @@ async fn lobby(server: &Server) -> (Client, Client, LobbySetup) {
 }
 
 #[tokio::test]
-async fn websocket_players_receive_distinct_private_views_of_a_random_layout() {
-    let server = Server::new(Config::default()).await;
+async fn quic_players_receive_distinct_private_views_of_a_random_layout() {
+    let server = Server::new(Config::default());
     let (mut host, mut guest, setup) = lobby(&server).await;
     assert_eq!(setup.map, RANDOM_MAP_NAME);
     assert!(!setup.rules.contains("//"), "rules arrive minified");
@@ -279,8 +307,6 @@ async fn websocket_players_receive_distinct_private_views_of_a_random_layout() {
         guest_view.next(&mut guest).await;
         assert_eq!(host_view.view.tick(), tick);
         assert_eq!(guest_view.view.tick(), tick);
-        // Neither base is in sight of the other: each sees only its own units and
-        // knows only its own economy.
         for perspective in [&host_view, &guest_view] {
             let view = &perspective.view;
             assert!(view.units().all(|(_, unit)| unit.owner == view.player()));
@@ -288,7 +314,6 @@ async fn websocket_players_receive_distinct_private_views_of_a_random_layout() {
         }
     }
     assert_ne!(host_view.view.unit(worker).unwrap().pos, initial);
-    // Each player's recording is its own and replays to the same view.
     for perspective in [&host_view, &guest_view] {
         let text = Recording::View(perspective.replay.clone())
             .to_ron()
@@ -313,8 +338,8 @@ async fn websocket_players_receive_distinct_private_views_of_a_random_layout() {
 }
 
 #[tokio::test]
-async fn websocket_units_are_discovered_then_hidden_and_quiet_frames_leak_nothing() {
-    let server = Server::new(corridor()).await;
+async fn quic_units_are_discovered_then_hidden_and_quiet_frames_leak_nothing() {
+    let server = Server::new(corridor());
     let (mut host, mut guest, setup) = lobby(&server).await;
     assert_eq!(setup.map, "Corridor");
     let (mut host_view, mut guest_view) = start(&mut host, &mut guest, &setup).await;
@@ -348,7 +373,6 @@ async fn websocket_units_are_discovered_then_hidden_and_quiet_frames_leak_nothin
         }
     }
     let enemy = seen.expect("the guest's worker comes into sight");
-    // Sight is symmetric here: the guest's worker sees the soldier too.
     assert!(
         guest_view
             .view
@@ -377,7 +401,6 @@ async fn websocket_units_are_discovered_then_hidden_and_quiet_frames_leak_nothin
         rts_base::TileVisibility::Remembered
     );
     assert!(host_view.view.terrain(IVec2::new(9, 1)).is_some());
-    // The guest now acts out of sight; the host's frames carry nothing but the tick.
     let tick = guest_view.view.tick();
     let worker = guest_view
         .view
@@ -412,7 +435,7 @@ async fn websocket_units_are_discovered_then_hidden_and_quiet_frames_leak_nothin
 
 #[tokio::test]
 async fn readiness_is_required_and_invalid_joins_or_starts_remain_retryable() {
-    let server = Server::new(Config::default()).await;
+    let server = Server::new(Config::default());
     let (mut host, mut guest, mut outsider) = (
         server.connect().await,
         server.connect().await,
@@ -421,12 +444,7 @@ async fn readiness_is_required_and_invalid_joins_or_starts_remain_retryable() {
     let (code, setup) = create(&mut host).await;
     send(&mut host, &ClientMessage::Start).await;
     expect_error(&mut host).await;
-    guest
-        .send(Message::Text(
-            format!("Join(version:1,code:\"{code}\")").into(),
-        ))
-        .await
-        .unwrap();
+    send_raw(&mut guest, &[2, 1]).await; // invalid Join
     expect_error(&mut guest).await;
     join(&mut host, &mut guest, &code).await;
     send(
@@ -460,16 +478,13 @@ async fn runtime_clock_has_no_initial_turn_and_runs_without_input_even_with_slow
     let server = Server::new(Config {
         poll_interval: Duration::from_millis(250),
         ..Config::default()
-    })
-    .await;
+    });
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
     let (code, setup) = create(&mut host).await;
     join(&mut host, &mut guest, &code).await;
     ready(&mut host, &mut guest, setup.checksum()).await;
     let started = Instant::now();
     let (mut host_view, mut guest_view) = start(&mut host, &mut guest, &setup).await;
-    // Reading Started from both sockets can itself take a tick. Measure turn
-    // timing from the request instead; coordinator tests cover the exact boundary.
     for tick in 1..=6 {
         host_view.next(&mut host).await;
         guest_view.next(&mut guest).await;
@@ -481,8 +496,8 @@ async fn runtime_clock_has_no_initial_turn_and_runs_without_input_even_with_slow
 }
 
 #[tokio::test]
-async fn inputs_cannot_vote_for_speed_change_and_invalid_ticks_are_retryable() {
-    let server = Server::new(Config::default()).await;
+async fn inputs_cannot_vote_for_speed_change_and_invalid_frames_are_retryable() {
+    let server = Server::new(Config::default());
     let (mut host, mut guest, mut outsider) = (
         server.connect().await,
         server.connect().await,
@@ -501,9 +516,8 @@ async fn inputs_cannot_vote_for_speed_change_and_invalid_ticks_are_retryable() {
     )
     .await;
     expect_error(&mut outsider).await;
-    // The owner and state are never accepted from the wire; Hash is removed too.
-    for raw in ["Input(tick:2,player:0,commands:[])", "Hash(tick:1,hash:0)"] {
-        guest.send(Message::Text(raw.into())).await.unwrap();
+    for raw in [&[99_u8][..], &[6, 0, 0]] {
+        send_raw(&mut guest, raw).await;
         expect_error(&mut guest).await;
     }
     for tick in [2, 8] {
@@ -516,19 +530,16 @@ async fn inputs_cannot_vote_for_speed_change_and_invalid_ticks_are_retryable() {
         )
         .await;
     }
-    // Invalid submissions are checked by the deterministic coordinator tests; avoid
-    // racing the 50 ms clock while checking socket errors here.
     host_view.next(&mut host).await;
     assert_eq!(host_view.view.tick(), 1);
 }
 
 #[tokio::test]
-async fn socket_heartbeats_keep_game_running_with_no_client_input_or_hashes() {
+async fn quic_keepalive_keeps_game_running_with_no_client_input() {
     let server = Server::new(Config {
         peer_timeout: Duration::from_millis(180),
         ..Config::default()
-    })
-    .await;
+    });
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
     let (code, setup) = create(&mut host).await;
     join(&mut host, &mut guest, &code).await;
@@ -557,7 +568,7 @@ async fn large_setup_is_minified_and_compressed_before_lobby() {
         map: RANDOM_MAP_NAME.to_owned(),
         players: 2,
     };
-    let server = Server::new(config).await;
+    let server = Server::new(config);
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
     let (code, setup) = create(&mut host).await;
     assert_eq!(setup, expected);
@@ -568,11 +579,11 @@ async fn large_setup_is_minified_and_compressed_before_lobby() {
 
 #[tokio::test]
 async fn guest_disconnect_updates_lobby_and_oversized_client_input_ends_match() {
-    let server = Server::new(Config::default()).await;
+    let server = Server::new(Config::default());
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
     let (code, setup) = create(&mut host).await;
     join(&mut host, &mut guest, &code).await;
-    guest.close(None).await.unwrap();
+    guest.close();
     assert!(matches!(
         receive(&mut host).await,
         ServerMessage::Lobby {
@@ -583,11 +594,7 @@ async fn guest_disconnect_updates_lobby_and_oversized_client_input_ends_match() 
     join(&mut host, &mut guest, &code).await;
     ready(&mut host, &mut guest, setup.checksum()).await;
     start(&mut host, &mut guest, &setup).await;
-    guest
-        .send(Message::Binary(vec![0xff; MAX_MESSAGE_BYTES + 1].into()))
-        .await
-        .unwrap();
-    // A close may cross the first tick on slow machines.
+    let _ = write_frame(&mut guest.send, &vec![0xff; MAX_MESSAGE_BYTES + 1]).await;
     loop {
         match receive(&mut host).await {
             ServerMessage::Ended { .. } => break,
@@ -598,20 +605,26 @@ async fn guest_disconnect_updates_lobby_and_oversized_client_input_ends_match() 
 }
 
 #[tokio::test]
-async fn stalled_handshake_is_bounded_and_releases_connection_capacity() {
+async fn stalled_stream_handshake_is_bounded_and_releases_connection_capacity() {
     let server = Server::new(Config {
         max_connections: 1,
-        handshake_timeout: Duration::from_millis(50),
+        handshake_timeout: Duration::from_millis(80),
         ..Config::default()
-    })
-    .await;
-    let _stalled = TcpStream::connect(server.address).await.unwrap();
-    sleep(Duration::from_millis(120)).await;
+    });
+    // Connect QUIC without opening the required game stream so the handshake times out.
+    let endpoint = client_endpoint(false, None, Duration::from_secs(5)).unwrap();
+    let _stalled = endpoint
+        .connect(server.address, "rts.local")
+        .unwrap()
+        .await
+        .unwrap();
+    sleep(Duration::from_millis(160)).await;
     create(&mut server.connect().await).await;
 }
 
 #[tokio::test]
 async fn invalid_setup_and_resource_limits_fail_before_accepting_connections() {
+    let cert = ServerCertificate::generate_self_signed().unwrap();
     for config in [
         Config {
             setup: MatchSetup {
@@ -637,20 +650,18 @@ async fn invalid_setup_and_resource_limits_fail_before_accepting_connections() {
             ..Config::default()
         },
     ] {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let error = serve_with_config(listener, config).await.unwrap_err();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let endpoint = server_endpoint(socket, &cert, Duration::from_secs(5)).unwrap();
+        let error = serve_with_config(endpoint, config).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 }
 
 #[tokio::test]
-async fn room_browsing_and_leaving_reuse_the_same_websocket_connections() {
-    let server = Server::new(Config::default()).await;
+async fn room_browsing_and_leaving_reuse_the_same_quic_connections() {
+    let server = Server::new(Config::default());
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
-    guest
-        .send(Message::Binary(vec![0, 4].into()))
-        .await
-        .unwrap();
+    send_raw(&mut guest, &[0, 4]).await; // Rooms with old version 4
     assert_eq!(
         receive(&mut guest).await,
         ServerMessage::Error {

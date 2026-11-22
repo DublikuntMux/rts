@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// Relay address shown until the player types another one.
-const DEFAULT_SERVER_URL: &str = "ws://127.0.0.1:9001";
+const DEFAULT_SERVER_URL: &str = "quic://127.0.0.1:9001";
 pub const ROOM_CODE_LEN: usize = 6;
 pub const MAX_URL_LEN: usize = 256;
 /// Below this logical width navigation moves into a row above the page.
@@ -303,10 +303,7 @@ impl MenuForm {
     }
 
     pub fn url_valid(&self) -> bool {
-        let url = self.url();
-        ["ws://", "wss://"]
-            .iter()
-            .any(|scheme| url.len() > scheme.len() && url.starts_with(scheme))
+        rts_net::quic::parse_server_url(self.url()).is_ok()
     }
 
     pub fn code_valid(&self) -> bool {

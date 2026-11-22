@@ -2,6 +2,8 @@
 //! verified replay files.
 
 mod minify;
+#[cfg(feature = "quic")]
+pub mod quic;
 mod replay;
 mod setup;
 mod wire;

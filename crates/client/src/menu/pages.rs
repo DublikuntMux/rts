@@ -657,7 +657,7 @@ fn connect(view: &View) -> impl SceneList {
             --
             Node { column_gap: px(8) } Children [ @{field} ]
             --
-            @hint("ws:// or wss:// followed by host:port.")
+            @hint("quic://host:port (optional #sha256 fingerprint).")
             --
             @row(bsn_list! {
                 {recent}

@@ -9,18 +9,24 @@ mod tests;
 
 use std::{
     collections::BTreeMap,
-    ops::ControlFlow,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
+    time::Duration,
 };
 
 use bevy::prelude::*;
-use ewebsock::{WsEvent, WsMessage, WsSender};
 use rts_ai::Difficulty;
 use rts_base::{Command, MatchOutcome, PlayerId, PlayerView, Sim, ViewFrame, ViewIntro};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, LobbySetup, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
     PROTOCOL_VERSION, PlayerInput, Recording, Replay, RoomInfo, ServerMessage, Turn, ViewReplay,
     decode_server, encode_client,
+    quic::{
+        PRIORITY_GAME, STREAM_GAME, client_endpoint, parse_server_url, read_frame, write_frame,
+    },
 };
 
 use crate::{
@@ -412,9 +418,25 @@ impl Session {
     }
 }
 
+/// Maximum RTT-adaptive input lead in ticks (matches the server's future-input window).
+const MAX_ADAPTIVE_LEAD_TICKS: u32 = 16;
+
+enum QuicEvent {
+    Opened,
+    Frame(Vec<u8>),
+    Error(String),
+    Closed,
+}
+
+enum OutboundCommand {
+    Send(Vec<u8>),
+    Close,
+}
+
 struct Connection {
-    sender: WsSender,
-    receiver: Receiver<WsEvent>,
+    sender: tokio::sync::mpsc::Sender<OutboundCommand>,
+    receiver: Receiver<QuicEvent>,
+    rtt_ms: Arc<AtomicU32>,
     hello: Option<ClientMessage>,
     opened: bool,
     created: f64,
@@ -422,45 +444,161 @@ struct Connection {
 
 impl Connection {
     fn connect(url: &str, hello: ClientMessage, now: f64) -> Result<Self, String> {
-        let url = url.trim();
-        if url.len() > 2048 || !(url.starts_with("ws://") || url.starts_with("wss://")) {
-            return Err("Enter a server address beginning with ws:// or wss://.".into());
-        }
-        if url.starts_with("wss://") {
-            return Err("This build uses ws:// servers.".into());
-        }
-        // Bound incoming events even when rendering is paused or the peer floods its socket.
-        let (tx, receiver) = mpsc::sync_channel(128);
-        let sender = ewebsock::ws_connect(
-            url.into(),
-            ewebsock::Options {
-                max_incoming_frame_size: MAX_SERVER_MESSAGE_BYTES,
-                ..default()
-            },
-            Box::new(move |event| {
-                if tx.try_send(event).is_ok() {
-                    ControlFlow::Continue(())
-                } else {
-                    ControlFlow::Break(())
-                }
-            }),
-        )
-        .map_err(|error| format!("Cannot open connection: {error}"))?;
+        let parsed = parse_server_url(url)?;
+        let (event_tx, receiver) = mpsc::sync_channel(128);
+        let (out_tx, out_rx) = tokio::sync::mpsc::channel::<OutboundCommand>(64);
+        let rtt_ms = Arc::new(AtomicU32::new(0));
+        let rtt_handle = Arc::clone(&rtt_ms);
+
+        std::thread::Builder::new()
+            .name("rts-quic-client".into())
+            .spawn(move || {
+                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    let _ = event_tx
+                        .try_send(QuicEvent::Error("Cannot start the network runtime.".into()));
+                    return;
+                };
+                runtime.block_on(run_quic_client(parsed, event_tx, out_rx, rtt_handle));
+            })
+            .map_err(|error| format!("Cannot start network thread: {error}"))?;
+
         Ok(Self {
-            sender,
+            sender: out_tx,
             receiver,
+            rtt_ms,
             hello: Some(hello),
             opened: false,
             created: now,
         })
     }
 
-    fn send(&mut self, message: &ClientMessage) -> Result<(), String> {
+    fn send(&self, message: &ClientMessage) -> Result<(), String> {
         let bytes = encode_client(message)
             .map_err(|error| format!("Cannot send to the server: {error}"))?;
-        self.sender.send(WsMessage::Binary(bytes));
-        Ok(())
+        self.sender
+            .try_send(OutboundCommand::Send(bytes))
+            .map_err(|_| "Network send queue is full.".to_owned())
     }
+
+    /// Computes an RTT-adaptive input lead in ticks so commands still arrive on time over
+    /// high-latency connections.
+    fn input_lead_ticks(&self) -> u32 {
+        let rtt_ms = self.rtt_ms.load(Ordering::Relaxed);
+        let one_way_ms = rtt_ms / 2;
+        let tick_ms = 1000 / rts_base::TICK_RATE;
+        let adaptive = one_way_ms.div_ceil(tick_ms).saturating_add(1);
+        adaptive.clamp(INPUT_DELAY_TICKS, MAX_ADAPTIVE_LEAD_TICKS)
+    }
+
+    fn close(&self) {
+        let _ = self.sender.try_send(OutboundCommand::Close);
+    }
+}
+
+async fn run_quic_client(
+    parsed: rts_net::quic::ServerUrl,
+    event_tx: mpsc::SyncSender<QuicEvent>,
+    mut out_rx: tokio::sync::mpsc::Receiver<OutboundCommand>,
+    rtt_handle: Arc<AtomicU32>,
+) {
+    let conn = match open_quic_connection(&parsed).await {
+        Ok(conn) => conn,
+        Err(error) => {
+            let _ = event_tx.try_send(QuicEvent::Error(error));
+            return;
+        }
+    };
+    let (mut send, mut recv) = match conn.open_bi().await {
+        Ok(streams) => streams,
+        Err(error) => {
+            let _ = event_tx.try_send(QuicEvent::Error(format!(
+                "Cannot open game stream: {error}"
+            )));
+            return;
+        }
+    };
+    let _ = send.set_priority(PRIORITY_GAME);
+    if let Err(error) = send.write_all(&[STREAM_GAME]).await {
+        let _ = event_tx.try_send(QuicEvent::Error(format!(
+            "Cannot initialize game stream: {error}"
+        )));
+        return;
+    }
+    if event_tx.try_send(QuicEvent::Opened).is_err() {
+        conn.close(0_u32.into(), b"client dropped");
+        return;
+    }
+    let mut rtt_tick = tokio::time::interval(Duration::from_millis(250));
+    rtt_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = rtt_tick.tick() => {
+                let ms = u32::try_from(conn.rtt().as_millis()).unwrap_or(u32::MAX);
+                rtt_handle.store(ms, Ordering::Relaxed);
+            }
+            incoming = read_frame(&mut recv, MAX_SERVER_MESSAGE_BYTES) => {
+                match incoming {
+                    Ok(Some(bytes)) => {
+                        let ms = u32::try_from(conn.rtt().as_millis()).unwrap_or(u32::MAX);
+                        rtt_handle.store(ms, Ordering::Relaxed);
+                        if event_tx.try_send(QuicEvent::Frame(bytes)).is_err() {
+                            conn.close(0_u32.into(), b"receive queue full");
+                            return;
+                        }
+                    }
+                    Ok(None) => {
+                        let _ = event_tx.try_send(QuicEvent::Closed);
+                        return;
+                    }
+                    Err(error) => {
+                        let _ = event_tx.try_send(QuicEvent::Error(error.to_string()));
+                        return;
+                    }
+                }
+            }
+            outbound = out_rx.recv() => {
+                match outbound {
+                    Some(OutboundCommand::Send(bytes)) => {
+                        if let Err(error) = write_frame(&mut send, &bytes).await {
+                            let _ = event_tx.try_send(QuicEvent::Error(error.to_string()));
+                            return;
+                        }
+                    }
+                    Some(OutboundCommand::Close) | None => {
+                        conn.close(0_u32.into(), b"leave");
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn open_quic_connection(
+    parsed: &rts_net::quic::ServerUrl,
+) -> Result<rts_net::quic::quinn::Connection, String> {
+    let host_port = parsed.socket_host_port();
+    let addr = tokio::net::lookup_host(&host_port)
+        .await
+        .map_err(|error| format!("Cannot resolve server: {error}"))?
+        .next()
+        .ok_or_else(|| "Could not resolve the server address.".to_owned())?;
+    let endpoint = client_endpoint(
+        addr.is_ipv6(),
+        parsed.pinned_sha256,
+        Duration::from_secs(30),
+    )
+    .map_err(|error| format!("Cannot open QUIC socket: {error}"))?;
+    let connecting = endpoint
+        .connect(addr, parsed.sni_name())
+        .map_err(|error| format!("Cannot connect to server: {error}"))?;
+    tokio::time::timeout(Duration::from_secs(10), connecting)
+        .await
+        .map_err(|_| "Server connection timed out.".to_owned())?
+        .map_err(|error| format!("QUIC handshake failed: {error}"))
 }
 
 #[derive(Default)]
@@ -468,20 +606,26 @@ struct Network(Option<Connection>);
 
 impl Network {
     /// Sends on the open connection.
-    fn send(&mut self, message: &ClientMessage) -> Result<(), String> {
+    fn send(&self, message: &ClientMessage) -> Result<(), String> {
         self.0
-            .as_mut()
+            .as_ref()
             .filter(|connection| connection.opened)
             .ok_or("Not connected to a server.")?
             .send(message)
     }
 
+    fn input_lead_ticks(&self) -> u32 {
+        self.0
+            .as_ref()
+            .map_or(INPUT_DELAY_TICKS, Connection::input_lead_ticks)
+    }
+
     fn leave(&mut self) {
-        if let Some(mut connection) = self.0.take() {
+        if let Some(connection) = self.0.take() {
             if connection.opened {
                 let _ = connection.send(&ClientMessage::Leave);
             }
-            connection.sender.close();
+            connection.close();
         }
     }
 }
@@ -782,17 +926,14 @@ fn poll_network(
             }
         };
         let result = match event {
-            WsEvent::Opened => {
+            QuicEvent::Opened => {
                 connection.opened = true;
                 connection
                     .hello
                     .take()
                     .map_or(Ok(()), |hello| connection.send(&hello))
             }
-            WsEvent::Message(message) => decode_message(message).and_then(|message| {
-                let Some(message) = message else {
-                    return Ok(());
-                };
+            QuicEvent::Frame(bytes) => decode_message(&bytes).and_then(|message| {
                 receive_message(
                     message,
                     &mut session,
@@ -804,8 +945,8 @@ fn poll_network(
                 )
                 .and_then(|reply| reply.map_or(Ok(()), |reply| connection.send(&reply)))
             }),
-            WsEvent::Error(error) => Err(format!("Connection failed: {error}")),
-            WsEvent::Closed => Err("Connection closed.".into()),
+            QuicEvent::Error(error) => Err(format!("Connection failed: {error}")),
+            QuicEvent::Closed => Err("Connection closed.".into()),
         };
         if let Err(error) = result {
             failure = Some(error);
@@ -845,16 +986,8 @@ fn stop_match(session: &mut Session, status: &mut SessionStatus, game: Option<&m
     }
 }
 
-fn decode_message(message: WsMessage) -> Result<Option<ServerMessage>, String> {
-    match message {
-        WsMessage::Binary(bytes) => decode_server(&bytes),
-        WsMessage::Ping(_) | WsMessage::Pong(_) => return Ok(None),
-        WsMessage::Text(_) | WsMessage::Unknown(_) => {
-            return Err("Server sent an unsupported message.".into());
-        }
-    }
-    .map(Some)
-    .map_err(|error| format!("Invalid server response: {error}"))
+fn decode_message(bytes: &[u8]) -> Result<ServerMessage, String> {
+    decode_server(bytes).map_err(|error| format!("Invalid server response: {error}"))
 }
 
 fn receive_message(
@@ -1013,7 +1146,7 @@ fn advance_session(
     }
 }
 
-/// A slow render frame may skip fixed ticks; consume the server backlog with bounded work.
+/// Consumes buffered server frames smoothly on jittery connections while keeping bounded catch-up.
 fn advance_buffered(
     game: &mut Match,
     session: &mut Session,
@@ -1021,7 +1154,16 @@ fn advance_buffered(
     network: &mut Network,
     now: f64,
 ) -> Result<(), String> {
-    for _ in 0..8 {
+    let budget = if session.mode == Mode::Online {
+        match session.frames.len() {
+            len if len <= 1 || (len == 2 && session.applied_frames > 0) => 1,
+            2..=6 => 2,
+            _ => 8,
+        }
+    } else {
+        1
+    };
+    for _ in 0..budget {
         advance(game, session, status, network, now)?;
         if session.mode != Mode::Online || session.frames.is_empty() {
             break;
@@ -1080,6 +1222,10 @@ fn apply_local(game: &mut Match, turn: &Turn) -> Result<u64, String> {
     Ok(hash)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "advancing solo, online, and playback modes stays clearest in one dispatch"
+)]
 fn advance(
     game: &mut Match,
     session: &mut Session,
@@ -1125,10 +1271,11 @@ fn advance(
                 }
                 return Ok(());
             };
+            let lead = network.input_lead_ticks();
             let target = session
                 .received_tick
                 .unwrap_or(0)
-                .checked_add(INPUT_DELAY_TICKS)
+                .checked_add(lead)
                 .ok_or("Match tick limit reached.")?;
             if !game.pending.is_empty() && target > session.submitted_tick {
                 network

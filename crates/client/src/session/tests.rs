@@ -377,8 +377,13 @@ fn saved_solo_game_continues_from_its_recorded_state() {
 async fn real_client_sessions_play_private_views_of_a_server_mod() {
     use std::time::Duration;
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let cert = rts_net::quic::ServerCertificate::generate_self_signed().unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let url = format!(
+        "quic://{}#{}",
+        socket.local_addr().unwrap(),
+        cert.fingerprint
+    );
     let mod_setup = MatchSetup {
         rules: setup()
             .rules
@@ -399,7 +404,8 @@ async fn real_client_sessions_play_private_views_of_a_server_mod() {
         random_layout: false,
         ..default()
     };
-    let server = tokio::spawn(rts_server::serve_with_config(listener, config));
+    let endpoint = rts_net::quic::server_endpoint(socket, &cert, config.lobby_timeout).unwrap();
+    let server = tokio::spawn(rts_server::serve_with_config(endpoint, config));
     let mut host = headless();
     let mut guest = headless();
     for app in [&mut host, &mut guest] {
@@ -723,7 +729,7 @@ fn closed_room_returns_to_the_room_list_and_stale_lobbies_are_ignored() {
     {
         let mut status = app.world_mut().resource_mut::<SessionStatus>();
         status.server = Server::Connected {
-            url: "ws://host".into(),
+            url: "quic://host:9001".into(),
         };
     }
     // An update for a room this client never asked to join is ignored.
@@ -757,7 +763,7 @@ fn closed_room_returns_to_the_room_list_and_stale_lobbies_are_ignored() {
 fn refusal_while_connecting_fails_the_connection_and_later_errors_do_not() {
     let mut app = headless();
     app.world_mut().resource_mut::<SessionStatus>().server = Server::Connecting {
-        url: "ws://host".into(),
+        url: "quic://host:9001".into(),
     };
     assert!(
         deliver(
@@ -836,7 +842,7 @@ fn online_backlog_catches_up_with_bounded_work_and_a_private_replay() {
         7,
         "one update has a fixed catch-up budget"
     );
-    for _ in 0..2 {
+    for _ in 0..8 {
         advance_buffered(&mut game, &mut session, &mut status, &mut network, 1.0).unwrap();
     }
     assert!(session.frames.is_empty());
@@ -863,8 +869,8 @@ fn message_decoder_accepts_compact_binary_server_frames() {
     };
     let bytes = encode_server(&ServerMessage::Setup(lobby.clone())).unwrap();
     assert_eq!(
-        decode_message(WsMessage::Binary(bytes)).unwrap(),
-        Some(ServerMessage::Setup(lobby.minified()))
+        decode_message(&bytes).unwrap(),
+        ServerMessage::Setup(lobby.minified())
     );
     let sim = setup().simulation().unwrap();
     let mut knowledge = PlayerKnowledge::new(&sim, PlayerId(0));
@@ -879,13 +885,9 @@ fn message_decoder_accepts_compact_binary_server_frames() {
         },
     ] {
         let bytes = encode_server(&message).unwrap();
-        assert_eq!(
-            decode_message(WsMessage::Binary(bytes)).unwrap(),
-            Some(message)
-        );
+        assert_eq!(decode_message(&bytes).unwrap(), message);
     }
-    assert!(decode_message(WsMessage::Text("Setup(())".into())).is_err());
-    assert_eq!(decode_message(WsMessage::Ping(vec![])).unwrap(), None);
+    assert!(decode_message(b"Setup(())").is_err());
 }
 
 #[test]

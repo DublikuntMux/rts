@@ -135,7 +135,7 @@ mod tests {
             ui_scale: 125,
             edge_scroll: false,
             fullscreen: true,
-            recent_server: Some("ws://10.0.0.2:9001".into()),
+            recent_server: Some("quic://10.0.0.2:9001".into()),
         };
         let text = ron::to_string(&settings).unwrap();
         assert_eq!(Settings::from_ron(&text).unwrap(), settings);

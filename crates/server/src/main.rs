@@ -9,12 +9,13 @@ async fn main() {
 async fn run() -> std::io::Result<()> {
     let (address, config) = configuration(std::env::args().skip(1))?;
     // configuration validates the complete map and rules before opening the port.
-    let listener = tokio::net::TcpListener::bind(&address).await?;
-    eprintln!(
-        "RTS server listening on ws://{} (use a reverse proxy for TLS)",
-        listener.local_addr()?
-    );
-    rts_server::serve_with_config(listener, config).await
+    let socket = std::net::UdpSocket::bind(&address)?;
+    let local_addr = socket.local_addr()?;
+    let cert = rts_net::quic::ServerCertificate::generate_self_signed()?;
+    let endpoint = rts_net::quic::server_endpoint(socket, &cert, config.lobby_timeout)?;
+    eprintln!("RTS QUIC server listening on quic://{local_addr}");
+    eprintln!("Certificate SHA-256: {}", cert.fingerprint);
+    rts_server::serve_with_config(endpoint, config).await
 }
 
 fn configuration(
