@@ -8,7 +8,10 @@ use rts_net::{
     validate_commands, validate_name,
 };
 
-use crate::layout::{RANDOM_MAP_NAME, random_setup};
+use crate::{
+    assets::ServerAsset,
+    layout::{RANDOM_MAP_NAME, random_setup},
+};
 
 /// Connection identity allocated by the socket runtime, never supplied by a client.
 pub type ClientId = u64;
@@ -24,6 +27,8 @@ pub struct Config {
     /// Generates a private layout for each match from a server-only seed. A fixed map is
     /// public knowledge to anyone who has the map file.
     pub random_layout: bool,
+    /// Optional client assets (`textures/**/*.png`, `locales/*.lang.ron`) served on connect.
+    pub assets: BTreeMap<String, ServerAsset>,
     pub max_connections: usize,
     pub max_rooms: usize,
     pub event_queue_capacity: usize,
@@ -44,6 +49,7 @@ impl Default for Config {
                 players: 2,
             },
             random_layout: true,
+            assets: BTreeMap::new(),
             max_connections: 1024,
             max_rooms: 256,
             event_queue_capacity: 256,

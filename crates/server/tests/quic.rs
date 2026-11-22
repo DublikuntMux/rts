@@ -753,3 +753,104 @@ async fn room_browsing_and_leaving_reuse_the_same_quic_connections() {
     let (code, _) = create(&mut guest).await;
     join(&mut guest, &mut host, &code).await;
 }
+
+#[tokio::test]
+async fn asset_stream_serves_manifest_and_selected_textures_and_locales() {
+    use std::collections::BTreeMap;
+
+    use rts_net::{
+        assets::{
+            AssetClientMessage, AssetServerMessage, MAX_ASSET_FRAME_BYTES, decode_asset_server,
+            encode_asset_client, sha256,
+        },
+        quic::{PRIORITY_ASSETS, STREAM_ASSETS},
+    };
+    use rts_server::ServerAsset;
+
+    let png = include_bytes!("../../../assets/textures/terrain/wood.png").to_vec();
+    let locale = r#"(code: "fr", name: "Français", strings: {"unit.soldier": "Infanterie"})"#
+        .as_bytes()
+        .to_vec();
+    let mut assets = BTreeMap::new();
+    assets.insert(
+        "textures/units/custom.png".to_owned(),
+        ServerAsset::from_bytes("textures/units/custom.png", png.clone()).unwrap(),
+    );
+    assets.insert(
+        "locales/fr.lang.ron".to_owned(),
+        ServerAsset::from_bytes("locales/fr.lang.ron", locale.clone()).unwrap(),
+    );
+
+    let server = Server::new(Config {
+        assets,
+        ..Config::default()
+    });
+    let mut client = server.connect().await;
+
+    // Open the separate low-priority asset stream on the same QUIC connection.
+    let (mut send, mut recv) = client.conn.open_bi().await.unwrap();
+    let _ = send.set_priority(PRIORITY_ASSETS);
+    send.write_all(&[STREAM_ASSETS]).await.unwrap();
+    write_frame(
+        &mut send,
+        &encode_asset_client(&AssetClientMessage::GetManifest {
+            version: PROTOCOL_VERSION,
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let raw = timeout(
+        Duration::from_secs(3),
+        read_frame(&mut recv, MAX_ASSET_FRAME_BYTES),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    let AssetServerMessage::Manifest { entries } = decode_asset_server(&raw).unwrap() else {
+        panic!("expected asset manifest");
+    };
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].path, "locales/fr.lang.ron");
+    assert_eq!(entries[0].sha256, sha256(&locale));
+    assert_eq!(entries[1].path, "textures/units/custom.png");
+    assert_eq!(entries[1].sha256, sha256(&png));
+
+    // Selectively fetch both files and verify SHA-256 & exact bytes.
+    write_frame(
+        &mut send,
+        &encode_asset_client(&AssetClientMessage::Fetch {
+            paths: vec![
+                "locales/fr.lang.ron".into(),
+                "textures/units/custom.png".into(),
+            ],
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut received = BTreeMap::new();
+    loop {
+        let raw = timeout(
+            Duration::from_secs(3),
+            read_frame(&mut recv, MAX_ASSET_FRAME_BYTES),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        match decode_asset_server(&raw).unwrap() {
+            AssetServerMessage::File { path, bytes, .. } => {
+                received.insert(path, bytes);
+            }
+            AssetServerMessage::Done => break,
+            other => panic!("unexpected asset message: {other:?}"),
+        }
+    }
+    assert_eq!(received.get("locales/fr.lang.ron"), Some(&locale));
+    assert_eq!(received.get("textures/units/custom.png"), Some(&png));
+
+    // Game stream on the same connection remains completely usable.
+    let (_code, _setup) = create(&mut client).await;
+}

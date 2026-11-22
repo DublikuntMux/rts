@@ -6,10 +6,15 @@ use std::{
 };
 
 use rts_net::{
-    ClientMessage, MAX_MESSAGE_BYTES, NetError, ServerMessage, decode_client, encode_server,
+    ClientMessage, MAX_MESSAGE_BYTES, NetError, ServerMessage,
+    assets::{
+        AssetClientMessage, AssetEntry, AssetServerMessage, MAX_ASSET_REQUEST_BYTES,
+        decode_asset_client, encode_asset_server,
+    },
+    decode_client, encode_server,
     quic::{
-        PRIORITY_GAME, STREAM_GAME,
-        quinn::{Connection, Endpoint, Incoming},
+        PRIORITY_ASSETS, PRIORITY_GAME, STREAM_ASSETS, STREAM_GAME,
+        quinn::{Connection, Endpoint, Incoming, RecvStream, SendStream},
         read_frame, write_frame,
     },
 };
@@ -101,7 +106,7 @@ pub async fn serve_with_config(endpoint: Endpoint, config: Config) -> io::Result
                 let events = events_tx.clone();
                 let config = config.clone();
                 tasks.spawn(async move {
-                    connection(incoming, id, events, rx, &config).await;
+                    connection(incoming, id, events, rx, config).await;
                     id
                 });
             }
@@ -165,7 +170,7 @@ async fn connection(
     id: ClientId,
     events: mpsc::Sender<Event>,
     outbound: mpsc::Receiver<Arc<[u8]>>,
-    config: &Config,
+    config: Arc<Config>,
 ) {
     let Ok(Ok(conn)) = timeout(config.handshake_timeout, incoming).await else {
         return;
@@ -189,36 +194,57 @@ async fn connection(
 
 async fn run_game_stream(
     conn: Connection,
-    mut send: rts_net::quic::quinn::SendStream,
-    mut recv: rts_net::quic::quinn::RecvStream,
+    mut send: SendStream,
+    mut recv: RecvStream,
     id: ClientId,
     events: mpsc::Sender<Event>,
     mut outbound: mpsc::Receiver<Arc<[u8]>>,
-    config: &Config,
+    config: Arc<Config>,
 ) {
     // QUIC keep-alive packets keep the transport open; periodically notify the coordinator while
     // the connection stays alive so silent players never hit the peer timeout during gameplay.
     let mut liveness = interval((config.peer_timeout / 3).max(Duration::from_millis(1)));
     liveness.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut asset_task: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         // Removing a sender disconnects this peer. Do not drain queued frames
         // over a slow connection after the coordinator has already removed it.
         if outbound.is_closed() {
+            if let Some(task) = asset_task {
+                task.abort();
+            }
             conn.close(0_u32.into(), b"disconnected");
             return;
         }
         tokio::select! {
             _ = liveness.tick() => {
                 if conn.close_reason().is_some() {
+                    if let Some(task) = asset_task {
+                        task.abort();
+                    }
                     return;
                 }
                 if events.try_send(Event::Activity(id)).is_err() {
+                    if let Some(task) = asset_task {
+                        task.abort();
+                    }
                     conn.close(1_u32.into(), b"overloaded");
                     return;
                 }
             }
+            accepted = conn.accept_bi(), if asset_task.is_none() => {
+                if let Ok((asset_send, asset_recv)) = accepted {
+                    let config = Arc::clone(&config);
+                    asset_task = Some(tokio::spawn(async move {
+                        serve_asset_stream(asset_send, asset_recv, &config).await;
+                    }));
+                }
+            }
             incoming = read_frame(&mut recv, MAX_MESSAGE_BYTES) => {
                 let Ok(Some(bytes)) = incoming else {
+                    if let Some(task) = asset_task {
+                        task.abort();
+                    }
                     conn.close(0_u32.into(), b"closed");
                     return;
                 };
@@ -229,21 +255,140 @@ async fn run_game_stream(
                     Err(_) => Event::Invalid(id, "invalid or oversized protocol message"),
                 };
                 if events.try_send(event).is_err() {
+                    if let Some(task) = asset_task {
+                        task.abort();
+                    }
                     conn.close(1_u32.into(), b"overloaded");
                     return;
                 }
             }
             frame = outbound.recv() => {
                 let Some(frame) = frame else {
+                    if let Some(task) = asset_task {
+                        task.abort();
+                    }
                     conn.close(0_u32.into(), b"disconnected");
                     return;
                 };
                 if !matches!(timeout(config.peer_timeout, write_frame(&mut send, &frame)).await, Ok(Ok(()))) {
+                    if let Some(task) = asset_task {
+                        task.abort();
+                    }
                     conn.close(1_u32.into(), b"write timeout");
                     return;
                 }
             }
         }
+    }
+}
+
+/// Handles one low-priority asset sync stream without blocking gameplay or coordinator ticks.
+async fn serve_asset_stream(mut send: SendStream, mut recv: RecvStream, config: &Config) {
+    let mut kind = [0_u8; 1];
+    if !matches!(
+        timeout(config.handshake_timeout, recv.read_exact(&mut kind)).await,
+        Ok(Ok(()))
+    ) || kind[0] != STREAM_ASSETS
+    {
+        return;
+    }
+    let _ = send.set_priority(PRIORITY_ASSETS);
+    let Ok(Ok(Some(bytes))) = timeout(
+        config.handshake_timeout,
+        read_frame(&mut recv, MAX_ASSET_REQUEST_BYTES),
+    )
+    .await
+    else {
+        return;
+    };
+    match decode_asset_client(&bytes) {
+        Ok(AssetClientMessage::GetManifest { .. }) => {
+            let entries = config
+                .assets
+                .iter()
+                .filter_map(|(path, asset)| {
+                    Some(AssetEntry {
+                        path: path.clone(),
+                        sha256: asset.sha256,
+                        size: u32::try_from(asset.bytes.len()).ok()?,
+                    })
+                })
+                .collect();
+            let Ok(encoded) = encode_asset_server(&AssetServerMessage::Manifest { entries }) else {
+                return;
+            };
+            if !matches!(
+                timeout(config.peer_timeout, write_frame(&mut send, &encoded)).await,
+                Ok(Ok(()))
+            ) {
+                return;
+            }
+        }
+        Ok(_) => {
+            send_asset_error(&mut send, config.peer_timeout, "expected manifest request").await;
+            let _ = send.finish();
+            return;
+        }
+        Err(error) => {
+            send_asset_error(&mut send, config.peer_timeout, &error.to_string()).await;
+            let _ = send.finish();
+            return;
+        }
+    }
+    // Optional second request: Fetch { paths } for assets the client does not have cached.
+    let Ok(Ok(Some(bytes))) = timeout(
+        config.peer_timeout,
+        read_frame(&mut recv, MAX_ASSET_REQUEST_BYTES),
+    )
+    .await
+    else {
+        let _ = send.finish();
+        return;
+    };
+    let paths = match decode_asset_client(&bytes) {
+        Ok(AssetClientMessage::Fetch { paths }) => paths,
+        Ok(_) => {
+            send_asset_error(&mut send, config.peer_timeout, "expected fetch request").await;
+            let _ = send.finish();
+            return;
+        }
+        Err(error) => {
+            send_asset_error(&mut send, config.peer_timeout, &error.to_string()).await;
+            let _ = send.finish();
+            return;
+        }
+    };
+    for path in paths {
+        let Some(asset) = config.assets.get(&path) else {
+            send_asset_error(&mut send, config.peer_timeout, "requested asset not found").await;
+            let _ = send.finish();
+            return;
+        };
+        let Ok(encoded) = encode_asset_server(&AssetServerMessage::File {
+            path,
+            sha256: asset.sha256,
+            bytes: asset.bytes.to_vec(),
+        }) else {
+            return;
+        };
+        if !matches!(
+            timeout(config.peer_timeout, write_frame(&mut send, &encoded)).await,
+            Ok(Ok(()))
+        ) {
+            return;
+        }
+    }
+    if let Ok(done) = encode_asset_server(&AssetServerMessage::Done) {
+        let _ = timeout(config.peer_timeout, write_frame(&mut send, &done)).await;
+    }
+    let _ = send.finish();
+}
+
+async fn send_asset_error(send: &mut SendStream, limit: Duration, message: &str) {
+    if let Ok(frame) = encode_asset_server(&AssetServerMessage::Error {
+        message: message.to_owned(),
+    }) {
+        let _ = timeout(limit, write_frame(send, &frame)).await;
     }
 }
 
@@ -360,7 +505,7 @@ mod tests {
         let (events, _events_rx) = mpsc::channel(1);
         let task = tokio::spawn(async move {
             let incoming = server.accept().await.unwrap();
-            connection(incoming, 1, events, rx, &Config::default()).await;
+            connection(incoming, 1, events, rx, Arc::new(Config::default())).await;
         });
         let client = client_endpoint(false, None, Duration::from_secs(5)).unwrap();
         let conn = client.connect(address, "rts.local").unwrap().await.unwrap();

@@ -16,6 +16,7 @@ use self::{
 use crate::{
     game::{AppState, Match},
     map::{UpdateZoomDetail, ZoomDetail, to_world},
+    server_assets::{ServerAssets, load_image},
 };
 
 const UNIT_Z: f32 = 1.0;
@@ -108,6 +109,7 @@ fn sync_units(
     fixed: Res<Time<Fixed>>,
     mut visuals: ResMut<UnitVisuals>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     textures: Res<Assets<Image>>,
     detail: Res<ZoomDetail>,
     mut sprites: Query<(&mut Transform, &mut Sprite, &mut Anchor), Without<SoldierVisual>>,
@@ -145,7 +147,7 @@ fn sync_units(
         );
         let image = images
             .entry(unit.kind)
-            .or_insert_with(|| assets.load(definition.sprite.clone()));
+            .or_insert_with(|| load_image(server_assets.as_deref(), &assets, &definition.sprite));
         let image_size = textures.get(&*image).map(Image::size_f32);
         let squad = (definition.squad > 1).then(|| Squad {
             unit,

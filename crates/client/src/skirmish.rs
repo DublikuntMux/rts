@@ -25,6 +25,7 @@ use crate::{
         widgets::{BAR, EDGE, INK, INK_MUTED, SIGNAL, Tone, button_look},
     },
     pause_menu::{PauseMenu, world_input_blocked},
+    server_assets::{ServerAssets, load_image},
 };
 
 const DEPOSIT_SIZE: f32 = 72.0;
@@ -151,16 +152,22 @@ fn spawn_skirmish(
     game: Res<Match>,
     font: Res<GameFont>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     loc: Res<Localization>,
 ) {
     if !game.view.is_skirmish() {
         return;
     }
-    spawn_balances(&mut commands, &font.0, &assets);
+    spawn_balances(&mut commands, &font.0, &assets, server_assets.as_deref());
     spawn_economy_card(&mut commands, &font.0, &game, &loc);
 }
 
-fn spawn_balances(commands: &mut Commands, font: &Handle<Font>, assets: &AssetServer) {
+fn spawn_balances(
+    commands: &mut Commands,
+    font: &Handle<Font>,
+    assets: &AssetServer,
+    server_assets: Option<&ServerAssets>,
+) {
     commands
         .spawn((
             Name::new("Resource balances"),
@@ -192,7 +199,7 @@ fn spawn_balances(commands: &mut Commands, font: &Handle<Font>, assets: &AssetSe
                 ))
                 .with_children(|item| {
                     item.spawn((
-                        ImageNode::new(assets.load(resource_icon(kind))),
+                        ImageNode::new(load_image(server_assets, assets, resource_icon(kind))),
                         Node {
                             width: px(18),
                             height: px(18),
@@ -694,6 +701,7 @@ fn update_deposits(
     mut commands: Commands,
     game: Res<Match>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     loc: Res<Localization>,
     mut sprites: Query<(&DepositSprite, &mut Visibility, &mut Sprite)>,
     mut shown: Local<Vec<DepositId>>,
@@ -709,7 +717,11 @@ fn update_deposits(
                 DespawnOnExit(AppState::InGame),
                 DepositSprite(id),
                 Sprite {
-                    image: assets.load(resource_icon(deposit.kind)),
+                    image: load_image(
+                        server_assets.as_deref(),
+                        &assets,
+                        resource_icon(deposit.kind),
+                    ),
                     custom_size: Some(Vec2::splat(DEPOSIT_SIZE)),
                     ..default()
                 },

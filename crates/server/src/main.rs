@@ -15,6 +15,9 @@ async fn run() -> std::io::Result<()> {
     let endpoint = rts_net::quic::server_endpoint(socket, &cert, config.lobby_timeout)?;
     eprintln!("RTS QUIC server listening on quic://{local_addr}");
     eprintln!("Certificate SHA-256: {}", cert.fingerprint);
+    if !config.assets.is_empty() {
+        eprintln!("Serving {} client asset(s)", config.assets.len());
+    }
     rts_server::serve_with_config(endpoint, config).await
 }
 
@@ -23,13 +26,15 @@ fn configuration(
 ) -> std::io::Result<(String, rts_server::Config)> {
     use std::io::{Error, ErrorKind};
 
-    const USAGE: &str = "usage: rts-server [bind-address] [--rules PATH] [--map PATH] [--seed u64]";
+    const USAGE: &str =
+        "usage: rts-server [bind-address] [--rules PATH] [--map PATH] [--seed u64] [--assets DIR]";
     let invalid = || Error::new(ErrorKind::InvalidInput, USAGE);
     let mut arguments = arguments.into_iter();
     let mut address = None;
     let mut rules = None;
     let mut map = None;
     let mut seed = None;
+    let mut assets = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--rules" if rules.is_none() => rules = Some(arguments.next().ok_or_else(invalid)?),
@@ -43,6 +48,7 @@ fn configuration(
                         .map_err(|_| invalid())?,
                 );
             }
+            "--assets" if assets.is_none() => assets = Some(arguments.next().ok_or_else(invalid)?),
             value if !value.starts_with('-') && address.is_none() => address = Some(argument),
             _ => return Err(invalid()),
         }
@@ -57,6 +63,9 @@ fn configuration(
     }
     if let Some(seed) = seed {
         config.setup.seed = seed;
+    }
+    if let Some(dir) = assets {
+        config.assets = rts_server::load_assets_dir(std::path::Path::new(&dir))?;
     }
     let map = rts_base::MapData::from_ron(&config.setup.map)
         .map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
@@ -121,6 +130,9 @@ mod tests {
             map.setup.map,
             include_str!("../../../assets/maps/proving_grounds.map.ron")
         );
+        let (_, with_assets) = config(&["--assets", "../../assets"]).unwrap();
+        assert!(with_assets.assets.contains_key("locales/en.lang.ron"));
+        assert!(with_assets.assets.contains_key("textures/terrain/wood.png"));
     }
 
     #[test]
@@ -164,6 +176,8 @@ mod tests {
             vec!["--seed", "invalid"],
             vec!["--seed", "-1"],
             vec!["--seed", "0", "--seed", "1"],
+            vec!["--assets"],
+            vec!["--assets", "../../Cargo.toml"],
             vec!["addr", "other"],
             vec!["--rules", "../../Cargo.toml"],
             vec!["--map", "../../Cargo.toml"],

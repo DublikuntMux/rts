@@ -11,6 +11,7 @@ mod map;
 mod menu;
 mod pause_menu;
 mod preview;
+mod server_assets;
 mod session;
 mod settings;
 mod skirmish;
@@ -81,5 +82,6 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
             PauseMenuPlugin,
         ))
         .init_resource::<Library>()
-        .init_resource::<GameFont>();
+        .init_resource::<GameFont>()
+        .init_resource::<server_assets::ServerAssets>();
 }

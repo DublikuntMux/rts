@@ -24,6 +24,7 @@ use crate::{
     locale::Localization,
     menu::widgets::{BAR, EDGE, FIELD, GOOD, INK, INK_MUTED, RAIL, SIGNAL, Tone, button_look},
     pause_menu::PauseMenu,
+    server_assets::{ServerAssets, load_image},
     skirmish,
 };
 
@@ -127,6 +128,7 @@ fn spawn_hud(
     mut commands: Commands,
     font: Res<GameFont>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     game: Res<Match>,
     loc: Res<Localization>,
     mut images: ResMut<Assets<Image>>,
@@ -154,7 +156,7 @@ fn spawn_hud(
         .id();
     commands.entity(root).add_child(map).with_children(|bar| {
         spawn_selection_panel(bar, &font.0, &loc);
-        spawn_command_card(bar, &font.0, &assets, &game, &loc);
+        spawn_command_card(bar, &font.0, &assets, server_assets.as_deref(), &game, &loc);
         phone::spawn_overlays(bar, &font.0, &loc);
     });
 }
@@ -282,6 +284,7 @@ fn spawn_command_card(
     bar: &mut ChildSpawnerCommands,
     font: &Handle<Font>,
     assets: &AssetServer,
+    server_assets: Option<&ServerAssets>,
     game: &Match,
     loc: &Localization,
 ) {
@@ -310,7 +313,7 @@ fn spawn_command_card(
                 _ => None,
             };
             if let Some(order) = order {
-                spawn_order(card, index, order, font, assets, loc);
+                spawn_order(card, index, order, font, assets, server_assets, loc);
             } else {
                 card.spawn((
                     CommandSlot(index),
@@ -336,6 +339,7 @@ fn spawn_order(
     order: Order,
     font: &Handle<Font>,
     assets: &AssetServer,
+    server_assets: Option<&ServerAssets>,
     loc: &Localization,
 ) {
     card.spawn((
@@ -358,7 +362,7 @@ fn spawn_order(
         observe(activate_order),
     ))
     .with_children(|button| {
-        spawn_order_contents(button, order, font, assets, loc);
+        spawn_order_contents(button, order, font, assets, server_assets, loc);
     });
 }
 
@@ -367,6 +371,7 @@ fn spawn_order_contents(
     order: Order,
     font: &Handle<Font>,
     assets: &AssetServer,
+    server_assets: Option<&ServerAssets>,
     loc: &Localization,
 ) {
     let (label_key, key, icon) = match order {
@@ -391,7 +396,7 @@ fn spawn_order_contents(
     }
     button.spawn((
         ButtonInk,
-        ImageNode::new(assets.load(icon)),
+        ImageNode::new(load_image(server_assets, assets, icon)),
         Node {
             width: px(20),
             height: px(20),
@@ -553,6 +558,7 @@ fn update_selection(
     font: Res<GameFont>,
     graphics: Res<Graphics>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     targeting: Res<Targeting>,
     loc: Res<Localization>,
     mut labels: Query<(&HudText, &mut Text)>,
@@ -601,7 +607,11 @@ fn update_selection(
     }
     for mut image in &mut portrait_image {
         if let Some((_, unit)) = units.first() {
-            image.image = assets.load(game.view.rules().unit(unit.kind).sprite.clone());
+            image.image = load_image(
+                server_assets.as_deref(),
+                &assets,
+                &game.view.rules().unit(unit.kind).sprite,
+            );
             image.color = graphics.player_color(unit.owner.0);
         }
     }
@@ -630,6 +640,7 @@ fn update_selection(
         &game,
         &graphics,
         &assets,
+        server_assets.as_deref(),
     );
 }
 
@@ -641,6 +652,7 @@ fn spawn_roster(
     game: &Match,
     graphics: &Graphics,
     assets: &AssetServer,
+    server_assets: Option<&ServerAssets>,
 ) {
     commands.entity(entity).with_children(|row| {
         for (id, unit) in units.iter().take(12) {
@@ -662,7 +674,11 @@ fn spawn_roster(
                 BorderColor::all(EDGE),
                 observe(select_portrait),
                 children![unit_image(
-                    assets.load(game.view.rules().unit(unit.kind).sprite.clone()),
+                    load_image(
+                        server_assets,
+                        assets,
+                        &game.view.rules().unit(unit.kind).sprite,
+                    ),
                     graphics.player_color(unit.owner.0),
                 )],
             ));

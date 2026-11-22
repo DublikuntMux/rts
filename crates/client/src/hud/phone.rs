@@ -495,6 +495,7 @@ pub(super) fn update_controls(
     game: Res<Match>,
     phone: Res<PhoneHud>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     graphics: Res<Graphics>,
     loc: Res<Localization>,
     mut button: Query<SelectionStyle, With<SelectionButton>>,
@@ -504,7 +505,11 @@ pub(super) fn update_controls(
 ) {
     if let Some(unit) = selection.units.first().and_then(|id| game.view.unit(*id)) {
         for mut image in &mut image {
-            image.image = assets.load(game.view.rules().unit(unit.kind).sprite.clone());
+            image.image = load_image(
+                server_assets.as_deref(),
+                &assets,
+                &game.view.rules().unit(unit.kind).sprite,
+            );
             image.color = graphics.player_color(unit.owner.0);
         }
     }

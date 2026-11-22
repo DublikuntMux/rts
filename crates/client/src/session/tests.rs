@@ -941,3 +941,101 @@ fn pause_freezes_solo_and_replay_ticks_but_online_still_applies_authoritative_fr
         assert_eq!(app.world().resource::<Match>().view.tick(), 1);
     }
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn client_syncs_server_textures_and_translations_on_connect_and_clears_on_disconnect() {
+    let cert = rts_net::quic::ServerCertificate::generate_self_signed().unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let url = format!(
+        "quic://{}#{}",
+        socket.local_addr().unwrap(),
+        cert.fingerprint
+    );
+    let png = include_bytes!("../../../../assets/textures/terrain/wood.png").to_vec();
+    let en_overlay =
+        br#"(code: "en", name: "English", strings: {"unit.soldier": "Laser Trooper"})"#.to_vec();
+    let fr_locale = r#"(code: "fr", name: "Français", strings: {"nav.quit": "Quitter"})"#
+        .as_bytes()
+        .to_vec();
+    let mut assets = BTreeMap::new();
+    assets.insert(
+        "textures/units/laser.png".to_owned(),
+        rts_server::ServerAsset::from_bytes("textures/units/laser.png", png).unwrap(),
+    );
+    assets.insert(
+        "locales/en.lang.ron".to_owned(),
+        rts_server::ServerAsset::from_bytes("locales/en.lang.ron", en_overlay).unwrap(),
+    );
+    assets.insert(
+        "locales/fr.lang.ron".to_owned(),
+        rts_server::ServerAsset::from_bytes("locales/fr.lang.ron", fr_locale).unwrap(),
+    );
+    let config = rts_server::Config {
+        assets,
+        ..default()
+    };
+    let endpoint = rts_net::quic::server_endpoint(socket, &cert, config.lobby_timeout).unwrap();
+    let server = tokio::spawn(rts_server::serve_with_config(endpoint, config));
+
+    let mut client = headless();
+    client.insert_resource(Assets::<Image>::default());
+    client
+        .world_mut()
+        .write_message(SessionAction::Connect { url });
+    for _ in 0..400 {
+        client.update();
+        if status(&client).connected() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(status(&client).connected());
+    assert!(
+        client
+            .world()
+            .resource::<ServerAssets>()
+            .image("textures/units/laser.png")
+            .is_some()
+    );
+    assert_eq!(
+        client
+            .world()
+            .resource::<Localization>()
+            .unit_name("soldier"),
+        "Laser Trooper"
+    );
+    assert!(
+        client
+            .world()
+            .resource::<Localization>()
+            .languages()
+            .iter()
+            .any(|(code, name)| code == "fr" && name == "Français")
+    );
+
+    client.world_mut().write_message(SessionAction::Disconnect);
+    client.update();
+    assert!(
+        client
+            .world()
+            .resource::<ServerAssets>()
+            .image("textures/units/laser.png")
+            .is_none()
+    );
+    assert_eq!(
+        client
+            .world()
+            .resource::<Localization>()
+            .unit_name("soldier"),
+        "Rifle squad"
+    );
+    assert!(
+        !client
+            .world()
+            .resource::<Localization>()
+            .languages()
+            .iter()
+            .any(|(code, _)| code == "fr")
+    );
+    server.abort();
+}

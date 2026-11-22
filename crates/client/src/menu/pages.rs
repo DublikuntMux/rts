@@ -760,7 +760,7 @@ fn connecting(view: &View, url: String) -> impl SceneList {
                 padding: UiRect::all(px(16)),
             }
             Children [
-                @text({loc.t("online.connecting").to_owned()}, 18.0, INK)
+                @bound_text(connecting_status, 18.0, INK)
                 --
                 @hint(url)
                 --
@@ -771,6 +771,19 @@ fn connecting(view: &View, url: String) -> impl SceneList {
         })
         --
         @hint({loc.t("online.connecting_hint").to_owned()})
+    }
+}
+
+fn connecting_status(view: &View) -> String {
+    if let Some((done, total)) = view.status.asset_progress {
+        let done = done.to_string();
+        let total = total.to_string();
+        view.loc.fmt(
+            "online.syncing_assets",
+            &[("done", &done), ("total", &total)],
+        )
+    } else {
+        view.loc.t("online.connecting").to_owned()
     }
 }
 

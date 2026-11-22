@@ -3,10 +3,12 @@
 //! [`Coordinator`] is independent of sockets and clocks. [`serve`] and [`serve_with_config`]
 //! run it over a pure-Rust QUIC endpoint with TLS 1.3 encryption and compact binary framing.
 
+mod assets;
 mod coordinator;
 mod layout;
 mod runtime;
 
+pub use assets::{ServerAsset, load_assets_dir};
 pub use coordinator::{
     ClientId, Config, Coordinator, Delivery, MAX_CATCH_UP_TURNS, MAX_FUTURE_TICKS,
 };

@@ -1,6 +1,7 @@
 //! Transport-independent authoritative turn protocol, compact binary framing, match setup, and
 //! verified replay files.
 
+pub mod assets;
 mod minify;
 #[cfg(feature = "quic")]
 pub mod quic;

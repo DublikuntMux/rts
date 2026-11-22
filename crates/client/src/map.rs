@@ -16,6 +16,7 @@ use rts_base::{IVec2 as SimPos, PlayerView, Rules, TILE, TileVisibility};
 use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
+    server_assets::ServerAssets,
 };
 
 /// Screen pixels per tile at camera scale 1.
@@ -110,6 +111,7 @@ fn spawn_terrain(
     mut commands: Commands,
     game: Res<Match>,
     assets: Res<AssetServer>,
+    server_assets: Option<Res<ServerAssets>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let tiles = fog_tiles(&game.view);
@@ -123,6 +125,15 @@ fn spawn_terrain(
         .iter()
         .map(|def| {
             def.texture.as_ref().map(|path| {
+                if let Some(decoded) = server_assets
+                    .as_deref()
+                    .and_then(|synced| synced.terrain_image(path))
+                {
+                    match decoded {
+                        Ok(image) => return images.add(image),
+                        Err(error) => warn!("{error}; falling back to bundled texture"),
+                    }
+                }
                 assets
                     .load_builder()
                     .with_settings(|settings: &mut ImageLoaderSettings| {

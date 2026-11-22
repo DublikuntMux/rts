@@ -38,7 +38,7 @@ miniz_oxide = "0.9.1"
 rand = { version = "0.10.4", default-features = false, features = ["std", "std_rng"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
-bytes = "1.11.1"
+bytes = "1.12.2"
 glomar = "0.4.0"
 glomar-rustls = "0.4.0"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "bloom", "log"] }

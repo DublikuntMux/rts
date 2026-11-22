@@ -19,13 +19,20 @@ use std::{
 
 use bevy::prelude::*;
 use rts_ai::Difficulty;
+use rts_assets::LocaleData;
 use rts_base::{Command, MatchOutcome, PlayerId, PlayerView, Sim, ViewFrame, ViewIntro};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, LobbySetup, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
     PROTOCOL_VERSION, PlayerInput, Recording, Replay, RoomInfo, ServerMessage, Turn, ViewReplay,
+    assets::{
+        AssetClientMessage, AssetEntry, AssetKind, AssetServerMessage, MAX_ASSET_FILE_BYTES,
+        MAX_ASSET_FRAME_BYTES, decode_asset_server, encode_asset_client, sha256,
+        validate_asset_path,
+    },
     decode_server, encode_client,
     quic::{
-        PRIORITY_GAME, STREAM_GAME, client_endpoint, parse_server_url, read_frame, write_frame,
+        PRIORITY_ASSETS, PRIORITY_GAME, STREAM_ASSETS, STREAM_GAME, client_endpoint,
+        parse_server_url, read_frame, write_frame,
     },
 };
 
@@ -33,8 +40,10 @@ use crate::{
     game::{AppState, MapCatalog, Match, Seat},
     input::Selection,
     library::{Library, Shelf},
+    locale::Localization,
     menu::Menu,
     pause_menu::{PauseMenu, world_input_blocked},
+    server_assets::{ServerAssets, cache_dir, read_cached, write_cached},
 };
 
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -196,6 +205,8 @@ pub struct SessionStatus {
     pub message: String,
     pub error: bool,
     pub server: Server,
+    /// Server-provided asset download progress `(done, total)` while connecting.
+    pub asset_progress: Option<(usize, usize)>,
     /// Public rooms from the last listing.
     pub rooms: Vec<RoomInfo>,
     pub lobby: Option<Lobby>,
@@ -258,6 +269,7 @@ impl SessionStatus {
 
     fn disconnect(&mut self, server: Server) {
         self.server = server;
+        self.asset_progress = None;
         self.rooms.clear();
         self.lobby = None;
         self.joining = false;
@@ -422,6 +434,8 @@ impl Session {
 const MAX_ADAPTIVE_LEAD_TICKS: u32 = 16;
 
 enum QuicEvent {
+    AssetProgress { done: usize, total: usize },
+    SyncedAssets(Vec<(String, Vec<u8>)>),
     Opened,
     Frame(Vec<u8>),
     Error(String),
@@ -527,6 +541,11 @@ async fn run_quic_client(
         )));
         return;
     }
+    if let Err(error) = sync_server_assets(&conn, &event_tx).await {
+        conn.close(1_u32.into(), b"asset sync failed");
+        let _ = event_tx.try_send(QuicEvent::Error(error));
+        return;
+    }
     if event_tx.try_send(QuicEvent::Opened).is_err() {
         conn.close(0_u32.into(), b"client dropped");
         return;
@@ -575,6 +594,135 @@ async fn run_quic_client(
             }
         }
     }
+}
+
+async fn sync_server_assets(
+    conn: &rts_net::quic::quinn::Connection,
+    event_tx: &mpsc::SyncSender<QuicEvent>,
+) -> Result<(), String> {
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|error| format!("Cannot open asset sync stream: {error}"))?;
+    let _ = send.set_priority(PRIORITY_ASSETS);
+    send.write_all(&[STREAM_ASSETS])
+        .await
+        .map_err(|error| format!("Cannot initialize asset stream: {error}"))?;
+    let request = encode_asset_client(&AssetClientMessage::GetManifest {
+        version: PROTOCOL_VERSION,
+    })
+    .map_err(|error| format!("Cannot encode asset manifest request: {error}"))?;
+    write_frame(&mut send, &request)
+        .await
+        .map_err(|error| format!("Cannot request server asset manifest: {error}"))?;
+    let response = read_frame(&mut recv, MAX_ASSET_FRAME_BYTES)
+        .await
+        .map_err(|error| format!("Cannot read server asset manifest: {error}"))?
+        .ok_or_else(|| "Server closed the asset sync stream.".to_owned())?;
+    let entries = match decode_asset_server(&response)
+        .map_err(|error| format!("Invalid server asset manifest: {error}"))?
+    {
+        AssetServerMessage::Manifest { entries } => entries,
+        AssetServerMessage::Error { message } => {
+            return Err(format!("Server asset sync failed: {message}"));
+        }
+        _ => return Err("Unexpected response while reading asset manifest.".into()),
+    };
+    if entries.is_empty() {
+        let _ = send.finish();
+        return Ok(());
+    }
+    let cache = cache_dir();
+    let total = entries.len();
+    let mut synced = Vec::with_capacity(total);
+    let mut missing: BTreeMap<String, AssetEntry> = BTreeMap::new();
+    for entry in entries {
+        if let Some(bytes) = read_cached(cache.as_deref(), &entry.sha256, MAX_ASSET_FILE_BYTES) {
+            synced.push((entry.path, bytes));
+        } else {
+            missing.insert(entry.path.clone(), entry);
+        }
+    }
+    let _ = event_tx.try_send(QuicEvent::AssetProgress {
+        done: synced.len(),
+        total,
+    });
+    if !missing.is_empty() {
+        fetch_missing_assets(
+            &mut send,
+            &mut recv,
+            &mut missing,
+            cache.as_deref(),
+            &mut synced,
+            total,
+            event_tx,
+        )
+        .await?;
+    }
+    let _ = send.finish();
+    event_tx
+        .send(QuicEvent::SyncedAssets(synced))
+        .map_err(|_| "Client stopped before asset sync finished.".to_owned())
+}
+
+async fn fetch_missing_assets(
+    send: &mut rts_net::quic::quinn::SendStream,
+    recv: &mut rts_net::quic::quinn::RecvStream,
+    missing: &mut BTreeMap<String, AssetEntry>,
+    cache: Option<&std::path::Path>,
+    synced: &mut Vec<(String, Vec<u8>)>,
+    total: usize,
+    event_tx: &mpsc::SyncSender<QuicEvent>,
+) -> Result<(), String> {
+    let fetch = encode_asset_client(&AssetClientMessage::Fetch {
+        paths: missing.keys().cloned().collect(),
+    })
+    .map_err(|error| format!("Cannot encode asset fetch request: {error}"))?;
+    write_frame(send, &fetch)
+        .await
+        .map_err(|error| format!("Cannot request server assets: {error}"))?;
+    loop {
+        let frame = read_frame(recv, MAX_ASSET_FRAME_BYTES)
+            .await
+            .map_err(|error| format!("Cannot read server asset: {error}"))?
+            .ok_or_else(|| "Server closed the asset stream mid-transfer.".to_owned())?;
+        match decode_asset_server(&frame)
+            .map_err(|error| format!("Invalid server asset payload: {error}"))?
+        {
+            AssetServerMessage::File {
+                path,
+                sha256: digest,
+                bytes,
+            } => {
+                let expected = missing
+                    .remove(&path)
+                    .ok_or_else(|| format!("Server sent unexpected asset `{path}`."))?;
+                if digest != expected.sha256
+                    || bytes.len() != expected.size as usize
+                    || sha256(&bytes) != expected.sha256
+                {
+                    return Err(format!("Asset integrity check failed for `{path}`."));
+                }
+                write_cached(cache, &digest, &bytes);
+                synced.push((path, bytes));
+                let _ = event_tx.try_send(QuicEvent::AssetProgress {
+                    done: synced.len(),
+                    total,
+                });
+            }
+            AssetServerMessage::Done => break,
+            AssetServerMessage::Error { message } => {
+                return Err(format!("Server asset sync failed: {message}"));
+            }
+            AssetServerMessage::Manifest { .. } => {
+                return Err("Unexpected duplicate asset manifest.".into());
+            }
+        }
+    }
+    if !missing.is_empty() {
+        return Err("Server omitted requested client assets.".into());
+    }
+    Ok(())
 }
 
 async fn open_quic_connection(
@@ -644,6 +792,8 @@ impl Plugin for SessionPlugin {
         app.init_resource::<Session>()
             .init_resource::<SessionStatus>()
             .init_resource::<PauseMenu>()
+            .init_resource::<ServerAssets>()
+            .init_resource::<Localization>()
             .insert_non_send(Network::default())
             .add_message::<SessionAction>()
             .add_systems(PreUpdate, poll_network)
@@ -678,6 +828,8 @@ fn handle_actions(
     mut library: ResMut<Library>,
     mut session: ResMut<Session>,
     mut status: ResMut<SessionStatus>,
+    mut server_assets: ResMut<ServerAssets>,
+    mut loc: ResMut<Localization>,
     mut network: NonSendMut<Network>,
     mut next: ResMut<NextState<AppState>>,
     time: Res<Time>,
@@ -693,11 +845,15 @@ fn handle_actions(
                         kind: MatchKind,
                         message: &str,
                         status: &mut SessionStatus,
-                        network: &mut Network|
+                        network: &mut Network,
+                        server_assets: &mut ServerAssets,
+                        loc: &mut Localization|
          -> Result<(), String> {
             let game = game?;
-            // Local matches do not keep a server connection.
+            // Local matches do not keep a server connection or server-synced assets.
             network.leave();
+            server_assets.clear();
+            loc.clear_server_locales();
             status.disconnect(Server::Offline);
             commands.insert_resource(game);
             next.set(AppState::InGame);
@@ -722,6 +878,8 @@ fn handle_actions(
                         },
                         &mut status,
                         &mut network,
+                        &mut server_assets,
+                        &mut loc,
                     )
                 }),
             SessionAction::Restart if status.can_restart() => session
@@ -754,6 +912,8 @@ fn handle_actions(
                     "Saved game loaded.",
                     &mut status,
                     &mut network,
+                    &mut server_assets,
+                    &mut loc,
                 )
             }),
             SessionAction::SaveGame => {
@@ -772,6 +932,8 @@ fn handle_actions(
             }
             SessionAction::Connect { url } => {
                 network.leave();
+                server_assets.clear();
+                loc.clear_server_locales();
                 Connection::connect(
                     url,
                     ClientMessage::Rooms {
@@ -795,6 +957,8 @@ fn handle_actions(
             }
             SessionAction::Disconnect => {
                 network.leave();
+                server_assets.clear();
+                loc.clear_server_locales();
                 session.online_setup = None;
                 status.disconnect(Server::Offline);
                 status.info("");
@@ -870,6 +1034,8 @@ fn handle_actions(
                         "Orders are disabled while watching.",
                         &mut status,
                         &mut network,
+                        &mut server_assets,
+                        &mut loc,
                     )
                 })
             }
@@ -885,6 +1051,8 @@ fn handle_actions(
                         "Orders are disabled while watching.",
                         &mut status,
                         &mut network,
+                        &mut server_assets,
+                        &mut loc,
                     )
                 }),
             SessionAction::SaveReplay => session
@@ -907,6 +1075,9 @@ fn poll_network(
     mut network: NonSendMut<Network>,
     mut session: ResMut<Session>,
     mut status: ResMut<SessionStatus>,
+    mut server_assets: ResMut<ServerAssets>,
+    mut loc: ResMut<Localization>,
+    mut images: Option<ResMut<Assets<Image>>>,
     mut game: Option<ResMut<Match>>,
     mut next: ResMut<NextState<AppState>>,
     time: Res<Time>,
@@ -926,7 +1097,16 @@ fn poll_network(
             }
         };
         let result = match event {
+            QuicEvent::AssetProgress { done, total } => {
+                status.asset_progress = Some((done, total));
+                Ok(())
+            }
+            QuicEvent::SyncedAssets(files) => {
+                status.asset_progress = None;
+                apply_synced_assets(files, &mut server_assets, &mut loc, images.as_deref_mut())
+            }
             QuicEvent::Opened => {
+                status.asset_progress = None;
                 connection.opened = true;
                 connection
                     .hello
@@ -958,6 +1138,8 @@ fn poll_network(
     }
     if let Some(reason) = failure {
         network.leave();
+        server_assets.clear();
+        loc.clear_server_locales();
         session.online_setup = None;
         if session.mode == Mode::Online {
             stop_match(&mut session, &mut status, game.as_deref_mut());
@@ -974,6 +1156,35 @@ fn poll_network(
         });
         status.fail(reason);
     }
+}
+
+fn apply_synced_assets(
+    files: Vec<(String, Vec<u8>)>,
+    server_assets: &mut ServerAssets,
+    loc: &mut Localization,
+    mut images: Option<&mut Assets<Image>>,
+) -> Result<(), String> {
+    server_assets.clear();
+    loc.clear_server_locales();
+    for (path, bytes) in files {
+        let kind = validate_asset_path(&path)
+            .map_err(|error| format!("Invalid server asset path `{path}`: {error}"))?;
+        match kind {
+            AssetKind::Texture => {
+                if let Some(images) = images.as_deref_mut() {
+                    server_assets.install_texture(path, bytes, images)?;
+                }
+            }
+            AssetKind::Locale => {
+                let text = std::str::from_utf8(&bytes)
+                    .map_err(|_| format!("Server locale `{path}` is not valid UTF-8."))?;
+                let locale = LocaleData::parse_str(text)
+                    .map_err(|error| format!("Invalid server locale `{path}`: {error}"))?;
+                loc.apply_server_locale(locale);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Freezes a settled or interrupted match and leaves its replay available.

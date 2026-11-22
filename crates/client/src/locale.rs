@@ -88,10 +88,6 @@ impl Localization {
     }
 
     /// Applies a server-synced locale overlay for the current server connection.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "wired to server asset sync in the next milestone")
-    )]
     pub fn apply_server_locale(&mut self, locale: LocaleData) {
         let changed = self.server.get(&locale.code) != Some(&locale);
         self.server.insert(locale.code.clone(), locale);
@@ -101,10 +97,6 @@ impl Localization {
     }
 
     /// Clears all server-synced locale overlays (on disconnect or when starting a local match).
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "wired to server asset sync in the next milestone")
-    )]
     pub fn clear_server_locales(&mut self) {
         if !self.server.is_empty() {
             self.server.clear();
