@@ -70,7 +70,11 @@ pub(super) fn spawn_selection_button(parent: &mut ChildSpawnerCommands, font: &H
         });
 }
 
-pub(super) fn spawn_overlays(parent: &mut ChildSpawnerCommands, font: &Handle<Font>) {
+pub(super) fn spawn_overlays(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    loc: &Localization,
+) {
     parent
         .spawn((
             Backdrop,
@@ -137,7 +141,7 @@ pub(super) fn spawn_overlays(parent: &mut ChildSpawnerCommands, font: &Handle<Fo
                 .with_children(|button| {
                     button.spawn((
                         Pickable::IGNORE,
-                        Text::new("Close"),
+                        Text::new(loc.t("hud.phone_close")),
                         text_font(font, 12.0),
                         TextColor(INK),
                     ));
@@ -146,7 +150,7 @@ pub(super) fn spawn_overlays(parent: &mut ChildSpawnerCommands, font: &Handle<Fo
     parent.spawn((
         TargetHint,
         Pickable::IGNORE,
-        Text::new("Choose a destination"),
+        Text::new(loc.t("hud.target_move")),
         text_font(font, 13.0),
         TextColor(SIGNAL),
         BackgroundColor(BAR),
@@ -205,6 +209,7 @@ pub(super) fn resize_hud(
     mut phone: ResMut<PhoneHud>,
     mut focus: Option<ResMut<bevy::input_focus::InputFocus>>,
     targeting: Res<Targeting>,
+    loc: Res<Localization>,
     mut nodes: Query<ConsoleNode>,
     mut hints: Query<&mut Text, With<TargetHint>>,
 ) {
@@ -223,7 +228,7 @@ pub(super) fn resize_hud(
     }
     let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
     for mut hint in &mut hints {
-        hint.set_if_neq(Text::new(targeting.prompt()));
+        hint.set_if_neq(Text::new(targeting.prompt(&loc)));
     }
     for (
         mut node,
@@ -491,6 +496,7 @@ pub(super) fn update_controls(
     phone: Res<PhoneHud>,
     assets: Res<AssetServer>,
     graphics: Res<Graphics>,
+    loc: Res<Localization>,
     mut button: Query<SelectionStyle, With<SelectionButton>>,
     mut image: Query<&mut ImageNode, With<SelectionImage>>,
     mut count: Query<&mut Text, (With<SelectionCount>, Without<PanelTitle>)>,
@@ -511,10 +517,10 @@ pub(super) fn update_controls(
         label.set_if_neq(Text::new(selection.units.len().to_string()));
     }
     for mut label in &mut title {
-        label.set_if_neq(Text::new(if phone.panel == Some(PhonePanel::Map) {
-            "Battlefield"
+        label.set_if_neq(Text::new(loc.t(if phone.panel == Some(PhonePanel::Map) {
+            "hud.phone_battlefield"
         } else {
-            "Selected units"
-        }));
+            "hud.phone_selected"
+        })));
     }
 }

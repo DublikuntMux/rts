@@ -8,11 +8,12 @@ use bevy::{
 use crate::{
     game::AppState,
     hud::{PhoneHud, Targeting},
+    locale::Localization,
     menu::{
         Action, DialogHost, Menu, MenuActions, View,
         widgets::{INK, INK_MUTED, ShowIf, Tone, bound_text, dialog_with_title, wide_button},
     },
-    session::{MatchKind, SessionAction, SessionStatus},
+    session::{MatchKind, MatchResult, SessionAction, SessionStatus},
 };
 
 /// Logical pixel bounds before interface scaling. Only this rectangle excludes world input.
@@ -33,6 +34,7 @@ pub struct PauseMenuPlugin;
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseMenu>()
+            .init_resource::<Localization>()
             .add_systems(OnEnter(AppState::InGame), (reset_pause, spawn_pause_menu))
             .add_systems(OnExit(AppState::InGame), reset_pause)
             .add_systems(
@@ -100,17 +102,23 @@ fn show_pause_menu(
     }
 }
 
-fn spawn_pause_menu(mut commands: Commands) {
-    commands.spawn_scene(pause_menu());
+fn spawn_pause_menu(mut commands: Commands, loc: Res<Localization>) {
+    commands.spawn_scene(pause_menu(&loc));
 }
 
-fn pause_menu() -> impl Scene {
+fn pause_menu(loc: &Localization) -> impl Scene {
     let resumable = ShowIf(|view| view.status.result.is_none());
     let can_leave = resumable.clone();
     let completed = ShowIf(|view| view.status.result.is_some());
     let solo = ShowIf(|view| view.status.can_save_game());
     let restart = ShowIf(|view| view.status.can_restart());
     let dialog_shown = ShowIf(|view| view.menu.dialog.is_some());
+    let resume_label = loc.t("pause.resume").to_owned();
+    let play_again_label = loc.t("pause.play_again").to_owned();
+    let save_game_label = loc.t("pause.save_game").to_owned();
+    let save_replay_label = loc.t("pause.save_replay").to_owned();
+    let leave_label = loc.t("pause.leave").to_owned();
+    let main_menu_label = loc.t("pause.main_menu").to_owned();
     bsn! {
         DespawnOnExit<AppState>(AppState::InGame)
         Pickable::IGNORE
@@ -129,21 +137,21 @@ fn pause_menu() -> impl Scene {
                 --
                 @bound_text(session_message, 13.0, INK_MUTED)
                 --
-                @wide_button("Resume", Action::Resume, Tone::Primary)
+                @wide_button(resume_label, Action::Resume, Tone::Primary)
                 resumable
                 --
-                @wide_button("Play again", Action::Game(SessionAction::Restart), Tone::Primary)
+                @wide_button(play_again_label, Action::Game(SessionAction::Restart), Tone::Primary)
                 restart
                 --
-                @wide_button("Save game", Action::Game(SessionAction::SaveGame), Tone::Secondary)
+                @wide_button(save_game_label, Action::Game(SessionAction::SaveGame), Tone::Secondary)
                 solo
                 --
-                @wide_button("Save replay", Action::Game(SessionAction::SaveReplay), Tone::Secondary)
+                @wide_button(save_replay_label, Action::Game(SessionAction::SaveReplay), Tone::Secondary)
                 --
-                @wide_button("Leave", Action::Game(SessionAction::Leave), Tone::Danger)
+                @wide_button(leave_label, Action::Game(SessionAction::Leave), Tone::Danger)
                 can_leave
                 --
-                @wide_button("Main menu", Action::Game(SessionAction::Leave), Tone::Secondary)
+                @wide_button(main_menu_label, Action::Game(SessionAction::Leave), Tone::Secondary)
                 completed
             })
             PausePanel
@@ -202,20 +210,22 @@ fn pause_button() -> impl Scene {
 
 fn pause_message(view: &View) -> String {
     if let Some(result) = view.status.result {
-        return result.detail().into();
+        return view.loc.t(result.detail_key()).to_owned();
     }
-    match view.status.kind {
-        MatchKind::Online => "Online match continues while this menu is open.".into(),
-        MatchKind::Playback => "Replay paused.".into(),
-        MatchKind::Solo => "Game paused.".into(),
-    }
+    let key = match view.status.kind {
+        MatchKind::Online => "pause.online_msg",
+        MatchKind::Playback => "pause.replay_msg",
+        MatchKind::Solo => "pause.solo_msg",
+    };
+    view.loc.t(key).to_owned()
 }
 
 fn panel_title(view: &View) -> String {
-    view.status
+    let key = view
+        .status
         .result
-        .map_or("Pause menu", crate::session::MatchResult::title)
-        .into()
+        .map_or("pause.title", MatchResult::title_key);
+    view.loc.t(key).to_owned()
 }
 
 fn session_message(view: &View) -> String {

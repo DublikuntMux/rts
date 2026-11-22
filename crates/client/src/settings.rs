@@ -6,7 +6,7 @@ use bevy::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{camera::RtsCamera, library::Library};
+use crate::{camera::RtsCamera, library::Library, locale::DEFAULT_LANGUAGE};
 
 const KEY: &str = "settings.ron";
 /// Interface scales offered in Settings, in percent.
@@ -19,6 +19,8 @@ const EDGE_MARGIN: f32 = 8.0;
 pub struct Settings {
     /// Shown to other players in online rooms.
     pub name: String,
+    /// Selected interface language code (e.g. `"en"`, `"de"`, `"es"`, `"uk"`).
+    pub language: String,
     /// One of [`UI_SCALES`].
     pub ui_scale: u16,
     pub edge_scroll: bool,
@@ -31,6 +33,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             name: "Player".into(),
+            language: DEFAULT_LANGUAGE.into(),
             ui_scale: 100,
             edge_scroll: true,
             fullscreen: false,
@@ -47,6 +50,9 @@ impl Settings {
         }
         if rts_net::validate_name(&settings.name).is_err() {
             settings.name = Self::default().name;
+        }
+        if rts_assets::LocaleData::validate_code(&settings.language).is_err() {
+            settings.language = DEFAULT_LANGUAGE.into();
         }
         Ok(settings)
     }
@@ -132,6 +138,7 @@ mod tests {
     fn stored_settings_round_trip_and_repair_bad_values() {
         let settings = Settings {
             name: "Ada".into(),
+            language: "uk".into(),
             ui_scale: 125,
             edge_scroll: false,
             fullscreen: true,
@@ -139,8 +146,10 @@ mod tests {
         };
         let text = ron::to_string(&settings).unwrap();
         assert_eq!(Settings::from_ron(&text).unwrap(), settings);
-        let repaired = Settings::from_ron("(name: \" bad \", ui_scale: 333)").unwrap();
+        let repaired =
+            Settings::from_ron("(name: \" bad \", language: \"BAD!\", ui_scale: 333)").unwrap();
         assert_eq!(repaired.name, "Player");
+        assert_eq!(repaired.language, "en");
         assert_eq!(repaired.ui_scale, 100);
         assert!(repaired.edge_scroll);
         assert!(Settings::from_ron("(unknown: 1)").is_err());

@@ -8,7 +8,7 @@ use bevy::{
 };
 use rts_base::{MapData, Rules};
 
-use crate::Graphics;
+use crate::{Graphics, LocaleData};
 
 /// A `*.rules.ron` file.
 #[derive(Asset, TypePath)]
@@ -25,9 +25,11 @@ impl Plugin for DataPlugin {
         app.init_asset::<RulesAsset>()
             .init_asset::<MapAsset>()
             .init_asset::<Graphics>()
+            .init_asset::<LocaleData>()
             .register_asset_loader(RonLoader::<RulesAsset>(PhantomData))
             .register_asset_loader(RonLoader::<MapAsset>(PhantomData))
-            .register_asset_loader(RonLoader::<Graphics>(PhantomData));
+            .register_asset_loader(RonLoader::<Graphics>(PhantomData))
+            .register_asset_loader(RonLoader::<LocaleData>(PhantomData));
     }
 }
 
@@ -56,6 +58,14 @@ impl RonAsset for MapAsset {
 
 impl RonAsset for Graphics {
     const EXTENSION: &'static str = "graphics.ron";
+
+    fn parse(text: &str) -> Result<Self, BevyError> {
+        Self::from_ron(text)
+    }
+}
+
+impl RonAsset for LocaleData {
+    const EXTENSION: &'static str = "lang.ron";
 
     fn parse(text: &str) -> Result<Self, BevyError> {
         Self::from_ron(text)

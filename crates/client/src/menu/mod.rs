@@ -33,6 +33,7 @@ use crate::{
     game::{AppState, MapCatalog},
     hud::Targeting,
     library::{Library, Record, Shelf},
+    locale::Localization,
     pause_menu::PauseMenu,
     session::{Lobby, MatchKind, Server, SessionAction, SessionActions, SessionStatus},
     settings::Settings,
@@ -59,6 +60,7 @@ impl Plugin for MenuPlugin {
         app.init_resource::<Menu>()
             .init_resource::<MenuForm>()
             .init_resource::<PauseMenu>()
+            .init_resource::<Localization>()
             .init_resource::<Rendered>()
             .init_resource::<Clipboard>()
             .init_resource::<CrashReport>()
@@ -324,6 +326,7 @@ pub struct View<'a> {
     pub library: &'a Library,
     pub catalog: &'a MapCatalog,
     pub crash: &'a CrashReport,
+    pub loc: &'a Localization,
 }
 
 impl View<'_> {
@@ -371,6 +374,7 @@ pub struct ViewParam<'w> {
     library: Res<'w, Library>,
     catalog: Res<'w, MapCatalog>,
     crash: Res<'w, CrashReport>,
+    loc: Res<'w, Localization>,
 }
 
 impl ViewParam<'_> {
@@ -383,6 +387,7 @@ impl ViewParam<'_> {
             library: &self.library,
             catalog: &self.catalog,
             crash: &self.crash,
+            loc: &self.loc,
         }
     }
 
@@ -392,6 +397,7 @@ impl ViewParam<'_> {
             || self.form.is_changed()
             || self.settings.is_changed()
             || self.library.is_changed()
+            || self.loc.is_changed()
     }
 }
 
@@ -432,6 +438,7 @@ pub enum Action {
     StartMatch,
     LeaveRoom,
     CopyCode,
+    SetLanguage(String),
     SetUiScale(u16),
     SetEdgeScroll(bool),
     SetFullscreen(bool),
@@ -493,6 +500,7 @@ impl Action {
             Self::Select(kind, pick) => menu.browse(*kind).selected.as_ref() == Some(pick),
             Self::SelectRoom(code) => menu.room.as_ref() == Some(code),
             Self::SetPublic(public) => menu.public_room == *public,
+            Self::SetLanguage(code) => view.settings.language == *code,
             Self::SetUiScale(scale) => view.settings.ui_scale == *scale,
             Self::SetEdgeScroll(on) => view.settings.edge_scroll == *on,
             Self::SetFullscreen(on) => view.settings.fullscreen == *on,
@@ -525,6 +533,7 @@ fn perform(
     mut targeting: Option<ResMut<Targeting>>,
     mut form: ResMut<MenuForm>,
     mut settings: ResMut<Settings>,
+    mut loc: ResMut<Localization>,
     status: Res<SessionStatus>,
     library: Res<Library>,
     catalog: Res<MapCatalog>,
@@ -545,6 +554,7 @@ fn perform(
             library: &library,
             catalog: &catalog,
             crash: &crash,
+            loc: &loc,
         };
         if !action.enabled(&view) {
             continue;
@@ -678,10 +688,14 @@ fn perform(
             Action::CopyCode => {
                 if let Some(lobby) = &status.lobby {
                     menu.notice = Some(match clipboard.set_text(lobby.code.clone()) {
-                        Ok(()) => ("Invite code copied.".into(), false),
-                        Err(_) => ("Cannot use the clipboard here.".into(), true),
+                        Ok(()) => (loc.t("lobby.code_copied").to_owned(), false),
+                        Err(_) => (loc.t("lobby.clipboard_unavailable").to_owned(), true),
                     });
                 }
+            }
+            Action::SetLanguage(code) => {
+                settings.language.clone_from(&code);
+                loc.set_active(&code);
             }
             Action::SetUiScale(scale) => settings.ui_scale = scale,
             Action::SetEdgeScroll(on) => settings.edge_scroll = on,
@@ -696,7 +710,7 @@ fn perform(
             Action::DiscardCrash => {
                 crash.discard();
                 menu.dialog = None;
-                menu.notice = Some(("Crash report discarded.".into(), false));
+                menu.notice = Some((loc.t("dialog.crash_discarded").to_owned(), false));
             }
             Action::Quit => {
                 if status.connected() || status.connecting() {
@@ -937,13 +951,13 @@ fn store_name(value: String, form: &mut MenuForm, settings: &mut Settings) {
 /// Whether the typed name is usable online.
 pub fn name_hint(view: &View) -> String {
     let typed = view.form.name.as_deref().unwrap_or(&view.settings.name);
+    let max = MAX_NAME_CHARS.to_string();
     if rts_net::validate_name(typed).is_ok() {
-        format!("Shown to other players in online rooms. Up to {MAX_NAME_CHARS} characters.")
+        view.loc.fmt("settings.name_hint_valid", &[("max", &max)])
     } else {
-        format!(
-            "Names need 1 to {MAX_NAME_CHARS} characters without spaces at either end. \
-             Rooms use \"{}\" until then.",
-            view.settings.name
+        view.loc.fmt(
+            "settings.name_hint_invalid",
+            &[("max", &max), ("fallback", &view.settings.name)],
         )
     }
 }
@@ -999,6 +1013,7 @@ pub struct NoticeText;
 #[derive(Resource, Default)]
 struct Rendered {
     compact: Option<bool>,
+    locale_revision: Option<u32>,
     page: Option<pages::PageKey>,
     /// Action of the focused button before a page was replaced.
     focus: Option<Action>,
@@ -1052,12 +1067,15 @@ fn render(
         return;
     }
     let view = view.view();
-    if rendered.compact != Some(view.menu.compact) {
+    if rendered.compact != Some(view.menu.compact)
+        || rendered.locale_revision != Some(view.loc.revision())
+    {
         for root in &roots {
             commands.entity(root).despawn();
         }
-        commands.spawn_scene(pages::menu_root(view.menu.compact));
+        commands.spawn_scene(pages::menu_root(view.menu.compact, view.loc));
         rendered.compact = Some(view.menu.compact);
+        rendered.locale_revision = Some(view.loc.revision());
         rendered.page = None;
         // Hosts exist after the commands apply; fill them next frame.
         return;
@@ -1090,7 +1108,10 @@ fn render_dialog(
     if !added.is_empty() {
         shown.known = false;
     }
-    if shown.known && shown.dialog == view.menu.dialog {
+    if shown.known
+        && shown.dialog == view.menu.dialog
+        && shown.locale_revision == view.loc.revision()
+    {
         return;
     }
     for host in &hosts {
@@ -1104,6 +1125,7 @@ fn render_dialog(
     *shown = ShownDialog {
         known: true,
         dialog: view.menu.dialog.clone(),
+        locale_revision: view.loc.revision(),
     };
 }
 
@@ -1112,6 +1134,7 @@ fn render_dialog(
 struct ShownDialog {
     known: bool,
     dialog: Option<Dialog>,
+    locale_revision: u32,
 }
 
 /// After a page is replaced, focuses the button with the action that had focus before.

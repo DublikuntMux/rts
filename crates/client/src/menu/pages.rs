@@ -21,6 +21,7 @@ use super::{
 use crate::{
     game::AppState,
     library::{Record, Shelf, duration},
+    locale::Localization,
     session::{Lobby, Server},
     settings::{Settings, UI_SCALES},
 };
@@ -136,27 +137,35 @@ impl PageKey {
     clippy::too_many_lines,
     reason = "the screen frame reads best as one scene"
 )]
-pub fn menu_root(compact: bool) -> impl Scene {
+pub fn menu_root(compact: bool, loc: &Localization) -> impl Scene {
     let group = TabGroup::new(0);
     let dialog_shown = ShowIf(|view| view.menu.dialog.is_some());
     let rail_width = if compact { percent(100) } else { px(216) };
     let notice_shown = ShowIf(|view| view.menu.notice.is_some());
     let nav: Scenes = [
-        ("Singleplayer", "Solo", Section::Singleplayer),
-        ("Multiplayer", "Online", Section::Multiplayer),
-        ("Replays", "Replays", Section::Replays),
-        ("Settings", "Settings", Section::Settings),
+        (
+            "nav.singleplayer",
+            "nav.singleplayer_short",
+            Section::Singleplayer,
+        ),
+        (
+            "nav.multiplayer",
+            "nav.multiplayer_short",
+            Section::Multiplayer,
+        ),
+        ("nav.replays", "nav.replays", Section::Replays),
+        ("nav.settings", "nav.settings", Section::Settings),
     ]
     .into_iter()
     .map(|(long, short, section)| {
         boxed(nav_button(
-            if compact { short } else { long },
+            loc.t(if compact { short } else { long }).to_owned(),
             Action::Section(section),
             compact,
         ))
     })
     .chain(std::iter::once(boxed(bsn! {
-        @nav_button("Quit", Action::Quit, compact)
+        @nav_button({loc.t("nav.quit").to_owned()}, Action::Quit, compact)
         Node { margin: {if compact { UiRect::ZERO } else { UiRect::top(auto()) }} }
     })))
     .collect();
@@ -175,7 +184,7 @@ pub fn menu_root(compact: bool) -> impl Scene {
         }
         BackgroundColor(SCREEN)
         Children [
-            @title_bar(compact)
+            @title_bar(compact, loc)
             --
             Node {
                 flex_direction: {if compact { FlexDirection::Column } else { FlexDirection::Row }},
@@ -256,12 +265,13 @@ pub fn menu_root(compact: bool) -> impl Scene {
     clippy::redundant_closure_for_method_calls,
     reason = "the method has a narrower lifetime than the binding's function pointer"
 )]
-fn title_bar(compact: bool) -> impl Scene {
+fn title_bar(compact: bool, loc: &Localization) -> impl Scene {
     let can_go_back = ShowIf(|view| view.can_go_back());
+    let back_label = loc.t("nav.back").to_owned();
     let back: Scenes = when(
         compact,
         bsn! {
-            @button("Back", Action::Back, Tone::Secondary)
+            @button(back_label, Action::Back, Tone::Secondary)
             can_go_back
         },
     );
@@ -288,7 +298,7 @@ fn title_bar(compact: bool) -> impl Scene {
     }
 }
 
-fn nav_button(label: &'static str, action: Action, compact: bool) -> impl Scene {
+fn nav_button(label: String, action: Action, compact: bool) -> impl Scene {
     bsn! {
         @button(label, action, Tone::Nav)
         Node {
@@ -328,22 +338,22 @@ fn command_mark() -> impl Scene {
 
 fn breadcrumb(view: &View) -> String {
     let menu = view.menu;
-    let page = match menu.section {
+    let key = match menu.section {
         Section::Singleplayer => match menu.solo {
-            SoloPage::Home => "Singleplayer",
-            SoloPage::NewGame => "Singleplayer / New game",
-            SoloPage::LoadGame => "Singleplayer / Load game",
+            SoloPage::Home => "breadcrumb.solo_home",
+            SoloPage::NewGame => "breadcrumb.solo_new",
+            SoloPage::LoadGame => "breadcrumb.solo_load",
         },
         Section::Multiplayer => match view.online_page() {
-            OnlinePage::Connect => "Multiplayer / Server",
-            OnlinePage::Connecting => "Multiplayer / Connecting",
-            OnlinePage::Rooms => "Multiplayer / Rooms",
-            OnlinePage::Lobby => "Multiplayer / Lobby",
+            OnlinePage::Connect => "breadcrumb.online_connect",
+            OnlinePage::Connecting => "breadcrumb.online_connecting",
+            OnlinePage::Rooms => "breadcrumb.online_rooms",
+            OnlinePage::Lobby => "breadcrumb.online_lobby",
         },
-        Section::Replays => "Replays",
-        Section::Settings => "Settings",
+        Section::Replays => "breadcrumb.replays",
+        Section::Settings => "breadcrumb.settings",
     };
-    page.into()
+    view.loc.t(key).to_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -368,14 +378,15 @@ fn page_contents(view: &View) -> Box<dyn SceneList> {
         PageKey::NewGame { map, .. } => Box::new(new_game(view, map)),
         PageKey::Browse { shelf, .. } => Box::new(browser(view, shelf)),
         PageKey::Connect { .. } => Box::new(connect(view)),
-        PageKey::Connecting { url } => Box::new(connecting(url)),
+        PageKey::Connecting { url } => Box::new(connecting(view, url)),
         PageKey::Rooms { url, .. } => Box::new(rooms(view, url)),
-        PageKey::Lobby(lobby) => Box::new(lobby_page(lobby)),
+        PageKey::Lobby(lobby) => Box::new(lobby_page(view, lobby)),
         PageKey::Settings { .. } => Box::new(settings_page(view)),
     }
 }
 
 fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
+    let loc = view.loc;
     let preferred = view.catalog.preferred();
     let preview = latest.as_ref().map_or_else(
         || boxed(catalog_preview(view, preferred)),
@@ -384,44 +395,45 @@ fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
     let map = &view.catalog.0[preferred];
     let (map_name, caption) = latest.map_or_else(
         || {
+            let players = map.setup.players.to_string();
+            let size = map_size(loc, &map.setup.map);
             (
                 map.name.clone(),
-                format!(
-                    "{} players / {}",
-                    map.setup.players,
-                    map_size(&map.setup.map)
+                loc.fmt(
+                    "solo.players_size",
+                    &[("players", &players), ("size", &size)],
                 ),
             )
         },
         |record| {
+            let dur = duration(record.meta.ticks);
             (
                 record.meta.map.clone(),
-                format!(
-                    "Latest save: {} / {}",
-                    record.meta.name,
-                    duration(record.meta.ticks)
+                loc.fmt(
+                    "solo.latest_save",
+                    &[("name", &record.meta.name), ("duration", &dur)],
                 ),
             )
         },
     );
     bsn_list! {
-        @heading("Your next move")
+        @heading({loc.t("solo.heading").to_owned()})
         --
-        @hint("Read the terrain. Position your units. Take the field.")
+        @hint({loc.t("solo.tagline").to_owned()})
         --
         @split(
             bsn_list! {
-                @text("Singleplayer", 22.0, INK)
+                @text({loc.t("solo.card_title").to_owned()}, 22.0, INK)
                 --
-                @hint("Build a base and defeat a computer opponent, or explore a sandbox map.")
+                @hint({loc.t("solo.card_hint").to_owned()})
                 --
-                @wide_button("New game", Action::OpenNewGame, Tone::Primary)
+                @wide_button({loc.t("solo.new_game").to_owned()}, Action::OpenNewGame, Tone::Primary)
                 Node { margin: UiRect::top(px(16)), flex_grow: 0.0, flex_basis: auto() }
                 --
-                @wide_button("Load game", Action::OpenLoadGame, Tone::Secondary)
+                @wide_button({loc.t("solo.load_game").to_owned()}, Action::OpenLoadGame, Tone::Secondary)
                 Node { flex_grow: 0.0, flex_basis: auto() }
                 --
-                @hint("Continue a saved match.")
+                @hint({loc.t("solo.load_hint").to_owned()})
             },
             bsn_list! {
                 @text(map_name, 22.0, INK)
@@ -435,13 +447,18 @@ fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
 }
 
 fn new_game(view: &View, selected: usize) -> impl SceneList {
+    let loc = view.loc;
     let mut maps: Vec<_> = view.catalog.0.iter().enumerate().collect();
     maps.sort_by_key(|(_, map)| !map.skirmish);
     let maps: Vec<_> = maps
         .into_iter()
         .map(|(index, map)| {
-            let size = map_size(&map.setup.map);
-            let mode = if map.skirmish { "Skirmish" } else { "Sandbox" };
+            let size = map_size(loc, &map.setup.map);
+            let mode = loc.t(if map.skirmish {
+                "solo.mode_skirmish"
+            } else {
+                "solo.mode_sandbox"
+            });
             list_item(
                 map.name.clone(),
                 format!("{mode} · {size}"),
@@ -450,28 +467,33 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
         })
         .collect();
     let map = &view.catalog.0[selected.min(view.catalog.0.len() - 1)];
-    let detail = if map.skirmish {
-        "Harvest resources, build an army, and destroy the enemy headquarters."
-    } else {
-        "Command player 1 and practice on the battlefield."
-    };
-    let start = if map.skirmish {
-        "Start skirmish"
-    } else {
-        "Start sandbox"
-    };
-    let difficulty: Scenes = when(map.skirmish, difficulty_choice(view.menu.difficulty));
+    let detail = loc
+        .t(if map.skirmish {
+            "solo.detail_skirmish"
+        } else {
+            "solo.detail_sandbox"
+        })
+        .to_owned();
+    let start = loc
+        .t(if map.skirmish {
+            "solo.start_skirmish"
+        } else {
+            "solo.start_sandbox"
+        })
+        .to_owned();
+    let difficulty: Scenes = when(map.skirmish, difficulty_choice(loc, view.menu.difficulty));
+    let selected_label = loc.fmt("solo.selected_map", &[("map", &map.name)]);
     bsn_list! {
-        @heading("Select map")
+        @heading({loc.t("solo.select_map").to_owned()})
         --
-        @hint("The preview shows the terrain around your starting position.")
+        @hint({loc.t("solo.preview_hint").to_owned()})
         --
         @split(
             maps,
             bsn_list! {
                 @catalog_preview(view, selected)
                 --
-                @text({format!("Selected: {}", map.name)}, 16.0, INK)
+                @text(selected_label, 16.0, INK)
                 --
                 @hint(detail)
                 --
@@ -484,33 +506,50 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
 }
 
 /// Opponent difficulty buttons and what the chosen level changes.
-fn difficulty_choice(chosen: Difficulty) -> impl Scene {
+fn difficulty_choice(loc: &Localization, chosen: Difficulty) -> impl Scene {
     let levels: Vec<_> = Difficulty::ALL
         .into_iter()
-        .map(|level| button(level.label(), Action::SelectDifficulty(level), Tone::Item))
+        .map(|level| {
+            let label_key = match level {
+                Difficulty::Easy => "difficulty.easy",
+                Difficulty::Normal => "difficulty.normal",
+                Difficulty::Hard => "difficulty.hard",
+            };
+            button(
+                loc.t(label_key).to_owned(),
+                Action::SelectDifficulty(level),
+                Tone::Item,
+            )
+        })
         .collect();
+    let desc_key = match chosen {
+        Difficulty::Easy => "difficulty.easy_desc",
+        Difficulty::Normal => "difficulty.normal_desc",
+        Difficulty::Hard => "difficulty.hard_desc",
+    };
     column(
         6.0,
         bsn_list! {
-            @text("Opponent", 14.0, INK)
+            @text({loc.t("solo.opponent").to_owned()}, 14.0, INK)
             --
             @row(levels)
             --
-            @hint(chosen.description())
+            @hint({loc.t(desc_key).to_owned()})
         },
     )
 }
 
 /// The save browser or the replay browser.
 fn browser(view: &View, shelf: Shelf) -> impl SceneList {
+    let loc = view.loc;
     let browse = view.menu.browse(shelf);
     let records = view.library.records(shelf);
     let has_last = shelf == Shelf::Replays && view.status.has_replay;
     let mut items: Scenes = Vec::new();
     if has_last && browse.map.is_none() {
         items.push(boxed(list_item(
-            "Last match",
-            "Not in the library yet",
+            loc.t("browser.last_match").to_owned(),
+            loc.t("browser.not_in_library").to_owned(),
             Action::Select(shelf, ReplayPick::Last),
         )));
     }
@@ -522,18 +561,21 @@ fn browser(view: &View, shelf: Shelf) -> impl SceneList {
         ))
     }));
     if items.is_empty() {
-        items.push(boxed(empty_preview(match (shelf, records.is_empty()) {
-            (Shelf::Saves, true) => "No saved games yet. Save a solo match from its top bar.",
-            (Shelf::Replays, true) => "No replays yet. Save one after a match.",
-            (_, false) => "Nothing on this map. Choose All maps.",
-        })));
+        let key = match (shelf, records.is_empty()) {
+            (Shelf::Saves, true) => "browser.empty_saves",
+            (Shelf::Replays, true) => "browser.empty_replays",
+            (_, false) => "browser.empty_filtered",
+        };
+        items.push(boxed(empty_preview(loc.t(key).to_owned())));
     }
-    let title = match shelf {
-        Shelf::Saves => "Load game",
-        Shelf::Replays => "Replay browser",
-    };
+    let title = loc
+        .t(match shelf {
+            Shelf::Saves => "browser.saves_title",
+            Shelf::Replays => "browser.replays_title",
+        })
+        .to_owned();
     let footer: Scenes = match shelf {
-        Shelf::Saves => vec![boxed(hint("Map filtering is optional."))],
+        Shelf::Saves => vec![boxed(hint(loc.t("browser.filter_optional").to_owned()))],
         Shelf::Replays => Vec::new(),
     };
     bsn_list! {
@@ -548,6 +590,7 @@ fn browser(view: &View, shelf: Shelf) -> impl SceneList {
 }
 
 fn filters(view: &View, shelf: Shelf) -> impl Scene {
+    let loc = view.loc;
     let browse = view.menu.browse(shelf);
     let mut maps: Vec<String> = view
         .library
@@ -557,68 +600,70 @@ fn filters(view: &View, shelf: Shelf) -> impl Scene {
         .collect();
     maps.sort();
     maps.dedup();
+    let all_maps = loc.t("browser.all_maps").to_owned();
     let map_options: Vec<(String, Action)> =
-        std::iter::once(("All maps".to_owned(), Action::FilterMap(shelf, None)))
+        std::iter::once((all_maps.clone(), Action::FilterMap(shelf, None)))
             .chain(
                 maps.into_iter()
                     .map(|map| (map.clone(), Action::FilterMap(shelf, Some(map)))),
             )
             .collect();
+    let most_recent = loc.t("browser.most_recent").to_owned();
+    let oldest_first = loc.t("browser.oldest_first").to_owned();
     let order_options = vec![
-        ("Most recent".to_owned(), Action::Order(shelf, false)),
-        ("Oldest first".to_owned(), Action::Order(shelf, true)),
+        (most_recent.clone(), Action::Order(shelf, false)),
+        (oldest_first.clone(), Action::Order(shelf, true)),
     ];
-    let map_label = browse.map.clone().unwrap_or_else(|| "All maps".into());
+    let map_label = browse.map.clone().unwrap_or(all_maps);
     let order_label = if browse.oldest_first {
-        "Oldest first"
+        oldest_first
     } else {
-        "Most recent"
+        most_recent
     };
     let open = view.menu.dropdown;
     row(bsn_list! {
         @dropdown(map_label, Dropdown::Map(shelf), open == Some(Dropdown::Map(shelf)), map_options)
         --
-        @dropdown(order_label.into(), Dropdown::Order(shelf), open == Some(Dropdown::Order(shelf)), order_options)
+        @dropdown(order_label, Dropdown::Order(shelf), open == Some(Dropdown::Order(shelf)), order_options)
     })
 }
 
 fn browser_detail(view: &View, shelf: Shelf) -> Scenes {
+    let loc = view.loc;
     let browse = view.menu.browse(shelf);
     match (&browse.selected, view.selected_record(shelf)) {
         (Some(ReplayPick::Last), _) if shelf == Shelf::Replays => vec![
-            boxed(empty_preview(
-                "The most recent match, kept until the next one starts.",
-            )),
-            boxed(text("Last match", 16.0, INK)),
+            boxed(empty_preview(loc.t("browser.last_match_detail").to_owned())),
+            boxed(text(loc.t("browser.last_match").to_owned(), 16.0, INK)),
             boxed(row(bsn_list! {
-                @wide_button("Watch replay", Action::WatchReplay, Tone::Primary)
+                @wide_button({loc.t("browser.watch_replay").to_owned()}, Action::WatchReplay, Tone::Primary)
                 --
-                @button("Save to library", Action::SaveLastReplay, Tone::Secondary)
+                @button({loc.t("browser.save_to_library").to_owned()}, Action::SaveLastReplay, Tone::Secondary)
             })),
         ],
         (_, Some(record)) => {
             let meta = &record.meta;
             let title = format!("{} / {}", meta.name, meta.map);
-            let detail = format!(
-                "{} {} · {} players",
+            let dur = duration(meta.ticks);
+            let players = meta.players.to_string();
+            let detail = loc.fmt(
                 if shelf == Shelf::Saves {
-                    "Played"
+                    "browser.played_detail"
                 } else {
-                    "Duration"
+                    "browser.duration_detail"
                 },
-                duration(meta.ticks),
-                meta.players
+                &[("duration", &dur), ("players", &players)],
             );
             let actions: Box<dyn SceneList> = match shelf {
                 Shelf::Saves => boxed(row(bsn_list! {
-                    @wide_button("Load save", Action::LoadSave, Tone::Primary)
+                    @wide_button({loc.t("browser.load_save").to_owned()}, Action::LoadSave, Tone::Primary)
                     --
-                    @button("Delete…", Action::Delete(Shelf::Saves), Tone::Danger)
+                    @button({loc.t("browser.delete_ellipsis").to_owned()}, Action::Delete(Shelf::Saves), Tone::Danger)
                 })),
                 Shelf::Replays => boxed(row(bsn_list! {
-                    @wide_button("Watch replay", Action::WatchReplay, Tone::Primary)
+                    @wide_button({loc.t("browser.watch_replay").to_owned()}, Action::WatchReplay, Tone::Primary)
                     --
-                    @button("Delete…", Action::Delete(Shelf::Replays), Tone::Danger)
+                    @button({loc.t("browser.delete_ellipsis").to_owned()}, Action::Delete(Shelf::Replays), Tone::Danger)
                 })),
             };
             vec![
@@ -628,21 +673,25 @@ fn browser_detail(view: &View, shelf: Shelf) -> Scenes {
                 actions,
             ]
         }
-        _ => vec![boxed(empty_preview(match shelf {
-            Shelf::Saves => "Select a save to see its details.",
-            Shelf::Replays => "Select a replay to see its details.",
-        }))],
+        _ => vec![boxed(empty_preview(
+            loc.t(match shelf {
+                Shelf::Saves => "browser.select_save",
+                Shelf::Replays => "browser.select_replay",
+            })
+            .to_owned(),
+        ))],
     }
 }
 
 fn connect(view: &View) -> impl SceneList {
+    let loc = view.loc;
     let recent: Scenes = view
         .settings
         .recent_server
         .as_ref()
         .map_or_else(Vec::new, |url| {
             vec![boxed(button(
-                format!("Recent: {url}"),
+                loc.fmt("online.recent", &[("url", url)]),
                 Action::UseRecentServer,
                 Tone::Secondary,
             ))]
@@ -650,19 +699,19 @@ fn connect(view: &View) -> impl SceneList {
     let field = text_field(Field::Url, &view.form.url, MAX_URL_LEN);
     let failed = ShowIf(|view| matches!(view.status.server, Server::Failed { .. }));
     bsn_list! {
-        @heading("Connect to a server")
+        @heading({loc.t("online.connect_heading").to_owned()})
         --
         @panel(bsn_list! {
-            @hint("Server address")
+            @hint({loc.t("online.server_address").to_owned()})
             --
             Node { column_gap: px(8) } Children [ @{field} ]
             --
-            @hint("quic://host:port (optional #sha256 fingerprint).")
+            @hint({loc.t("online.address_hint").to_owned()})
             --
             @row(bsn_list! {
                 {recent}
                 --
-                @wide_button("Connect", Action::Connect, Tone::Primary)
+                @wide_button({loc.t("online.connect").to_owned()}, Action::Connect, Tone::Primary)
             })
         })
         --
@@ -678,27 +727,30 @@ fn connect(view: &View) -> impl SceneList {
         Children [
             @bound_text(connect_failure, 15.0, INK)
             --
-            @row(bsn_list! { @button("Retry", Action::Connect, Tone::Secondary) })
+            @row(bsn_list! { @button({loc.t("online.retry").to_owned()}, Action::Connect, Tone::Secondary) })
             --
-            @hint("Your address is kept; edit it above or retry.")
+            @hint({loc.t("online.retry_hint").to_owned()})
         ]
         --
-        @hint("Join by code is available after connecting. Room codes belong to the server that made them.")
+        @hint({loc.t("online.join_code_hint").to_owned()})
         --
-        @hint("Players can host their own servers with rts-server.")
+        @hint({loc.t("online.self_host_hint").to_owned()})
     }
 }
 
 fn connect_failure(view: &View) -> String {
     match &view.status.server {
-        Server::Failed { url, reason } => format!("Could not connect to {url}. {reason}"),
+        Server::Failed { url, reason } => view
+            .loc
+            .fmt("online.connect_failed", &[("url", url), ("reason", reason)]),
         _ => String::new(),
     }
 }
 
-fn connecting(url: String) -> impl SceneList {
+fn connecting(view: &View, url: String) -> impl SceneList {
+    let loc = view.loc;
     bsn_list! {
-        @heading("Connection state")
+        @heading({loc.t("online.connecting_heading").to_owned()})
         --
         @panel(bsn_list! {
             Node {
@@ -708,21 +760,22 @@ fn connecting(url: String) -> impl SceneList {
                 padding: UiRect::all(px(16)),
             }
             Children [
-                @text("Connecting…", 18.0, INK)
+                @text({loc.t("online.connecting").to_owned()}, 18.0, INK)
                 --
                 @hint(url)
                 --
                 @spinner()
             ]
             --
-            @row(bsn_list! { @wide_button("Cancel", Action::Disconnect, Tone::Secondary) })
+            @row(bsn_list! { @wide_button({loc.t("online.cancel").to_owned()}, Action::Disconnect, Tone::Secondary) })
         })
         --
-        @hint("If the connection fails you can retry or edit the address.")
+        @hint({loc.t("online.connecting_hint").to_owned()})
     }
 }
 
 fn rooms(view: &View, url: String) -> impl SceneList {
+    let loc = view.loc;
     let host = url
         .split_once("://")
         .map_or(url.as_str(), |(_, rest)| rest)
@@ -732,111 +785,139 @@ fn rooms(view: &View, url: String) -> impl SceneList {
         .rooms
         .iter()
         .map(|room| {
+            let players = room.players.to_string();
+            let capacity = room.capacity.to_string();
             boxed(list_item(
-                format!("{}'s room", room.host),
-                format!("{}/{} players · {}", room.players, room.capacity, room.map),
+                loc.fmt("online.room_name", &[("host", &room.host)]),
+                loc.fmt(
+                    "online.room_summary",
+                    &[
+                        ("players", &players),
+                        ("capacity", &capacity),
+                        ("map", &room.map),
+                    ],
+                ),
                 Action::SelectRoom(room.code.clone()),
             ))
         })
         .collect();
     if items.is_empty() {
-        items.push(boxed(empty_preview(
-            "No open public rooms. Create one, or join a private room with its code.",
-        )));
+        items.push(boxed(empty_preview(loc.t("online.no_rooms").to_owned())));
     }
     let detail: Scenes = view.selected_room().map_or_else(
-        || vec![boxed(hint("Select a room to see its details."))],
+        || vec![boxed(hint(loc.t("online.select_room").to_owned()))],
         |room| {
+            let players = room.players.to_string();
+            let capacity = room.capacity.to_string();
             vec![
                 boxed(text(
-                    format!("Selected room: {}'s room", room.host),
+                    loc.fmt("online.selected_room", &[("host", &room.host)]),
                     16.0,
                     INK,
                 )),
-                boxed(hint(format!("Host: {}", room.host))),
-                boxed(hint(format!(
-                    "{} · {}/{} players",
-                    room.map, room.players, room.capacity
+                boxed(hint(loc.fmt("online.host_label", &[("host", &room.host)]))),
+                boxed(hint(loc.fmt(
+                    "online.room_detail",
+                    &[
+                        ("map", &room.map),
+                        ("players", &players),
+                        ("capacity", &capacity),
+                    ],
                 ))),
-                boxed(row(
-                    bsn_list! { @wide_button("Join room", Action::JoinSelected, Tone::Primary) },
-                )),
+                boxed(row(bsn_list! {
+                    @wide_button({loc.t("online.join_room").to_owned()}, Action::JoinSelected, Tone::Primary)
+                })),
             ]
         },
     );
     bsn_list! {
-        @heading({format!("Server: {host}")})
+        @heading({loc.fmt("online.server_heading", &[("host", &host)])})
         --
         @row(bsn_list! {
-            @badge("Connected", GOOD)
+            @badge({loc.t("online.connected").to_owned()}, GOOD)
             --
-            @button("Refresh", Action::RefreshRooms, Tone::Secondary)
+            @button({loc.t("online.refresh").to_owned()}, Action::RefreshRooms, Tone::Secondary)
             --
-            @button("Disconnect", Action::Disconnect, Tone::Secondary)
+            @button({loc.t("online.disconnect").to_owned()}, Action::Disconnect, Tone::Secondary)
         })
         --
         @split(items, detail)
         --
         @row(bsn_list! {
-            @wide_button("Join by code", Action::OpenJoinByCode, Tone::Secondary)
+            @wide_button({loc.t("online.join_by_code").to_owned()}, Action::OpenJoinByCode, Tone::Secondary)
             --
-            @wide_button("+ Create room", Action::OpenCreateRoom, Tone::Secondary)
+            @wide_button({loc.t("online.create_room_btn").to_owned()}, Action::OpenCreateRoom, Tone::Secondary)
         })
     }
 }
 
-fn lobby_page(lobby: Lobby) -> impl SceneList {
+fn lobby_page(view: &View, lobby: Lobby) -> impl SceneList {
+    let loc = view.loc;
     let slots: Vec<_> = lobby
         .slots
         .iter()
         .enumerate()
         .map(|(index, slot)| {
             let you = index == usize::from(lobby.player);
-            slot_row(index, slot.as_ref(), you)
+            slot_row(loc, index, slot.as_ref(), you)
         })
         .collect();
     let copy: Scenes = when(
         !cfg!(target_os = "android"),
-        button("Copy code", Action::CopyCode, Tone::Secondary),
+        button(
+            loc.t("lobby.copy_code").to_owned(),
+            Action::CopyCode,
+            Tone::Secondary,
+        ),
     );
-    let ready_label = if lobby.ready() { "Not ready" } else { "Ready" };
+    let ready_label = loc
+        .t(if lobby.ready() {
+            "lobby.not_ready"
+        } else {
+            "lobby.ready"
+        })
+        .to_owned();
     let ready_tone = if lobby.ready() {
         Tone::Secondary
     } else {
         Tone::Primary
     };
-    let start_label = if lobby.is_host() {
-        "Start match"
-    } else {
-        "Start (host only)"
-    };
+    let start_label = loc
+        .t(if lobby.is_host() {
+            "lobby.start_match"
+        } else {
+            "lobby.start_host_only"
+        })
+        .to_owned();
     let status = if lobby.joined() < lobby.slots.len() {
-        format!(
-            "Waiting for players: {} of {} joined. Share the invite code.",
-            lobby.joined(),
-            lobby.slots.len()
+        let joined = lobby.joined().to_string();
+        let total = lobby.slots.len().to_string();
+        loc.fmt(
+            "lobby.waiting_players",
+            &[("joined", &joined), ("total", &total)],
         )
     } else if !lobby.all_ready() {
-        "The host starts once every player is ready.".to_owned()
+        loc.t("lobby.waiting_ready").to_owned()
     } else if lobby.is_host() {
-        "Everyone is ready. Start the match.".to_owned()
+        loc.t("lobby.all_ready_host").to_owned()
     } else {
-        "Everyone is ready. Waiting for the host to start.".to_owned()
+        loc.t("lobby.all_ready_guest").to_owned()
     };
-    let visibility = if lobby.public {
-        "Public: listed in the room browser"
+    let visibility = loc.t(if lobby.public {
+        "lobby.public_desc"
     } else {
-        "Private: invite code only"
-    };
+        "lobby.private_desc"
+    });
+    let host = lobby.host();
     bsn_list! {
-        @heading({format!("Room: {}'s room", lobby.host())})
+        @heading({loc.fmt("lobby.heading", &[("host", host)])})
         --
         @row(bsn_list! {
-            @badge({format!("Invite {}", lobby.code)}, SIGNAL)
+            @badge({loc.fmt("lobby.invite_badge", &[("code", &lobby.code)])}, SIGNAL)
             --
             {copy}
             --
-            @hint({format!("{} · Host: {}", visibility, lobby.host())})
+            @hint({loc.fmt("lobby.meta", &[("visibility", visibility), ("host", host)])})
         })
         --
         @column(8.0, slots)
@@ -846,28 +927,40 @@ fn lobby_page(lobby: Lobby) -> impl SceneList {
             --
             @wide_button(start_label, Action::StartMatch, Tone::Primary)
             --
-            @button("Leave room", Action::LeaveRoom, Tone::Secondary)
+            @button({loc.t("lobby.leave_room").to_owned()}, Action::LeaveRoom, Tone::Secondary)
         })
         --
         @hint(status)
     }
 }
 
-fn slot_row(index: usize, slot: Option<&rts_net::LobbySlot>, you: bool) -> impl Scene {
+fn slot_row(
+    loc: &Localization,
+    index: usize,
+    slot: Option<&rts_net::LobbySlot>,
+    you: bool,
+) -> impl Scene {
     let (name, state, color) = slot.map_or_else(
-        || (format!("Player {}", index + 1), "Open slot", INK_DISABLED),
+        || {
+            let n = (index + 1).to_string();
+            (
+                loc.fmt("lobby.player_slot", &[("n", &n)]),
+                loc.t("lobby.open_slot").to_owned(),
+                INK_DISABLED,
+            )
+        },
         |slot| {
             let mut name = slot.name.clone();
             if index == 0 {
-                name.push_str(" (host)");
+                name.push_str(loc.t("lobby.tag_host"));
             }
             if you {
-                name.push_str(" (you)");
+                name.push_str(loc.t("lobby.tag_you"));
             }
             if slot.ready {
-                (name, "Ready", GOOD)
+                (name, loc.t("lobby.ready").to_owned(), GOOD)
             } else {
-                (name, "Not ready", INK_MUTED)
+                (name, loc.t("lobby.not_ready").to_owned(), INK_MUTED)
             }
         },
     );
@@ -892,12 +985,18 @@ fn slot_row(index: usize, slot: Option<&rts_net::LobbySlot>, you: bool) -> impl 
 }
 
 fn settings_page(view: &View) -> impl SceneList {
+    let loc = view.loc;
     let name = view
         .form
         .name
         .clone()
         .unwrap_or_else(|| view.settings.name.clone());
     let field = text_field(Field::Name, &name, rts_net::MAX_NAME_CHARS);
+    let languages: Vec<_> = loc
+        .languages()
+        .into_iter()
+        .map(|(code, label)| button(label, Action::SetLanguage(code), Tone::Item))
+        .collect();
     let scales: Vec<_> = UI_SCALES
         .iter()
         .map(|&scale| button(format!("{scale}%"), Action::SetUiScale(scale), Tone::Item))
@@ -905,35 +1004,49 @@ fn settings_page(view: &View) -> impl SceneList {
     let fullscreen: Scenes = when(
         Settings::fullscreen_supported(),
         setting(
-            "Fullscreen",
-            "Fill the screen without window borders.",
-            toggle(Action::SetFullscreen(true), Action::SetFullscreen(false)),
+            loc.t("settings.fullscreen").to_owned(),
+            loc.t("settings.fullscreen_detail").to_owned(),
+            toggle(
+                loc,
+                Action::SetFullscreen(true),
+                Action::SetFullscreen(false),
+            ),
         ),
     );
     bsn_list! {
-        @heading("Settings")
+        @heading({loc.t("settings.heading").to_owned()})
         --
         @panel(bsn_list! {
-            @text("Player name", 16.0, INK)
+            @text({loc.t("settings.player_name").to_owned()}, 16.0, INK)
             --
             Node { column_gap: px(8) } Children [ @{field} ]
             --
             @bound_text(name_hint, 13.0, INK_MUTED)
         })
         --
-        @setting("Interface scale", "Size of text and controls.", row(scales))
+        @setting(
+            {loc.t("settings.language").to_owned()},
+            {loc.t("settings.language_detail").to_owned()},
+            row(languages),
+        )
         --
         @setting(
-            "Edge scrolling",
-            "Move the camera when the pointer touches a screen edge.",
-            toggle(Action::SetEdgeScroll(true), Action::SetEdgeScroll(false)),
+            {loc.t("settings.ui_scale").to_owned()},
+            {loc.t("settings.ui_scale_detail").to_owned()},
+            row(scales),
+        )
+        --
+        @setting(
+            {loc.t("settings.edge_scroll").to_owned()},
+            {loc.t("settings.edge_scroll_detail").to_owned()},
+            toggle(loc, Action::SetEdgeScroll(true), Action::SetEdgeScroll(false)),
         )
         --
         {fullscreen}
     }
 }
 
-fn setting(title: &'static str, detail: &'static str, control: impl Scene) -> impl Scene {
+fn setting(title: String, detail: String, control: impl Scene) -> impl Scene {
     panel(bsn_list! {
         @text(title, 16.0, INK)
         --
@@ -943,11 +1056,11 @@ fn setting(title: &'static str, detail: &'static str, control: impl Scene) -> im
     })
 }
 
-fn toggle(on: Action, off: Action) -> impl Scene {
+fn toggle(loc: &Localization, on: Action, off: Action) -> impl Scene {
     row(bsn_list! {
-        @button("On", on, Tone::Item)
+        @button({loc.t("settings.on").to_owned()}, on, Tone::Item)
         --
-        @button("Off", off, Tone::Item)
+        @button({loc.t("settings.off").to_owned()}, off, Tone::Item)
     })
 }
 
@@ -1022,7 +1135,7 @@ fn catalog_preview(view: &View, index: usize) -> impl Scene {
 fn record_preview(view: &View, record: &Record) -> Box<dyn SceneList> {
     if record.meta.setup.map.is_empty() {
         return boxed(empty_preview(
-            "See the recorded player's view during playback.",
+            view.loc.t("browser.private_replay_preview").to_owned(),
         ));
     }
     let aspect = map_aspect(&record.meta.setup.map);
@@ -1036,12 +1149,17 @@ fn record_preview(view: &View, record: &Record) -> Box<dyn SceneList> {
         )
 }
 
-fn map_size(map: &str) -> String {
+fn map_size(loc: &Localization, map: &str) -> String {
     rts_base::MapData::from_ron(map).map_or_else(
-        |_| "unknown size".into(),
+        |_| loc.t("solo.unknown_size").to_owned(),
         |map| {
-            let width = map.tiles.first().map_or(0, |row| row.chars().count());
-            format!("{width}×{} tiles", map.tiles.len())
+            let width = map
+                .tiles
+                .first()
+                .map_or(0, |row| row.chars().count())
+                .to_string();
+            let height = map.tiles.len().to_string();
+            loc.fmt("solo.map_tiles", &[("width", &width), ("height", &height)])
         },
     )
 }
@@ -1071,7 +1189,7 @@ fn map_aspect(map: &str) -> f32 {
 pub fn dialog(view: &View) -> impl Scene {
     let contents: Box<dyn SceneList> = match &view.menu.dialog {
         Some(Dialog::JoinByCode) => boxed(join_by_code(view)),
-        Some(Dialog::CreateRoom) => boxed(create_room()),
+        Some(Dialog::CreateRoom) => boxed(create_room(view)),
         Some(Dialog::Confirm(confirm)) => boxed(confirm_dialog(view, confirm)),
         Some(Dialog::CrashReport) => boxed(crash_dialog(view)),
         None => Box::new(bsn_list! {}),
@@ -1089,37 +1207,39 @@ pub fn dialog(view: &View) -> impl Scene {
 }
 
 fn join_by_code(view: &View) -> impl Scene {
+    let loc = view.loc;
     let field = text_field(Field::Code, &view.form.code, ROOM_CODE_LEN);
     dialog_frame(
-        "Join room with invite code",
+        loc.t("dialog.join_code_title").to_owned(),
         bsn_list! {
-            @hint({format!("Server: {}", view.server_url())})
+            @hint({loc.fmt("online.server_heading", &[("host", view.server_url())])})
             --
             Node { column_gap: px(8) } Children [ @{field} ]
             --
-            @hint("6 characters · letters and digits · not case-sensitive")
+            @hint({loc.t("dialog.join_code_hint").to_owned()})
             --
             @bound_text(dialog_error, 13.0, DANGER)
             --
             @row(bsn_list! {
-                @wide_button("Cancel", Action::CloseDialog, Tone::Secondary)
+                @wide_button({loc.t("online.cancel").to_owned()}, Action::CloseDialog, Tone::Secondary)
                 --
-                @wide_button("Join room", Action::JoinByCode, Tone::Primary)
+                @wide_button({loc.t("online.join_room").to_owned()}, Action::JoinByCode, Tone::Primary)
             })
         },
     )
 }
 
-fn create_room() -> impl Scene {
+fn create_room(view: &View) -> impl Scene {
+    let loc = view.loc;
     dialog_frame(
-        "Create room",
+        loc.t("dialog.create_room_title").to_owned(),
         bsn_list! {
-            @hint("Who can find this room?")
+            @hint({loc.t("dialog.create_room_who").to_owned()})
             --
             @row(bsn_list! {
-                @wide_button("Public", Action::SetPublic(true), Tone::Item)
+                @wide_button({loc.t("dialog.public").to_owned()}, Action::SetPublic(true), Tone::Item)
                 --
-                @wide_button("Private", Action::SetPublic(false), Tone::Item)
+                @wide_button({loc.t("dialog.private").to_owned()}, Action::SetPublic(false), Tone::Item)
             })
             --
             @bound_text(visibility_hint, 13.0, INK_MUTED)
@@ -1127,41 +1247,44 @@ fn create_room() -> impl Scene {
             @bound_text(dialog_error, 13.0, DANGER)
             --
             @row(bsn_list! {
-                @wide_button("Cancel", Action::CloseDialog, Tone::Secondary)
+                @wide_button({loc.t("online.cancel").to_owned()}, Action::CloseDialog, Tone::Secondary)
                 --
-                @wide_button("Create room", Action::CreateRoom, Tone::Primary)
+                @wide_button({loc.t("dialog.create_room_title").to_owned()}, Action::CreateRoom, Tone::Primary)
             })
         },
     )
 }
 
 fn visibility_hint(view: &View) -> String {
-    if view.menu.public_room {
-        "Listed in the room browser; anyone on this server can join.".into()
-    } else {
-        "Hidden from the room browser; players join with the invite code.".into()
-    }
+    view.loc
+        .t(if view.menu.public_room {
+            "dialog.public_hint"
+        } else {
+            "dialog.private_hint"
+        })
+        .to_owned()
 }
 
 /// A report left by a previous run, offered for export.
 fn crash_dialog(view: &View) -> impl Scene {
+    let loc = view.loc;
     let summary = view.crash.pending().map_or_else(String::new, crash_summary);
     dialog_frame(
-        "The game closed unexpectedly",
+        loc.t("dialog.crash_title").to_owned(),
         bsn_list! {
-            @hint("A crash report from your last session is waiting. Nothing is sent automatically.")
+            @hint({loc.t("dialog.crash_intro").to_owned()})
             --
             @hint(summary)
             --
             @bound_text(dialog_error, 13.0, DANGER)
             --
             @row(bsn_list! {
-                @wide_button("Export report", Action::ExportCrash, Tone::Primary)
+                @wide_button({loc.t("dialog.crash_export").to_owned()}, Action::ExportCrash, Tone::Primary)
                 --
-                @wide_button("Discard", Action::DiscardCrash, Tone::Secondary)
+                @wide_button({loc.t("dialog.crash_discard").to_owned()}, Action::DiscardCrash, Tone::Secondary)
             })
             --
-            @hint("The report holds the version, platform, panic message, backtrace, and recent log lines. It stays on this device until you send it.")
+            @hint({loc.t("dialog.crash_footer").to_owned()})
         },
     )
 }
@@ -1191,40 +1314,43 @@ fn dialog_error(view: &View) -> String {
 }
 
 fn confirm_dialog(view: &View, confirm: &Confirm) -> impl Scene {
+    let loc = view.loc;
     let (title, body, label) = match confirm {
         Confirm::Delete(shelf, id) => {
-            let name = view
-                .library
-                .get(*shelf, id)
-                .map_or_else(|| "this file".to_owned(), |record| record.meta.name.clone());
+            let name = view.library.get(*shelf, id).map_or_else(
+                || loc.t("dialog.delete_fallback").to_owned(),
+                |record| record.meta.name.clone(),
+            );
             (
-                format!("Delete {name}?"),
-                "This cannot be undone.".to_owned(),
-                "Delete",
+                loc.fmt("dialog.delete_title", &[("name", &name)]),
+                loc.t("dialog.delete_body").to_owned(),
+                loc.t("dialog.delete_confirm").to_owned(),
             )
         }
         Confirm::LeaveRoom => (
-            "Leave this room?".to_owned(),
-            if view.status.lobby.as_ref().is_some_and(Lobby::is_host) {
-                "You are the host. Leaving closes the room for everyone.".to_owned()
+            loc.t("dialog.leave_room_title").to_owned(),
+            loc.t(if view.status.lobby.as_ref().is_some_and(Lobby::is_host) {
+                "dialog.leave_room_host"
             } else {
-                "You can rejoin while the room is open.".to_owned()
-            },
-            "Leave room",
+                "dialog.leave_room_guest"
+            })
+            .to_owned(),
+            loc.t("lobby.leave_room").to_owned(),
         ),
         Confirm::LeaveMatch => (
-            "Leave the match?".to_owned(),
-            if view.status.kind == crate::session::MatchKind::Online {
-                "Leaving ends the match for every player.".to_owned()
+            loc.t("dialog.leave_match_title").to_owned(),
+            loc.t(if view.status.kind == crate::session::MatchKind::Online {
+                "dialog.leave_match_online"
             } else {
-                "Progress since your last save is lost.".to_owned()
-            },
-            "Leave",
+                "dialog.leave_match_solo"
+            })
+            .to_owned(),
+            loc.t("dialog.leave_confirm").to_owned(),
         ),
         Confirm::Quit => (
-            "Quit the game?".to_owned(),
-            "You are connected to a server. Quitting leaves it.".to_owned(),
-            "Quit",
+            loc.t("dialog.quit_title").to_owned(),
+            loc.t("dialog.quit_body").to_owned(),
+            loc.t("nav.quit").to_owned(),
         ),
     };
     dialog_frame(
@@ -1233,7 +1359,7 @@ fn confirm_dialog(view: &View, confirm: &Confirm) -> impl Scene {
             @hint(body)
             --
             @row(bsn_list! {
-                @wide_button("Cancel", Action::CloseDialog, Tone::Secondary)
+                @wide_button({loc.t("online.cancel").to_owned()}, Action::CloseDialog, Tone::Secondary)
                 --
                 @wide_button(label, Action::Confirm, Tone::Danger)
             })

@@ -21,6 +21,7 @@ use crate::{
     font::GameFont,
     game::{AppState, Match},
     input::Selection,
+    locale::Localization,
     menu::widgets::{BAR, EDGE, FIELD, GOOD, INK, INK_MUTED, RAIL, SIGNAL, Tone, button_look},
     pause_menu::PauseMenu,
     skirmish,
@@ -38,11 +39,11 @@ pub enum Targeting {
 }
 
 impl Targeting {
-    pub const fn prompt(self) -> &'static str {
+    pub fn prompt(self, loc: &Localization) -> &str {
         match self {
             Self::None => "",
-            Self::Move => "Choose a destination.",
-            Self::Barracks => "Choose open ground for the barracks.",
+            Self::Move => loc.t("hud.target_move"),
+            Self::Barracks => loc.t("hud.target_barracks"),
         }
     }
 }
@@ -53,6 +54,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Targeting>()
             .init_resource::<PhoneHud>()
+            .init_resource::<Localization>()
             .add_systems(OnEnter(AppState::InGame), spawn_hud)
             .add_systems(OnExit(AppState::InGame), (reset_targeting, phone::reset))
             .add_systems(
@@ -126,6 +128,7 @@ fn spawn_hud(
     font: Res<GameFont>,
     assets: Res<AssetServer>,
     game: Res<Match>,
+    loc: Res<Localization>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let map = minimap::spawn(&mut commands, &game, &mut images);
@@ -150,13 +153,13 @@ fn spawn_hud(
         ))
         .id();
     commands.entity(root).add_child(map).with_children(|bar| {
-        spawn_selection_panel(bar, &font.0);
-        spawn_command_card(bar, &font.0, &assets, &game);
-        phone::spawn_overlays(bar, &font.0);
+        spawn_selection_panel(bar, &font.0, &loc);
+        spawn_command_card(bar, &font.0, &assets, &game, &loc);
+        phone::spawn_overlays(bar, &font.0, &loc);
     });
 }
 
-fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
+fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>, loc: &Localization) {
     bar.spawn((
         SelectionPanel,
         GlobalZIndex(4),
@@ -184,7 +187,7 @@ fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
                 flex_shrink: 0.0,
                 ..default()
             },
-            Text::new("No units selected"),
+            Text::new(loc.t("hud.no_units")),
             text_font(font, 20.0),
             TextColor(INK),
         ));
@@ -211,7 +214,7 @@ fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>) {
         panel.spawn((
             HudText(TextRole::Hint),
             phone::DesktopOnly,
-            Text::new("Click or drag to select units."),
+            Text::new(loc.t("hud.hint_click_select")),
             text_font(font, 12.0),
             TextColor(INK_MUTED),
             LineHeight::RelativeToFont(1.2),
@@ -280,6 +283,7 @@ fn spawn_command_card(
     font: &Handle<Font>,
     assets: &AssetServer,
     game: &Match,
+    loc: &Localization,
 ) {
     bar.spawn((
         CommandCard,
@@ -306,7 +310,7 @@ fn spawn_command_card(
                 _ => None,
             };
             if let Some(order) = order {
-                spawn_order(card, index, order, font, assets);
+                spawn_order(card, index, order, font, assets, loc);
             } else {
                 card.spawn((
                     CommandSlot(index),
@@ -319,7 +323,7 @@ fn spawn_command_card(
                     BackgroundColor(FIELD.with_alpha(0.5)),
                     BorderColor::all(EDGE.with_alpha(0.45)),
                 ))
-                .with_children(|slot| skirmish::spawn_desktop_action(slot, index, font, game));
+                .with_children(|slot| skirmish::spawn_desktop_action(slot, index, font, game, loc));
             }
         }
         phone::spawn_selection_button(card, font);
@@ -332,6 +336,7 @@ fn spawn_order(
     order: Order,
     font: &Handle<Font>,
     assets: &AssetServer,
+    loc: &Localization,
 ) {
     card.spawn((
         CommandSlot(index),
@@ -353,7 +358,7 @@ fn spawn_order(
         observe(activate_order),
     ))
     .with_children(|button| {
-        spawn_order_contents(button, order, font, assets);
+        spawn_order_contents(button, order, font, assets, loc);
     });
 }
 
@@ -362,11 +367,12 @@ fn spawn_order_contents(
     order: Order,
     font: &Handle<Font>,
     assets: &AssetServer,
+    loc: &Localization,
 ) {
-    let (label, key, icon) = match order {
-        Order::Move => ("Move", "M", "textures/ui/commands/move.png"),
-        Order::Stop => ("Stop", "X", "textures/ui/commands/stop.png"),
-        Order::Clear => ("Clear", "", "textures/ui/commands/clear.png"),
+    let (label_key, key, icon) = match order {
+        Order::Move => ("hud.order_move", "M", "textures/ui/commands/move.png"),
+        Order::Stop => ("hud.order_stop", "X", "textures/ui/commands/stop.png"),
+        Order::Clear => ("hud.order_clear", "", "textures/ui/commands/clear.png"),
     };
     if !key.is_empty() {
         button.spawn((
@@ -396,7 +402,7 @@ fn spawn_order_contents(
     button.spawn((
         ButtonInk,
         Pickable::IGNORE,
-        Text::new(label),
+        Text::new(loc.t(label_key)),
         text_font(font, 11.0),
         TextColor(INK),
     ));
@@ -548,6 +554,7 @@ fn update_selection(
     graphics: Res<Graphics>,
     assets: Res<AssetServer>,
     targeting: Res<Targeting>,
+    loc: Res<Localization>,
     mut labels: Query<(&HudText, &mut Text)>,
     mut portrait: Query<&mut Node, PortraitFilter>,
     mut portrait_image: Query<&mut ImageNode, With<PortraitImage>>,
@@ -561,9 +568,12 @@ fn update_selection(
         .filter_map(|id| game.view.unit(*id).map(|unit| (*id, unit)))
         .collect();
     let title = match units.as_slice() {
-        [] => "No units selected".into(),
-        [(_, unit)] => unit_name(&game.view.rules().unit(unit.kind).id),
-        units => format!("{} units selected", units.len()),
+        [] => loc.t("hud.no_units").to_owned(),
+        [(_, unit)] => loc.unit_name(&game.view.rules().unit(unit.kind).id),
+        units => {
+            let count = units.len().to_string();
+            loc.fmt("hud.units_selected", &[("count", &count)])
+        }
     };
     let total_health: i64 = units.iter().map(|(_, unit)| unit.health()).sum();
     let max_health: i64 = units
@@ -573,37 +583,12 @@ fn update_selection(
             i64::from(definition.max_health) * i64::from(definition.squad)
         })
         .sum();
-    let soldiers: usize = units.iter().map(|(_, unit)| unit.alive()).sum();
-    let veterancy = match units.as_slice() {
-        [(_, unit)] => match game.view.rules().rank(unit.kills) {
-            0 if unit.kills == 0 => String::new(),
-            0 => format!("  ·  {} kills", unit.kills),
-            rank => format!(
-                "  ·  {}, {} kills",
-                game.view.rules().ranks()[rank - 1].name,
-                unit.kills
-            ),
-        },
-        _ => String::new(),
-    };
-    let squad: usize = units.iter().map(|(_, unit)| unit.soldiers.len()).sum();
-    let detail = if units.is_empty() {
-        "Your forces await orders".into()
-    } else {
-        let state = selection_state(&game, &units);
-        if squad > units.len() {
-            format!(
-                "{soldiers} / {squad} soldiers  ·  {total_health} / {max_health} HP  ·  {state}{veterancy}"
-            )
-        } else {
-            format!("{total_health} / {max_health} HP  ·  {state}{veterancy}")
-        }
-    };
+    let detail = selection_detail(&game, &units, total_health, max_health, &loc);
     for (role, mut text) in &mut labels {
         let value = match role.0 {
             TextRole::Title => title.clone(),
             TextRole::Detail => detail.clone(),
-            TextRole::Hint => selection_hint(&game, &selection, *targeting),
+            TextRole::Hint => selection_hint(&game, &selection, *targeting, &loc),
         };
         text.set_if_neq(Text::new(value));
     }
@@ -719,23 +704,66 @@ fn select_portrait(
     }
 }
 
-fn unit_name(id: &str) -> String {
-    if id == "soldier" {
-        return "Rifle squad".into();
+fn selection_detail(
+    game: &Match,
+    units: &[(UnitId, &Unit)],
+    total_health: i64,
+    max_health: i64,
+    loc: &Localization,
+) -> String {
+    if units.is_empty() {
+        return loc.t("hud.await_orders").to_owned();
     }
-    let mut chars = id.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first
-            .to_uppercase()
-            .chain(chars)
-            .collect::<String>()
-            .replace('_', " ")
-    })
+    let soldiers: usize = units.iter().map(|(_, unit)| unit.alive()).sum();
+    let squad: usize = units.iter().map(|(_, unit)| unit.soldiers.len()).sum();
+    let veterancy = match units {
+        [(_, unit)] => match game.view.rules().rank(unit.kills) {
+            0 if unit.kills == 0 => String::new(),
+            0 => {
+                let kills = unit.kills.to_string();
+                loc.fmt("hud.kills", &[("kills", &kills)])
+            }
+            rank => {
+                let kills = unit.kills.to_string();
+                let rank_name = &game.view.rules().ranks()[rank - 1].name;
+                loc.fmt("hud.rank_kills", &[("rank", rank_name), ("kills", &kills)])
+            }
+        },
+        _ => String::new(),
+    };
+    let state = selection_state(game, units, loc);
+    let hp = total_health.to_string();
+    let max_hp = max_health.to_string();
+    if squad > units.len() {
+        let soldiers_str = soldiers.to_string();
+        let squad_str = squad.to_string();
+        loc.fmt(
+            "hud.squad_detail",
+            &[
+                ("soldiers", &soldiers_str),
+                ("squad", &squad_str),
+                ("hp", &hp),
+                ("max_hp", &max_hp),
+                ("state", state),
+                ("veterancy", &veterancy),
+            ],
+        )
+    } else {
+        loc.fmt(
+            "hud.unit_detail",
+            &[
+                ("hp", &hp),
+                ("max_hp", &max_hp),
+                ("state", state),
+                ("veterancy", &veterancy),
+            ],
+        )
+    }
 }
 
-fn selection_state(game: &Match, units: &[(UnitId, &Unit)]) -> &'static str {
+fn selection_state<'a>(game: &Match, units: &[(UnitId, &Unit)], loc: &'a Localization) -> &'a str {
     if let [(id, _)] = units
-        && let Some(state) = skirmish::economic_state(game, *id)
+        && let Some(state) = skirmish::economic_state(game, *id, loc)
     {
         return state;
     }
@@ -743,30 +771,35 @@ fn selection_state(game: &Match, units: &[(UnitId, &Unit)]) -> &'static str {
         .iter()
         .any(|(id, _)| game.view.move_target(*id).is_some())
     {
-        "Moving"
+        loc.t("hud.state_moving")
     } else if units
         .iter()
-        .any(|(id, _)| skirmish::economic_state(game, *id).is_some())
+        .any(|(id, _)| skirmish::economic_state(game, *id, loc).is_some())
     {
-        "Working"
+        loc.t("hud.state_working")
     } else {
-        "Idle"
+        loc.t("hud.state_idle")
     }
 }
 
-fn selection_hint(game: &Match, selection: &Selection, targeting: Targeting) -> String {
+fn selection_hint(
+    game: &Match,
+    selection: &Selection,
+    targeting: Targeting,
+    loc: &Localization,
+) -> String {
     if targeting != Targeting::None {
-        return targeting.prompt().into();
+        return targeting.prompt(loc).to_owned();
     }
-    if let Some(hint) = skirmish::economy_hint(game, selection, targeting) {
+    if let Some(hint) = skirmish::economy_hint(game, selection, targeting, loc) {
         return hint;
     }
-    match (selection.touch_mode, selection.units.is_empty()) {
-        (false, true) => "Click or drag to select units.",
-        (true, true) => "Tap or drag to select units.",
-        (_, false) if selection.mobile_units(game).next().is_none() => "",
-        (false, false) => "Right-click to move · X to stop",
-        (true, false) => "Tap ground to move · Two fingers pan",
-    }
-    .into()
+    let key = match (selection.touch_mode, selection.units.is_empty()) {
+        (false, true) => "hud.hint_click_select",
+        (true, true) => "hud.hint_tap_select",
+        (_, false) if selection.mobile_units(game).next().is_none() => return String::new(),
+        (false, false) => "hud.hint_desktop_move",
+        (true, false) => "hud.hint_touch_move",
+    };
+    loc.t(key).to_owned()
 }

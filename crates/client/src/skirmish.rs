@@ -18,6 +18,7 @@ use crate::{
     game::{AppState, Match},
     hud::{HudLayout, PhoneHud, Targeting, text_font},
     input::Selection,
+    locale::Localization,
     map::{to_world, to_world_distance},
     menu::{
         Menu,
@@ -35,7 +36,8 @@ pub struct SkirmishPlugin;
 
 impl Plugin for SkirmishPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::InGame), spawn_skirmish)
+        app.init_resource::<Localization>()
+            .add_systems(OnEnter(AppState::InGame), spawn_skirmish)
             .add_systems(
                 Update,
                 (update_skirmish, update_deposits).run_if(in_state(AppState::InGame)),
@@ -130,10 +132,10 @@ impl EconomyAction {
     }
 }
 
-const fn resource_label(kind: ResourceKind) -> &'static str {
+fn resource_label(kind: ResourceKind, loc: &Localization) -> &str {
     match kind {
-        ResourceKind::Wood => "Wood",
-        ResourceKind::Gold => "Gold",
+        ResourceKind::Wood => loc.t("economy.wood"),
+        ResourceKind::Gold => loc.t("economy.gold"),
     }
 }
 
@@ -149,12 +151,13 @@ fn spawn_skirmish(
     game: Res<Match>,
     font: Res<GameFont>,
     assets: Res<AssetServer>,
+    loc: Res<Localization>,
 ) {
     if !game.view.is_skirmish() {
         return;
     }
     spawn_balances(&mut commands, &font.0, &assets);
-    spawn_economy_card(&mut commands, &font.0, &game);
+    spawn_economy_card(&mut commands, &font.0, &game, &loc);
 }
 
 fn spawn_balances(commands: &mut Commands, font: &Handle<Font>, assets: &AssetServer) {
@@ -209,7 +212,12 @@ fn spawn_balances(commands: &mut Commands, font: &Handle<Font>, assets: &AssetSe
         });
 }
 
-fn spawn_economy_card(commands: &mut Commands, font: &Handle<Font>, game: &Match) {
+fn spawn_economy_card(
+    commands: &mut Commands,
+    font: &Handle<Font>,
+    game: &Match,
+    loc: &Localization,
+) {
     commands
         .spawn((
             Name::new("Economy controls"),
@@ -249,7 +257,7 @@ fn spawn_economy_card(commands: &mut Commands, font: &Handle<Font>, game: &Match
             ))
             .with_children(|row| {
                 for action in EconomyAction::ALL {
-                    spawn_economy_button(row, action, ActionLayout::Phone, font, game);
+                    spawn_economy_button(row, action, ActionLayout::Phone, font, game, loc);
                 }
             });
         });
@@ -266,13 +274,14 @@ pub fn spawn_desktop_action(
     index: usize,
     font: &Handle<Font>,
     game: &Match,
+    loc: &Localization,
 ) {
     if game.view.is_skirmish()
         && let Some(&action) = index
             .checked_sub(3)
             .and_then(|offset| EconomyAction::ALL.get(offset))
     {
-        spawn_economy_button(slot, action, ActionLayout::Desktop, font, game);
+        spawn_economy_button(slot, action, ActionLayout::Desktop, font, game, loc);
     }
 }
 
@@ -282,6 +291,7 @@ fn spawn_economy_button(
     layout: ActionLayout,
     font: &Handle<Font>,
     game: &Match,
+    loc: &Localization,
 ) {
     let desktop = layout == ActionLayout::Desktop;
     row.spawn((
@@ -306,27 +316,34 @@ fn spawn_economy_button(
         observe(activate_economy),
     ))
     .with_children(|button| {
-        let label = if desktop {
+        let label_key = if desktop {
             match action {
-                EconomyAction::Barracks => "Barracks",
-                EconomyAction::Worker => "Worker",
-                EconomyAction::RifleSquad => "Rifles",
-                EconomyAction::Scout => "Scout",
+                EconomyAction::Barracks => "economy.barracks_short",
+                EconomyAction::Worker => "economy.worker_short",
+                EconomyAction::RifleSquad => "economy.rifles_short",
+                EconomyAction::Scout => "economy.scout_short",
             }
         } else {
-            action.label()
+            match action {
+                EconomyAction::Barracks => "economy.build_barracks",
+                EconomyAction::Worker => "economy.train_worker",
+                EconomyAction::RifleSquad => "economy.train_rifles",
+                EconomyAction::Scout => "economy.train_scout",
+            }
         };
         button.spawn((
-            Text::new(label),
+            Text::new(loc.t(label_key)),
             text_font(font, 11.0),
             TextColor(INK),
             Pickable::IGNORE,
         ));
         let cost = action.cost(game).unwrap_or_default();
+        let w = loc.t("economy.wood_short");
+        let g = loc.t("economy.gold_short");
         let cost_label = if desktop {
-            format!("{}W {}G", cost.wood, cost.gold)
+            format!("{}{w} {}{g}", cost.wood, cost.gold)
         } else {
-            format!("{} W · {} G", cost.wood, cost.gold)
+            format!("{} {w} · {} {g}", cost.wood, cost.gold)
         };
         button.spawn((
             ActionCost,
@@ -408,6 +425,7 @@ fn update_skirmish(
     targeting: Res<Targeting>,
     phone: Res<PhoneHud>,
     pause: Res<PauseMenu>,
+    loc: Res<Localization>,
     size: Single<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
     mut cards: Query<&mut Node, EconomyCardFilter>,
@@ -423,7 +441,7 @@ fn update_skirmish(
     for (label, mut text) in &mut balances {
         text.set_if_neq(Text::new(format!(
             "{} {}",
-            resource_label(label.0),
+            resource_label(label.0, &loc),
             resources.get(label.0),
         )));
     }
@@ -451,7 +469,7 @@ fn update_skirmish(
     }
     for mut hint in &mut hints {
         hint.set_if_neq(Text::new(
-            economy_hint(&game, &selection, *targeting).unwrap_or_default(),
+            economy_hint(&game, &selection, *targeting, &loc).unwrap_or_default(),
         ));
     }
     for (
@@ -513,25 +531,30 @@ pub fn resource_bar_position(hud: &HudLayout) -> Vec2 {
     }
 }
 
-pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -> Option<String> {
+pub fn economy_hint(
+    game: &Match,
+    selection: &Selection,
+    targeting: Targeting,
+    loc: &Localization,
+) -> Option<String> {
     if targeting == Targeting::Barracks {
-        return Some(targeting.prompt().into());
+        return Some(targeting.prompt(loc).to_owned());
     }
     if let Some(work) = selection
         .units
         .iter()
         .find_map(|&unit| economic_activity(game, unit))
     {
-        return Some(work.description());
+        return Some(work.description(loc));
     }
     if workers(game, selection).next().is_some() && game.view.is_skirmish() {
         return Some(
-            if selection.touch_mode {
-                "Tap a deposit to gather"
+            loc.t(if selection.touch_mode {
+                "economy.hint_tap_deposit"
             } else {
-                "Right-click a deposit to gather"
-            }
-            .into(),
+                "economy.hint_click_deposit"
+            })
+            .to_owned(),
         );
     }
     if game.view.is_skirmish()
@@ -540,7 +563,7 @@ pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -
             .next()
             .is_some()
     {
-        return Some("Train workers at headquarters.".into());
+        return Some(loc.t("economy.hint_train_workers").to_owned());
     }
     if game.view.is_skirmish()
         && EconomyAction::RifleSquad
@@ -549,19 +572,21 @@ pub fn economy_hint(game: &Match, selection: &Selection, targeting: Targeting) -
             .is_some()
     {
         return Some(
-            if EconomyAction::Scout.units(game, selection).next().is_some() {
-                "Train rifle squads and scouts at the barracks."
-            } else {
-                "Train rifle squads at the barracks."
-            }
-            .into(),
+            loc.t(
+                if EconomyAction::Scout.units(game, selection).next().is_some() {
+                    "economy.hint_train_both"
+                } else {
+                    "economy.hint_train_rifles"
+                },
+            )
+            .to_owned(),
         );
     }
     None
 }
 
-pub fn economic_state(game: &Match, unit: UnitId) -> Option<&'static str> {
-    economic_activity(game, unit).map(|activity| activity.state())
+pub fn economic_state<'a>(game: &Match, unit: UnitId, loc: &'a Localization) -> Option<&'a str> {
+    economic_activity(game, unit).map(|activity| activity.state(loc))
 }
 
 enum EconomicActivity {
@@ -574,42 +599,63 @@ enum EconomicActivity {
 }
 
 impl EconomicActivity {
-    const fn state(&self) -> &'static str {
-        match self {
-            Self::ApproachingSite => "En route to build",
-            Self::Building(_) => "Building",
-            Self::Delivering(..) => "Delivering",
-            Self::Carrying(..) => "Carrying",
-            Self::Gathering(_) => "Gathering",
-            Self::Training(training, _) if training.remaining == 0 => "Waiting for room",
-            Self::Training(..) => "Training",
-        }
+    fn state<'a>(&self, loc: &'a Localization) -> &'a str {
+        let key = match self {
+            Self::ApproachingSite => "economy.state_en_route",
+            Self::Building(_) => "economy.state_building",
+            Self::Delivering(..) => "economy.state_delivering",
+            Self::Carrying(..) => "economy.state_carrying",
+            Self::Gathering(_) => "economy.state_gathering",
+            Self::Training(training, _) if training.remaining == 0 => "economy.state_waiting",
+            Self::Training(..) => "economy.state_training",
+        };
+        loc.t(key)
     }
 
-    fn description(&self) -> String {
+    fn description(&self, loc: &Localization) -> String {
         match *self {
-            Self::ApproachingSite => "Worker en route to build".into(),
-            Self::Building(ticks) => format!(
-                "Building barracks · {}s",
-                ticks.div_ceil(rts_base::TICK_RATE)
-            ),
-            Self::Delivering(kind, amount) | Self::Carrying(kind, amount) => {
-                let state = self.state();
-                format!("{state} {amount} {}", resource_label(kind).to_lowercase())
+            Self::ApproachingSite => loc.t("economy.desc_en_route").to_owned(),
+            Self::Building(ticks) => {
+                let seconds = ticks.div_ceil(rts_base::TICK_RATE).to_string();
+                loc.fmt("economy.desc_building", &[("seconds", &seconds)])
             }
-            Self::Gathering(kind) => format!("Gathering {}", resource_label(kind).to_lowercase()),
+            Self::Delivering(kind, amount) | Self::Carrying(kind, amount) => {
+                let state = self.state(loc);
+                let amount = amount.to_string();
+                let resource = resource_label(kind, loc).to_lowercase();
+                loc.fmt(
+                    "economy.desc_carrying",
+                    &[
+                        ("state", state),
+                        ("amount", &amount),
+                        ("resource", &resource),
+                    ],
+                )
+            }
+            Self::Gathering(kind) => {
+                let resource = resource_label(kind, loc).to_lowercase();
+                loc.fmt("economy.desc_gathering", &[("resource", &resource)])
+            }
             Self::Training(training, queued) => {
                 let name = match training.kind {
-                    TrainingKind::Worker => "Worker",
-                    TrainingKind::RifleSquad => "Rifle squad",
-                    TrainingKind::Scout => "Scout",
+                    TrainingKind::Worker => loc.unit_name("worker"),
+                    TrainingKind::RifleSquad => loc.unit_name("soldier"),
+                    TrainingKind::Scout => loc.unit_name("scout"),
                 };
                 let progress = if training.remaining == 0 {
-                    "Waiting for room".into()
+                    loc.t("economy.state_waiting").to_owned()
                 } else {
                     format!("{}s", training.remaining.div_ceil(rts_base::TICK_RATE))
                 };
-                format!("{name} · {progress} · {queued} queued")
+                let queued = queued.to_string();
+                loc.fmt(
+                    "economy.desc_training",
+                    &[
+                        ("name", &name),
+                        ("progress", &progress),
+                        ("queued", &queued),
+                    ],
+                )
             }
         }
     }
@@ -648,6 +694,7 @@ fn update_deposits(
     mut commands: Commands,
     game: Res<Match>,
     assets: Res<AssetServer>,
+    loc: Res<Localization>,
     mut sprites: Query<(&DepositSprite, &mut Visibility, &mut Sprite)>,
     mut shown: Local<Vec<DepositId>>,
 ) {
@@ -658,7 +705,7 @@ fn update_deposits(
         if !shown.contains(&id) {
             shown.push(id);
             commands.spawn((
-                Name::new(resource_label(deposit.kind)),
+                Name::new(resource_label(deposit.kind, &loc).to_owned()),
                 DespawnOnExit(AppState::InGame),
                 DepositSprite(id),
                 Sprite {
@@ -897,11 +944,12 @@ mod tests {
                 .count(),
             2
         );
+        let loc = Localization::default();
         assert!(
             app.world_mut()
                 .query::<(&ResourceLabel, &Text)>()
                 .iter(app.world())
-                .all(|(label, text)| text.0 == format!("{} 80", resource_label(label.0)))
+                .all(|(label, text)| text.0 == format!("{} 80", resource_label(label.0, &loc)))
         );
 
         assert_eq!(
@@ -976,8 +1024,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             [UnitId(4)]
         );
+        let loc = Localization::default();
         assert_eq!(
-            economy_hint(&game, &selection, Targeting::None).as_deref(),
+            economy_hint(&game, &selection, Targeting::None, &loc).as_deref(),
             Some("Train rifle squads and scouts at the barracks.")
         );
 
@@ -989,7 +1038,7 @@ mod tests {
         assert_eq!(EconomyAction::Scout.units(&game, &selection).next(), None);
         assert_eq!(visible_actions(&game, &selection), 1);
         assert_eq!(
-            economy_hint(&game, &selection, Targeting::None).as_deref(),
+            economy_hint(&game, &selection, Targeting::None, &loc).as_deref(),
             Some("Train rifle squads at the barracks.")
         );
     }

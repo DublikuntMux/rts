@@ -5,11 +5,13 @@
 
 mod data;
 mod graphics;
+mod locale;
 
 pub use bevy_asset_packer::{AssetBundle, BundledAssetPlugin};
 
 pub use crate::data::{DataPlugin, MapAsset, RulesAsset};
 pub use crate::graphics::{Graphics, HealthBarStyle, SelectionStyle, TerrainDetail};
+pub use crate::locale::{LocaleData, MAX_LOCALE_BYTES, MAX_LOCALE_STRINGS};
 
 const ASSET_PACK: &str = "assets.pack";
 

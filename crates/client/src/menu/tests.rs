@@ -665,3 +665,24 @@ fn closed_pause_menu_clears_focus_and_ignores_hidden_actions() {
     assert_eq!(sent(&mut app), []);
     assert!(app.world().resource::<Menu>().dialog.is_none());
 }
+
+#[test]
+fn switching_language_rebuilds_menu_immediately() {
+    let mut app = app(1280);
+    let uk =
+        rts_assets::LocaleData::parse_str(include_str!("../../../../assets/locales/uk.lang.ron"))
+            .unwrap();
+    app.world_mut()
+        .resource_mut::<Localization>()
+        .register_bundled(uk);
+    act(&mut app, Action::Section(Section::Settings));
+    assert_shows(&mut app, &["Settings", "Language", "English", "Українська"]);
+    act(&mut app, Action::SetLanguage("uk".into()));
+    assert_eq!(app.world().resource::<Settings>().language, "uk");
+    assert_shows(
+        &mut app,
+        &["Налаштування", "Мова", "Одиночна гра", "Мережева гра"],
+    );
+    act(&mut app, Action::Section(Section::Singleplayer));
+    assert_shows(&mut app, &["Твій наступний хід", "Нова гра"]);
+}

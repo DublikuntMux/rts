@@ -6,6 +6,7 @@ mod game;
 mod hud;
 mod input;
 mod library;
+mod locale;
 mod map;
 mod menu;
 mod pause_menu;
@@ -21,9 +22,9 @@ use rts_assets::{AssetBundle, BundledAssetPlugin, DataPlugin};
 
 use crate::{
     camera::RtsCameraPlugin, crash::CrashReport, font::GameFont, game::GamePlugin, hud::HudPlugin,
-    input::SelectionPlugin, library::Library, map::MapPlugin, menu::MenuPlugin,
-    pause_menu::PauseMenuPlugin, session::SessionPlugin, settings::SettingsPlugin,
-    units::UnitsPlugin,
+    input::SelectionPlugin, library::Library, locale::LocalePlugin, map::MapPlugin,
+    menu::MenuPlugin, pause_menu::PauseMenuPlugin, session::SessionPlugin,
+    settings::SettingsPlugin, units::UnitsPlugin,
 };
 
 /// Starts the game.
@@ -75,6 +76,7 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
             skirmish::SkirmishPlugin,
             SessionPlugin,
             SettingsPlugin,
+            LocalePlugin,
             MenuPlugin,
             PauseMenuPlugin,
         ))

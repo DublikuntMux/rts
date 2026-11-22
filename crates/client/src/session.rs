@@ -169,19 +169,19 @@ impl MatchResult {
         }
     }
 
-    pub const fn title(self) -> &'static str {
+    pub const fn title_key(self) -> &'static str {
         match self {
-            Self::Victory => "Victory",
-            Self::Defeat => "Defeat",
-            Self::Draw => "Draw",
+            Self::Victory => "result.victory",
+            Self::Defeat => "result.defeat",
+            Self::Draw => "result.draw",
         }
     }
 
-    pub const fn detail(self) -> &'static str {
+    pub const fn detail_key(self) -> &'static str {
         match self {
-            Self::Victory => "The enemy headquarters has fallen.",
-            Self::Defeat => "Your headquarters has fallen.",
-            Self::Draw => "Both headquarters have fallen.",
+            Self::Victory => "result.victory_detail",
+            Self::Defeat => "result.defeat_detail",
+            Self::Draw => "result.draw_detail",
         }
     }
 }
