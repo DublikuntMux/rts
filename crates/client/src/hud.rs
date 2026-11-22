@@ -22,7 +22,10 @@ use crate::{
     game::{AppState, Match},
     input::Selection,
     locale::Localization,
-    menu::widgets::{BAR, EDGE, FIELD, GOOD, INK, INK_MUTED, RAIL, SIGNAL, Tone, button_look},
+    menu::widgets::{
+        BAR, BEVEL_DARK, BEVEL_LIGHT, BRASS_DARK, DANGER, FIELD, GOOD, INK, INK_MUTED,
+        PANEL_HEADER, RAIL, SIGNAL, Tone, WARNING, bevel_raised, bevel_recessed, button_look,
+    },
     pause_menu::PauseMenu,
     server_assets::{ServerAssets, load_image},
     skirmish,
@@ -145,13 +148,16 @@ fn spawn_hud(
                 right: px(0),
                 bottom: px(0),
                 height: px(HUD_HEIGHT),
-                border: UiRect::top(px(1)),
+                border: UiRect::top(px(2)),
                 justify_content: JustifyContent::SpaceBetween,
                 ..default()
             },
             Pickable::IGNORE,
             BackgroundColor(BAR),
-            BorderColor::all(EDGE),
+            BorderColor {
+                top: BRASS_DARK,
+                ..BorderColor::all(Color::NONE)
+            },
         ))
         .id();
     commands.entity(root).add_child(map).with_children(|bar| {
@@ -174,12 +180,17 @@ fn spawn_selection_panel(bar: &mut ChildSpawnerCommands, font: &Handle<Font>, lo
             flex_basis: px(0),
             min_width: px(0),
             padding: UiRect::axes(px(16), px(10)),
-            border: UiRect::horizontal(px(1)),
+            border: UiRect::horizontal(px(2)),
             row_gap: px(7),
             overflow: Overflow::clip(),
             ..default()
         },
-        BorderColor::all(EDGE),
+        BorderColor {
+            left: BEVEL_DARK,
+            right: BEVEL_LIGHT,
+            top: Color::NONE,
+            bottom: Color::NONE,
+        },
         BackgroundColor(Color::NONE),
     ))
     .with_children(|panel| {
@@ -232,13 +243,13 @@ fn spawn_unit_details(row: &mut ChildSpawnerCommands, font: &Handle<Font>) {
             height: px(64),
             padding: UiRect::all(px(5)),
             flex_shrink: 0.0,
-            border: UiRect::all(px(1)),
+            border: UiRect::all(px(2)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
         },
         BackgroundColor(FIELD),
-        BorderColor::all(EDGE),
+        bevel_recessed(),
         children![(PortraitImage, unit_image(Handle::default(), Color::WHITE))],
     ));
     row.spawn(Node {
@@ -259,12 +270,14 @@ fn spawn_unit_details(row: &mut ChildSpawnerCommands, font: &Handle<Font>) {
         details
             .spawn((
                 Node {
-                    height: px(5),
-                    max_width: px(200),
+                    height: px(8),
+                    max_width: px(220),
                     width: percent(100),
+                    border: UiRect::all(px(1)),
                     ..default()
                 },
                 BackgroundColor(FIELD),
+                bevel_recessed(),
             ))
             .with_children(|track| {
                 track.spawn((
@@ -320,11 +333,11 @@ fn spawn_command_card(
                     Node {
                         width: px(48),
                         height: px(48),
-                        border: UiRect::all(px(1)),
+                        border: UiRect::all(px(2)),
                         ..default()
                     },
-                    BackgroundColor(FIELD.with_alpha(0.5)),
-                    BorderColor::all(EDGE.with_alpha(0.45)),
+                    BackgroundColor(FIELD.with_alpha(0.7)),
+                    bevel_recessed(),
                 ))
                 .with_children(|slot| skirmish::spawn_desktop_action(slot, index, font, game, loc));
             }
@@ -350,7 +363,7 @@ fn spawn_order(
         Node {
             width: px(48),
             height: px(48),
-            border: UiRect::all(px(1)),
+            border: UiRect::all(px(2)),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
@@ -358,7 +371,7 @@ fn spawn_order(
             ..default()
         },
         BackgroundColor(FIELD),
-        BorderColor::all(EDGE),
+        bevel_raised(),
         observe(activate_order),
     ))
     .with_children(|button| {
@@ -385,11 +398,13 @@ fn spawn_order_contents(
             Pickable::IGNORE,
             Text::new(key),
             text_font(font, 9.0),
-            TextColor(INK_MUTED),
+            TextColor(SIGNAL),
+            BackgroundColor(PANEL_HEADER),
             Node {
                 position_type: PositionType::Absolute,
-                left: px(3),
-                top: px(1),
+                left: px(2),
+                top: px(2),
+                padding: UiRect::horizontal(px(2)),
                 ..default()
             },
         ));
@@ -535,7 +550,11 @@ fn update_button_looks(
         let selected = *order == Order::Move && *targeting == Targeting::Move;
         let look = button_look(Tone::Item, selected, hovered.get(), pressed, disabled);
         fill.set_if_neq(BackgroundColor(look.fill));
-        border.set_if_neq(BorderColor::all(if selected { SIGNAL } else { look.edge }));
+        border.set_if_neq(if selected {
+            BorderColor::all(SIGNAL)
+        } else {
+            look.border
+        });
         for child in children {
             if let Ok((text, image)) = inks.get_mut(*child) {
                 if let Some(mut text) = text {
@@ -564,7 +583,7 @@ fn update_selection(
     mut labels: Query<(&HudText, &mut Text)>,
     mut portrait: Query<&mut Node, PortraitFilter>,
     mut portrait_image: Query<&mut ImageNode, With<PortraitImage>>,
-    mut health: Query<&mut Node, HealthFilter>,
+    mut health: Query<(&mut Node, &mut BackgroundColor), HealthFilter>,
     mut roster: Single<(Entity, &mut Node), RosterFilter>,
     mut last_roster: Local<Vec<UnitId>>,
 ) {
@@ -615,8 +634,17 @@ fn update_selection(
             image.color = graphics.player_color(unit.owner.0);
         }
     }
-    for mut node in &mut health {
-        node.width = percent(health_percent(total_health, max_health));
+    let hp_pct = health_percent(total_health, max_health);
+    let hp_color = if hp_pct >= 60.0 {
+        GOOD
+    } else if hp_pct >= 30.0 {
+        WARNING
+    } else {
+        DANGER
+    };
+    for (mut node, mut fill) in &mut health {
+        node.width = percent(hp_pct);
+        fill.set_if_neq(BackgroundColor(hp_color));
     }
     let ids: Vec<_> = units.iter().map(|(id, _)| *id).collect();
     roster.1.display = if units.len() > 1 {
@@ -665,13 +693,13 @@ fn spawn_roster(
                     height: px(48),
                     flex_shrink: 0.0,
                     padding: UiRect::all(px(5)),
-                    border: UiRect::all(px(1)),
+                    border: UiRect::all(px(2)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
                 },
                 BackgroundColor(FIELD),
-                BorderColor::all(EDGE),
+                bevel_raised(),
                 observe(select_portrait),
                 children![unit_image(
                     load_image(

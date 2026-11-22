@@ -174,7 +174,7 @@ fn pause_menu(loc: &Localization) -> impl Scene {
 
 fn pause_button() -> impl Scene {
     let action = Action::TogglePause;
-    let tone = Tone::Item;
+    let tone = Tone::Secondary;
     bsn! {
         Name::new("Pause")
         action
@@ -188,20 +188,20 @@ fn pause_button() -> impl Scene {
             top: px(PAUSE_BUTTON_BOUNDS.min.y),
             width: px(PAUSE_BUTTON_BOUNDS.width()),
             height: px(PAUSE_BUTTON_BOUNDS.height()),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(2)),
-            column_gap: px(4),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
+            column_gap: px(5),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
         }
         Outline { width: px(2), offset: px(2), color: Color::NONE }
         on(crate::menu::activate)
         Children [
-            Node { width: px(3), height: px(14) }
+            Node { width: px(4), height: px(16) }
             BackgroundColor(INK)
             Pickable::IGNORE
             --
-            Node { width: px(3), height: px(14) }
+            Node { width: px(4), height: px(16) }
             BackgroundColor(INK)
             Pickable::IGNORE
         ]

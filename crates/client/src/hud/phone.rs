@@ -8,7 +8,7 @@ use bevy::{
 };
 
 use super::*;
-use crate::menu::widgets::{FIELD_EDGE, PANEL, SCRIM};
+use crate::menu::widgets::{BRASS_DARK, PANEL, PANEL_HEADER, SCRIM, bevel_raised, bevel_recessed};
 
 #[derive(Component)]
 pub(super) struct DesktopOnly;
@@ -40,14 +40,14 @@ pub(super) fn spawn_selection_button(parent: &mut ChildSpawnerCommands, font: &H
                 width: px(48),
                 height: px(48),
                 padding: UiRect::all(px(6)),
-                border: UiRect::all(px(1)),
+                border: UiRect::all(px(2)),
                 display: Display::None,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
             },
             BackgroundColor(FIELD),
-            BorderColor::all(FIELD_EDGE),
+            bevel_raised(),
             observe(open_details),
         ))
         .with_children(|button| {
@@ -100,9 +100,14 @@ pub(super) fn spawn_overlays(
                     right: px(0),
                     top: px(0),
                     height: px(64),
+                    border: UiRect::bottom(px(2)),
                     ..default()
                 },
-                BackgroundColor(RAIL),
+                BackgroundColor(PANEL_HEADER),
+                BorderColor {
+                    bottom: SIGNAL,
+                    ..BorderColor::all(Color::NONE)
+                },
             ));
             overlay.spawn((
                 PanelTitle,
@@ -131,11 +136,11 @@ pub(super) fn spawn_overlays(
                         height: px(48),
                         align_items: AlignItems::Center,
                         justify_content: JustifyContent::Center,
-                        border: UiRect::all(px(1)),
+                        border: UiRect::all(px(2)),
                         ..default()
                     },
-                    BackgroundColor(RAIL),
-                    BorderColor::all(FIELD_EDGE),
+                    BackgroundColor(PANEL),
+                    bevel_raised(),
                     observe(close_panel),
                 ))
                 .with_children(|button| {
@@ -154,11 +159,13 @@ pub(super) fn spawn_overlays(
         text_font(font, 13.0),
         TextColor(SIGNAL),
         BackgroundColor(BAR),
+        bevel_recessed(),
         Node {
             position_type: PositionType::Absolute,
             left: px(8),
             bottom: px(8),
-            padding: UiRect::axes(px(8), px(5)),
+            padding: UiRect::axes(px(10), px(5)),
+            border: UiRect::all(px(1)),
             display: Display::None,
             ..default()
         },
@@ -252,7 +259,7 @@ pub(super) fn resize_hud(
             node.border = if layout.phone {
                 UiRect::ZERO
             } else {
-                UiRect::top(px(1))
+                UiRect::top(px(2))
             };
         }
         if details {
@@ -315,11 +322,14 @@ pub(super) fn update_surfaces(
                 BAR
             }));
             if let Some(mut edge) = edge {
-                edge.set_if_neq(BorderColor::all(if layout.phone {
-                    Color::NONE
+                edge.set_if_neq(if layout.phone {
+                    BorderColor::all(Color::NONE)
                 } else {
-                    EDGE
-                }));
+                    BorderColor {
+                        top: BRASS_DARK,
+                        ..BorderColor::all(Color::NONE)
+                    }
+                });
             }
         } else if card {
             fill.set_if_neq(BackgroundColor(if layout.phone {
@@ -516,7 +526,7 @@ pub(super) fn update_controls(
     for (hovered, pressed, mut fill, mut edge) in &mut button {
         let look = button_look(Tone::Item, false, hovered.get(), pressed, false);
         fill.set_if_neq(BackgroundColor(look.fill));
-        edge.set_if_neq(BorderColor::all(look.edge));
+        edge.set_if_neq(look.border);
     }
     for mut label in &mut count {
         label.set_if_neq(Text::new(selection.units.len().to_string()));

@@ -1,4 +1,7 @@
 //! Menu pages and dialogs as scenes, each a function of the menu model.
+//!
+//! Uses a top armored RTS command deck (crest, horizontal metallic navigation tabs, live network
+//! telemetry, and bottom status strip) instead of a generic web sidebar.
 
 use bevy::{
     input_focus::tab_navigation::TabGroup, prelude::*, scene::EntityScene, ui_widgets::ScrollArea,
@@ -13,10 +16,11 @@ use super::{
     previews::preview_for,
     scroll_focus_into_view, scroll_on_touch_drag,
     widgets::{
-        DANGER, EDGE, FIELD, FIELD_EDGE, Field, GOOD, INK, INK_DISABLED, INK_MUTED, PANEL, RAIL,
-        SCREEN, SIGNAL, ShowIf, Tone, badge, bound_text, button, column, dialog as dialog_frame,
-        empty_preview, heading, hint, list_item, map_image, panel, row, spinner, split, text,
-        text_field, wide_button,
+        BEVEL_DARK, BEVEL_LIGHT, BEVEL_RAISED, BEVEL_RECESSED, BRASS_DARK, DANGER, EDGE, FIELD,
+        Field, GOOD, INK, INK_DISABLED, INK_MUTED, PANEL, PANEL_HEADER, RAIL, SCREEN, SIGNAL,
+        ShowIf, Tone, armored_panel, badge, bevel_raised, bound_text, button, column,
+        dialog as dialog_frame, empty_preview, hint, list_item, map_image, panel, readout_box,
+        rivet, row, section_bar, spinner, split, text, text_field, well, wide_button,
     },
 };
 use crate::{
@@ -139,46 +143,19 @@ impl PageKey {
 }
 
 // ---------------------------------------------------------------------------
-// Frame
+// Frame — Armored Top Command Deck + Bottom Telemetry Strip
 // ---------------------------------------------------------------------------
 
 /// The whole menu screen with empty page and dialog hosts.
 #[expect(
     clippy::too_many_lines,
-    reason = "the screen frame reads best as one scene"
+    reason = "the command-deck screen frame reads best as one scene"
 )]
 pub fn menu_root(compact: bool, loc: &Localization) -> impl Scene {
     let group = TabGroup::new(0);
     let dialog_shown = ShowIf(|view| view.menu.dialog.is_some());
-    let rail_width = if compact { percent(100) } else { px(216) };
     let notice_shown = ShowIf(|view| view.menu.notice.is_some());
-    let nav: Scenes = [
-        (
-            "nav.singleplayer",
-            "nav.singleplayer_short",
-            Section::Singleplayer,
-        ),
-        (
-            "nav.multiplayer",
-            "nav.multiplayer_short",
-            Section::Multiplayer,
-        ),
-        ("nav.replays", "nav.replays", Section::Replays),
-        ("nav.settings", "nav.settings", Section::Settings),
-    ]
-    .into_iter()
-    .map(|(long, short, section)| {
-        boxed(nav_button(
-            loc.t(if compact { short } else { long }).to_owned(),
-            Action::Section(section),
-            compact,
-        ))
-    })
-    .chain(std::iter::once(boxed(bsn! {
-        @nav_button({loc.t("nav.quit").to_owned()}, Action::Quit, compact)
-        Node { margin: {if compact { UiRect::ZERO } else { UiRect::top(auto()) }} }
-    })))
-    .collect();
+    let compact_nav: Scenes = when(compact, compact_nav_strip(loc));
     bsn! {
         #Menu
         MenuRoot
@@ -194,66 +171,82 @@ pub fn menu_root(compact: bool, loc: &Localization) -> impl Scene {
         }
         BackgroundColor(SCREEN)
         Children [
-            @title_bar(compact, loc)
+            @command_deck_bar(compact, loc)
             --
+            // Brass tactical horizon stripe beneath the top command bar.
             Node {
-                flex_direction: {if compact { FlexDirection::Column } else { FlexDirection::Row }},
+                height: px(2),
+                flex_shrink: 0.0,
+            }
+            BackgroundColor(BRASS_DARK)
+            --
+            {compact_nav}
+            --
+            ScrollArea
+            Node {
+                flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
                 min_height: px(0),
+                overflow: Overflow::scroll_y(),
             }
+            on(scroll_on_touch_drag)
+            on(scroll_focus_into_view)
             Children [
-                Node {
-                    flex_direction: {if compact { FlexDirection::Row } else { FlexDirection::Column }},
-                    width: rail_width,
-                    flex_wrap: {if compact { FlexWrap::Wrap } else { FlexWrap::NoWrap }},
-                    flex_shrink: 0.0,
-                    padding: UiRect::all(px(if compact { 6.0 } else { 16.0 })),
-                    column_gap: px(4),
-                    row_gap: px(6),
-                    border: {if compact { UiRect::bottom(px(1)) } else { UiRect::right(px(1)) }},
-                }
-                BackgroundColor(RAIL)
-                BorderColor::all(EDGE)
-                Children [ {nav} ]
-                --
+                PageHost
                 Node {
                     flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0,
-                    min_width: px(0),
-                    min_height: px(0),
+                    flex_shrink: 0.0,
+                    width: percent(100),
+                    max_width: px(1200),
+                    align_self: AlignSelf::Center,
+                    padding: UiRect::axes(
+                        px(if compact { 14.0 } else { 36.0 }),
+                        px(if compact { 16.0 } else { 28.0 }),
+                    ),
+                    row_gap: px(20),
+                }
+            ]
+            --
+            // Bottom armored telemetry & status bar.
+            Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                min_height: px(36),
+                padding: UiRect::axes(px(if compact { 12.0 } else { 24.0 }), px(6)),
+                column_gap: px(16),
+                row_gap: px(4),
+                border: UiRect::top(px(2)),
+                flex_shrink: 0.0,
+            }
+            BackgroundColor(PANEL_HEADER)
+            BorderColor { top: BEVEL_LIGHT, ..BorderColor::all(Color::NONE) }
+            Children [
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(8),
                 }
                 Children [
-                    ScrollArea
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        flex_grow: 1.0,
-                        min_height: px(0),
-                        overflow: Overflow::scroll_y(),
-                    }
-                    on(scroll_on_touch_drag)
-                    on(scroll_focus_into_view)
-                    Children [
-                        PageHost
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            flex_shrink: 0.0,
-                            width: percent(100),
-                            max_width: px(1160),
-                            align_self: AlignSelf::Center,
-                            padding: UiRect::all(px(if compact { 16.0 } else { 40.0 })),
-                            row_gap: px(24),
-                        }
-                    ]
+                    @rivet()
                     --
-                    notice_shown
-                    Node {
-                        min_height: px(40),
-                        padding: UiRect::axes(px(20), px(6)),
-                        border: UiRect::top(px(1)),
-                        align_items: AlignItems::Center,
-                    }
-                    BorderColor::all(EDGE)
-                    Children [ @text("", 13.0, INK_MUTED) NoticeText ]
+                    @bound_text(breadcrumb, 12.0, INK_MUTED)
+                ]
+                --
+                notice_shown
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(8),
+                    padding: UiRect::axes(px(10), px(3)),
+                    border: UiRect::all(px(1)),
+                }
+                BackgroundColor(FIELD)
+                BEVEL_RECESSED
+                Children [
+                    Node { width: px(6), height: px(6), flex_shrink: 0.0 }
+                    BackgroundColor(SIGNAL)
+                    --
+                    @text("", 12.0, INK_MUTED) NoticeText
                 ]
             ]
             --
@@ -275,7 +268,7 @@ pub fn menu_root(compact: bool, loc: &Localization) -> impl Scene {
     clippy::redundant_closure_for_method_calls,
     reason = "the method has a narrower lifetime than the binding's function pointer"
 )]
-fn title_bar(compact: bool, loc: &Localization) -> impl Scene {
+fn command_deck_bar(compact: bool, loc: &Localization) -> impl Scene {
     let can_go_back = ShowIf(|view| view.can_go_back());
     let back_label = loc.t("nav.back").to_owned();
     let back: Scenes = when(
@@ -285,65 +278,179 @@ fn title_bar(compact: bool, loc: &Localization) -> impl Scene {
             can_go_back
         },
     );
+    let desktop_tabs: Scenes = if compact {
+        Vec::new()
+    } else {
+        nav_tabs(false, loc)
+    };
+    let live_lamp_shown = ShowIf(|view| view.hosted.is_running() || view.status.connected());
+    let quit: Scenes = when(
+        !compact,
+        bsn! {
+            @button({loc.t("nav.quit").to_owned()}, Action::Quit, Tone::Danger)
+            Node { min_height: px(42), padding: UiRect::axes(px(14), px(6)) }
+        },
+    );
     bsn! {
         Node {
-            min_height: px(if compact { 56.0 } else { 72.0 }),
-            padding: UiRect::axes(px(if compact { 16.0 } else { 24.0 }), px(8)),
+            min_height: px(if compact { 56.0 } else { 64.0 }),
+            padding: UiRect::axes(px(if compact { 12.0 } else { 24.0 }), px(6)),
             column_gap: px(12),
             align_items: AlignItems::Center,
-            border: UiRect::bottom(px(1)),
+            flex_shrink: 0.0,
         }
-        BackgroundColor(PANEL)
-        BorderColor::all(EDGE)
+        BackgroundColor(RAIL)
         Children [
             {back}
             --
-            @command_mark()
+            // Armored emblem & title plate.
+            Node {
+                align_items: AlignItems::Center,
+                column_gap: px(10),
+                padding: UiRect::axes(px(10), px(4)),
+                border: UiRect::all(px(2)),
+                flex_shrink: 0.0,
+            }
+            BackgroundColor(PANEL_HEADER)
+            BEVEL_RECESSED
+            Children [
+                @command_mark()
+                --
+                @text("RTS", 24.0, INK)
+            ]
             --
-            @text("RTS", 30.0, INK)
+            // Desktop horizontal command-deck tabs.
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+                flex_grow: 1.0,
+                min_width: px(0),
+            }
+            Children [ {desktop_tabs} ]
             --
-            Node { flex_grow: 1.0, min_width: px(0), justify_content: JustifyContent::FlexEnd }
-            Children [ @bound_text(breadcrumb, 12.0, INK_MUTED) ]
+            // Live server / hosting telemetry indicator.
+            live_lamp_shown
+            Node {
+                align_items: AlignItems::Center,
+                column_gap: px(7),
+                padding: UiRect::axes(px(10), px(5)),
+                border: UiRect::all(px(1)),
+                flex_shrink: 0.0,
+            }
+            BackgroundColor(FIELD)
+            BEVEL_RECESSED
+            Children [
+                Node { width: px(7), height: px(7), flex_shrink: 0.0 }
+                BackgroundColor(GOOD)
+                --
+                @bound_text(live_telemetry, 12.0, INK)
+            ]
+            --
+            {quit}
         ]
     }
 }
 
-fn nav_button(label: String, action: Action, compact: bool) -> impl Scene {
+fn compact_nav_strip(loc: &Localization) -> impl Scene {
+    let mut tabs = nav_tabs(true, loc);
+    tabs.push(boxed(nav_tab(
+        loc.t("nav.quit").to_owned(),
+        Action::Quit,
+        true,
+    )));
+    bsn! {
+        Node {
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            width: percent(100),
+            flex_shrink: 0.0,
+            padding: UiRect::all(px(6)),
+            column_gap: px(4),
+            row_gap: px(4),
+            border: UiRect::bottom(px(2)),
+        }
+        BackgroundColor(PANEL_HEADER)
+        BorderColor { bottom: EDGE, ..BorderColor::all(Color::NONE) }
+        Children [ {tabs} ]
+    }
+}
+
+fn nav_tabs(compact: bool, loc: &Localization) -> Scenes {
+    [
+        (
+            "nav.singleplayer",
+            "nav.singleplayer_short",
+            Section::Singleplayer,
+        ),
+        (
+            "nav.multiplayer",
+            "nav.multiplayer_short",
+            Section::Multiplayer,
+        ),
+        ("nav.replays", "nav.replays", Section::Replays),
+        ("nav.settings", "nav.settings", Section::Settings),
+    ]
+    .into_iter()
+    .map(|(long, short, section)| {
+        boxed(nav_tab(
+            loc.t(if compact { short } else { long }).to_owned(),
+            Action::Section(section),
+            compact,
+        ))
+    })
+    .collect()
+}
+
+fn nav_tab(label: String, action: Action, compact: bool) -> impl Scene {
     bsn! {
         @button(label, action, Tone::Nav)
         Node {
-            justify_content: JustifyContent::FlexStart,
+            min_height: px(48),
             flex_grow: {if compact { 1.0_f32 } else { 0.0_f32 }},
             flex_basis: {if compact { px(48) } else { auto() }},
             flex_shrink: 1.0,
-            min_width: px(48),
-            padding: UiRect::axes(px(if compact { 2.0 } else { 10.0 }), px(8)),
-            border: UiRect { left: px(3), ..UiRect::all(px(1)) },
+            min_width: px(if compact { 48.0 } else { 112.0 }),
+            padding: UiRect::axes(px(if compact { 4.0 } else { 18.0 }), px(8)),
+            border: UiRect { bottom: px(3), top: px(2), left: px(2), right: px(2) },
         }
     }
 }
 
-/// Four field units around a shared objective, drawn without a font glyph or image asset.
+/// Tactical brass-and-steel formation crest.
 fn command_mark() -> impl Scene {
     bsn! {
         Node {
-            width: px(24),
-            height: px(24),
+            width: px(22),
+            height: px(22),
             flex_shrink: 0.0,
             flex_wrap: FlexWrap::Wrap,
             column_gap: px(4),
             row_gap: px(4),
         }
         Children [
-            Node { width: px(10), height: px(10) } BackgroundColor(SIGNAL)
+            Node { width: px(9), height: px(9) } BackgroundColor(SIGNAL)
             --
-            Node { width: px(10), height: px(10) } BackgroundColor(INK_MUTED)
+            Node { width: px(9), height: px(9) } BackgroundColor(BEVEL_LIGHT)
             --
-            Node { width: px(10), height: px(10) } BackgroundColor(INK_MUTED)
+            Node { width: px(9), height: px(9) } BackgroundColor(BEVEL_LIGHT)
             --
-            Node { width: px(10), height: px(10) } BackgroundColor(SIGNAL)
+            Node { width: px(9), height: px(9) } BackgroundColor(SIGNAL)
         ]
     }
+}
+
+fn live_telemetry(view: &View) -> String {
+    view.hosted.info().map_or_else(
+        || {
+            if view.status.connected() {
+                view.loc.t("online.connected").to_owned()
+            } else {
+                String::new()
+            }
+        },
+        |info| format!("{} · {}", view.loc.t("host.running_badge"), info.bind_addr),
+    )
 }
 
 fn breadcrumb(view: &View) -> String {
@@ -376,7 +483,7 @@ pub fn page(view: &View) -> impl Scene {
     bsn! {
         Node {
             flex_direction: FlexDirection::Column,
-            row_gap: px(24),
+            row_gap: px(20),
         }
         Children [ {contents} ]
     }
@@ -427,32 +534,49 @@ fn solo_home(view: &View, latest: Option<Record>) -> impl SceneList {
         },
     );
     bsn_list! {
-        @heading({loc.t("solo.heading").to_owned()})
+        @section_bar({loc.t("solo.heading").to_owned()}, {Some(loc.t("solo.tagline").to_owned())})
         --
-        @hint({loc.t("solo.tagline").to_owned()})
-        --
-        @split(
-            bsn_list! {
-                @text({loc.t("solo.card_title").to_owned()}, 22.0, INK)
-                --
-                @hint({loc.t("solo.card_hint").to_owned()})
-                --
-                @wide_button({loc.t("solo.new_game").to_owned()}, Action::OpenNewGame, Tone::Primary)
-                Node { margin: UiRect::top(px(16)), flex_grow: 0.0, flex_basis: auto() }
-                --
-                @wide_button({loc.t("solo.load_game").to_owned()}, Action::OpenLoadGame, Tone::Secondary)
-                Node { flex_grow: 0.0, flex_basis: auto() }
-                --
-                @hint({loc.t("solo.load_hint").to_owned()})
-            },
-            bsn_list! {
-                @text(map_name, 22.0, INK)
-                --
-                {preview}
-                --
-                @hint(caption)
-            },
-        )
+        Node {
+            flex_wrap: FlexWrap::Wrap,
+            align_items: AlignItems::Stretch,
+            column_gap: px(16),
+            row_gap: px(16),
+        }
+        Children [
+            Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                flex_basis: px(320),
+                min_width: px(0),
+            }
+            Children [
+                @armored_panel({loc.t("solo.card_title").to_owned()}, bsn_list! {
+                    @hint({loc.t("solo.card_hint").to_owned()})
+                    --
+                    @wide_button({loc.t("solo.new_game").to_owned()}, Action::OpenNewGame, Tone::Primary)
+                    Node { margin: UiRect::top(px(8)), flex_grow: 0.0, flex_basis: auto() }
+                    --
+                    @wide_button({loc.t("solo.load_game").to_owned()}, Action::OpenLoadGame, Tone::Secondary)
+                    Node { flex_grow: 0.0, flex_basis: auto() }
+                    --
+                    @hint({loc.t("solo.load_hint").to_owned()})
+                })
+            ]
+            --
+            Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                flex_basis: px(320),
+                min_width: px(0),
+            }
+            Children [
+                @armored_panel(map_name, bsn_list! {
+                    {preview}
+                    --
+                    @hint(caption)
+                })
+            ]
+        ]
     }
 }
 
@@ -494,9 +618,7 @@ fn new_game(view: &View, selected: usize) -> impl SceneList {
     let difficulty: Scenes = when(map.skirmish, difficulty_choice(loc, view.menu.difficulty));
     let selected_label = loc.fmt("solo.selected_map", &[("map", &map.name)]);
     bsn_list! {
-        @heading({loc.t("solo.select_map").to_owned()})
-        --
-        @hint({loc.t("solo.preview_hint").to_owned()})
+        @section_bar({loc.t("solo.select_map").to_owned()}, {Some(loc.t("solo.preview_hint").to_owned())})
         --
         @split(
             maps,
@@ -584,18 +706,16 @@ fn browser(view: &View, shelf: Shelf) -> impl SceneList {
             Shelf::Replays => "browser.replays_title",
         })
         .to_owned();
-    let footer: Scenes = match shelf {
-        Shelf::Saves => vec![boxed(hint(loc.t("browser.filter_optional").to_owned()))],
-        Shelf::Replays => Vec::new(),
+    let subtitle = match shelf {
+        Shelf::Saves => Some(loc.t("browser.filter_optional").to_owned()),
+        Shelf::Replays => None,
     };
     bsn_list! {
-        @heading(title)
+        @section_bar(title, subtitle)
         --
         @filters(view, shelf)
         --
         @split(items, browser_detail(view, shelf))
-        --
-        {footer}
     }
 }
 
@@ -709,7 +829,7 @@ fn connect(view: &View) -> impl SceneList {
         OnlineTab::Host => "host.heading",
     };
     bsn_list! {
-        @heading({loc.t(heading_key).to_owned()})
+        @section_bar({loc.t(heading_key).to_owned()}, None)
         --
         @{tabs}
         --
@@ -732,36 +852,40 @@ fn join_server_body(view: &View) -> Scenes {
         });
     let local_hosted: Scenes = view.hosted.info().map_or_else(Vec::new, |info| {
         let addr = info.bind_addr.to_string();
-        vec![boxed(panel(bsn_list! {
-            @row(bsn_list! {
-                @badge({loc.t("host.running_badge").to_owned()}, GOOD)
+        vec![boxed(armored_panel(
+            loc.t("host.running_badge").to_owned(),
+            bsn_list! {
+                @row(bsn_list! {
+                    @badge({loc.t("host.running_badge").to_owned()}, GOOD)
+                    --
+                    @text({loc.fmt("host.listening_on", &[("addr", &addr)])}, 14.0, INK)
+                })
                 --
-                @hint({loc.fmt("host.listening_on", &[("addr", &addr)])})
-            })
-            --
-            @row(bsn_list! {
-                @wide_button({loc.t("host.connect_local").to_owned()}, Action::ConnectHostedServer, Tone::Primary)
-                --
-                @button({loc.t("host.stop").to_owned()}, Action::StopHostedServer, Tone::Danger)
-            })
-        }))]
+                @row(bsn_list! {
+                    @wide_button({loc.t("host.connect_local").to_owned()}, Action::ConnectHostedServer, Tone::Primary)
+                    --
+                    @button({loc.t("host.stop").to_owned()}, Action::StopHostedServer, Tone::Danger)
+                })
+            },
+        ))]
     });
     let field = text_field(Field::Url, &view.form.url, MAX_URL_LEN);
     let failed = ShowIf(|view| matches!(view.status.server, Server::Failed { .. }));
     vec![
-        boxed(panel(bsn_list! {
-            @hint({loc.t("online.server_address").to_owned()})
-            --
-            Node { column_gap: px(8) } Children [ @{field} ]
-            --
-            @hint({loc.t("online.address_hint").to_owned()})
-            --
-            @row(bsn_list! {
-                {recent}
+        boxed(armored_panel(
+            loc.t("online.server_address").to_owned(),
+            bsn_list! {
+                Node { column_gap: px(8) } Children [ @{field} ]
                 --
-                @wide_button({loc.t("online.connect").to_owned()}, Action::Connect, Tone::Primary)
-            })
-        })),
+                @hint({loc.t("online.address_hint").to_owned()})
+                --
+                @row(bsn_list! {
+                    {recent}
+                    --
+                    @wide_button({loc.t("online.connect").to_owned()}, Action::Connect, Tone::Primary)
+                })
+            },
+        )),
         boxed(bsn! {
             Node { flex_direction: FlexDirection::Column, row_gap: px(12) }
             Children [ {local_hosted} ]
@@ -771,10 +895,10 @@ fn join_server_body(view: &View) -> Scenes {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(px(14)),
                 row_gap: px(10),
-                border: UiRect::left(px(3)),
+                border: UiRect { left: px(4), top: px(2), right: px(2), bottom: px(2) },
             }
             BackgroundColor(PANEL)
-            BorderColor::all(DANGER)
+            BorderColor { left: DANGER, top: BEVEL_LIGHT, right: BEVEL_DARK, bottom: BEVEL_DARK }
             failed
             Children [
                 @bound_text(connect_failure, 15.0, INK)
@@ -805,29 +929,30 @@ fn host_server_body(view: &View) -> Scenes {
             Tone::Item,
         )
     }));
-    let mut sections: Scenes = vec![boxed(panel(bsn_list! {
-        @hint({loc.t("host.bind_label").to_owned()})
-        --
-        Node { column_gap: px(8) } Children [ @{bind_field} ]
-        --
-        @hint({loc.t("host.bind_hint").to_owned()})
-        --
-        @text({loc.t("host.map_label").to_owned()}, 14.0, INK)
-        --
-        @row(map_choices)
-        --
-        @hint({loc.t("host.assets_label").to_owned()})
-        --
-        Node { column_gap: px(8) } Children [ @{assets_field} ]
-        --
-        @hint({loc.t("host.assets_hint").to_owned()})
-        --
-        @row(bsn_list! {
-            @wide_button({loc.t("host.start_and_connect").to_owned()}, Action::HostAndConnect, Tone::Primary)
+    let mut sections: Scenes = vec![boxed(armored_panel(
+        loc.t("host.bind_label").to_owned(),
+        bsn_list! {
+            Node { column_gap: px(8) } Children [ @{bind_field} ]
             --
-            @button({loc.t("host.start_only").to_owned()}, Action::StartHostedServer, Tone::Secondary)
-        })
-    }))];
+            @hint({loc.t("host.bind_hint").to_owned()})
+            --
+            @text({loc.t("host.map_label").to_owned()}, 14.0, INK)
+            --
+            @row(map_choices)
+            --
+            @hint({loc.t("host.assets_label").to_owned()})
+            --
+            Node { column_gap: px(8) } Children [ @{assets_field} ]
+            --
+            @hint({loc.t("host.assets_hint").to_owned()})
+            --
+            @row(bsn_list! {
+                @wide_button({loc.t("host.start_and_connect").to_owned()}, Action::HostAndConnect, Tone::Primary)
+                --
+                @button({loc.t("host.start_only").to_owned()}, Action::StartHostedServer, Tone::Secondary)
+            })
+        },
+    ))];
     if let Some(info) = view.hosted.info() {
         sections.push(boxed(hosted_status_panel(loc, info)));
     }
@@ -849,36 +974,30 @@ fn hosted_status_panel(loc: &Localization, info: &HostedServerInfo) -> impl Scen
             Tone::Secondary,
         ),
     );
-    panel(bsn_list! {
-        @row(bsn_list! {
-            @badge({loc.t("host.running_badge").to_owned()}, GOOD)
+    armored_panel(
+        loc.fmt("host.listening_on", &[("addr", &addr)]),
+        bsn_list! {
+            @row(bsn_list! {
+                @badge({loc.t("host.running_badge").to_owned()}, GOOD)
+                --
+                @text({info.map_name.clone()}, 15.0, INK)
+            })
             --
-            @text({loc.fmt("host.listening_on", &[("addr", &addr)])}, 15.0, INK)
+            {assets_note}
             --
-            @hint({info.map_name.clone()})
-        })
-        --
-        {assets_note}
-        --
-        @hint({loc.t("host.share_label").to_owned()})
-        --
-        Node {
-            padding: UiRect::axes(px(12), px(8)),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(2)),
-        }
-        BackgroundColor(FIELD)
-        BorderColor::all(EDGE)
-        Children [ @text({info.share_url.clone()}, 13.0, SIGNAL) ]
-        --
-        @row(bsn_list! {
-            @wide_button({loc.t("host.connect_local").to_owned()}, Action::ConnectHostedServer, Tone::Primary)
+            @hint({loc.t("host.share_label").to_owned()})
             --
-            {copy_btn}
+            @readout_box({info.share_url.clone()})
             --
-            @button({loc.t("host.stop").to_owned()}, Action::StopHostedServer, Tone::Danger)
-        })
-    })
+            @row(bsn_list! {
+                @wide_button({loc.t("host.connect_local").to_owned()}, Action::ConnectHostedServer, Tone::Primary)
+                --
+                {copy_btn}
+                --
+                @button({loc.t("host.stop").to_owned()}, Action::StopHostedServer, Tone::Danger)
+            })
+        },
+    )
 }
 
 fn connect_failure(view: &View) -> String {
@@ -893,7 +1012,7 @@ fn connect_failure(view: &View) -> String {
 fn connecting(view: &View, url: String) -> impl SceneList {
     let loc = view.loc;
     bsn_list! {
-        @heading({loc.t("online.connecting_heading").to_owned()})
+        @section_bar({loc.t("online.connecting_heading").to_owned()}, {Some(loc.t("online.connecting_hint").to_owned())})
         --
         @panel(bsn_list! {
             Node {
@@ -905,15 +1024,13 @@ fn connecting(view: &View, url: String) -> impl SceneList {
             Children [
                 @bound_text(connecting_status, 18.0, INK)
                 --
-                @hint(url)
+                @readout_box(url)
                 --
                 @spinner()
             ]
             --
             @row(bsn_list! { @wide_button({loc.t("online.cancel").to_owned()}, Action::Disconnect, Tone::Secondary) })
         })
-        --
-        @hint({loc.t("online.connecting_hint").to_owned()})
     }
 }
 
@@ -987,26 +1104,26 @@ fn rooms(view: &View, url: String) -> impl SceneList {
         },
     );
     let hosted_controls: Scenes = view.hosted.info().map_or_else(Vec::new, |info| {
-        let mut items = vec![boxed(badge(
+        let mut controls = vec![boxed(badge(
             format!("{} · {}", loc.t("host.running_badge"), info.bind_addr),
             SIGNAL,
         ))];
         if !cfg!(target_os = "android") {
-            items.push(boxed(button(
+            controls.push(boxed(button(
                 loc.t("host.copy_address").to_owned(),
                 Action::CopyHostedUrl,
                 Tone::Secondary,
             )));
         }
-        items.push(boxed(button(
+        controls.push(boxed(button(
             loc.t("host.stop").to_owned(),
             Action::StopHostedServer,
             Tone::Danger,
         )));
-        items
+        controls
     });
     bsn_list! {
-        @heading({loc.fmt("online.server_heading", &[("host", &host)])})
+        @section_bar({loc.fmt("online.server_heading", &[("host", &host)])}, None)
         --
         @row(bsn_list! {
             @badge({loc.t("online.connected").to_owned()}, GOOD)
@@ -1023,7 +1140,7 @@ fn rooms(view: &View, url: String) -> impl SceneList {
         @row(bsn_list! {
             @wide_button({loc.t("online.join_by_code").to_owned()}, Action::OpenJoinByCode, Tone::Secondary)
             --
-            @wide_button({loc.t("online.create_room_btn").to_owned()}, Action::OpenCreateRoom, Tone::Secondary)
+            @wide_button({loc.t("online.create_room_btn").to_owned()}, Action::OpenCreateRoom, Tone::Primary)
         })
     }
 }
@@ -1087,24 +1204,25 @@ fn lobby_page(view: &View, lobby: Lobby) -> impl SceneList {
     });
     let host = lobby.host();
     bsn_list! {
-        @heading({loc.fmt("lobby.heading", &[("host", host)])})
+        @section_bar(
+            {loc.fmt("lobby.heading", &[("host", host)])},
+            {Some(loc.fmt("lobby.meta", &[("visibility", visibility), ("host", host)]))}
+        )
         --
         @row(bsn_list! {
             @badge({loc.fmt("lobby.invite_badge", &[("code", &lobby.code)])}, SIGNAL)
             --
             {copy}
-            --
-            @hint({loc.fmt("lobby.meta", &[("visibility", visibility), ("host", host)])})
         })
         --
-        @column(8.0, slots)
+        @well(slots)
         --
         @row(bsn_list! {
             @wide_button(ready_label, Action::ToggleReady, ready_tone)
             --
             @wide_button(start_label, Action::StartMatch, Tone::Primary)
             --
-            @button({loc.t("lobby.leave_room").to_owned()}, Action::LeaveRoom, Tone::Secondary)
+            @button({loc.t("lobby.leave_room").to_owned()}, Action::LeaveRoom, Tone::Danger)
         })
         --
         @hint(status)
@@ -1142,17 +1260,26 @@ fn slot_row(
         },
     );
     let name_color = if slot.is_some() { INK } else { INK_MUTED };
+    let border = if you {
+        BorderColor {
+            left: SIGNAL,
+            top: BEVEL_LIGHT,
+            right: BEVEL_DARK,
+            bottom: BEVEL_DARK,
+        }
+    } else {
+        bevel_raised()
+    };
     bsn! {
         Node {
             min_height: px(48),
             padding: UiRect::axes(px(14), px(6)),
             column_gap: px(12),
             align_items: AlignItems::Center,
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(4)),
+            border: UiRect { left: px(3), top: px(2), right: px(2), bottom: px(2) },
         }
-        BackgroundColor(FIELD)
-        BorderColor::all(EDGE)
+        BackgroundColor(PANEL)
+        border
         Children [
             @text(name, 15.0, name_color) Node { flex_grow: 1.0 }
             --
@@ -1191,11 +1318,9 @@ fn settings_page(view: &View) -> impl SceneList {
         ),
     );
     bsn_list! {
-        @heading({loc.t("settings.heading").to_owned()})
+        @section_bar({loc.t("settings.heading").to_owned()}, None)
         --
-        @panel(bsn_list! {
-            @text({loc.t("settings.player_name").to_owned()}, 16.0, INK)
-            --
+        @armored_panel({loc.t("settings.player_name").to_owned()}, bsn_list! {
             Node { column_gap: px(8) } Children [ @{field} ]
             --
             @bound_text(name_hint, 13.0, INK_MUTED)
@@ -1224,13 +1349,14 @@ fn settings_page(view: &View) -> impl SceneList {
 }
 
 fn setting(title: String, detail: String, control: impl Scene) -> impl Scene {
-    panel(bsn_list! {
-        @text(title, 16.0, INK)
-        --
-        @hint(detail)
-        --
-        @{control}
-    })
+    armored_panel(
+        title,
+        bsn_list! {
+            @hint(detail)
+            --
+            @{control}
+        },
+    )
 }
 
 fn toggle(loc: &Localization, on: Action, off: Action) -> impl Scene {
@@ -1245,7 +1371,7 @@ fn toggle(loc: &Localization, on: Action, off: Action) -> impl Scene {
 // Pieces
 // ---------------------------------------------------------------------------
 
-/// A button that opens a list of choices below it.
+/// A button that opens an armored dropdown tray below it.
 fn dropdown(
     label: String,
     which: Dropdown,
@@ -1272,12 +1398,12 @@ fn dropdown(
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(px(6)),
                 row_gap: px(4),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(4)),
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::all(px(1)),
             }
             GlobalZIndex(4)
-            BackgroundColor(PANEL)
-            BorderColor::all(FIELD_EDGE)
+            BackgroundColor(PANEL_HEADER)
+            BEVEL_RAISED
             Children [ {items} ]
         })]
     } else {
@@ -1295,7 +1421,7 @@ fn dropdown(
                     border: {UiRect { right: px(2), bottom: px(2), ..default() }},
                 }
                 UiTransform { rotation: Rot2::degrees(45.0) }
-                BorderColor::all(INK_MUTED)
+                BorderColor::all(SIGNAL)
             ]
             --
             {list}
@@ -1451,7 +1577,7 @@ fn crash_dialog(view: &View) -> impl Scene {
         bsn_list! {
             @hint({loc.t("dialog.crash_intro").to_owned()})
             --
-            @hint(summary)
+            @readout_box(summary)
             --
             @bound_text(dialog_error, 13.0, DANGER)
             --

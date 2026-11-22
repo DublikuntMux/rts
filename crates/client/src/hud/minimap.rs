@@ -24,7 +24,7 @@ use crate::{
     game::Match,
     input::Selection,
     map::{MapBounds, to_world},
-    menu::widgets::{EDGE, FIELD, INK, RAIL, SIGNAL},
+    menu::widgets::{FIELD, INK, RAIL, SIGNAL, bevel_recessed},
     pause_menu::PauseMenu,
 };
 
@@ -63,12 +63,12 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
                 width: px(168),
                 height: px(168.0 * aspect.y / aspect.x),
                 max_height: px(168),
-                border: UiRect::all(px(1)),
+                border: UiRect::all(px(2)),
                 overflow: Overflow::clip(),
                 ..default()
             },
             ImageNode::new(image),
-            BorderColor::all(EDGE),
+            bevel_recessed(),
             BackgroundColor(FIELD),
             observe(click_map),
             observe(drag_map),

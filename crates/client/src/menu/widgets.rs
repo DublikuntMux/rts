@@ -1,8 +1,10 @@
-//! Reusable interface pieces, authored as Bevy scenes.
+//! Reusable tactical RTS interface pieces, authored as Bevy scenes.
 //!
+//! Styled after classic armored RTS command decks (beveled steel plates, riveted header bars,
+//! recessed dark display wells, brushed brass primary controls, and physical press depression).
 //! Every widget is a function returning `impl Scene`, so pages compose them with `@widget(...)`
-//! and patch individual fields where needed. Colors follow from state in [`update_looks`]:
-//! scenes only choose a [`Tone`].
+//! and patch individual fields where needed. Colors and bevels follow from state in
+//! [`update_looks`]: scenes only choose a [`Tone`].
 
 use bevy::{
     ecs::template::TemplateContext,
@@ -15,10 +17,8 @@ use bevy::{
     scene::EntityScene,
     text::{EditableText, EditableTextFilter, FontSize, FontWeight, LineHeight, TextCursorStyle},
     ui::{InteractionDisabled, Pressed},
-    ui_widgets::{Button, ScrollArea},
+    ui_widgets::{Button, ScrollArea, TextInput},
 };
-
-use bevy::ui_widgets::TextInput;
 
 use super::Action;
 
@@ -30,36 +30,92 @@ pub const PREVIEW_MAX_HEIGHT: f32 = 300.0;
 /// Smallest touch target side, in logical pixels.
 pub const TOUCH_TARGET: f32 = 48.0;
 
-// Field-table palette: graphite, slate, chalk, and ocher. Terrain supplies the vivid color.
-pub const SCREEN: Color = Color::srgb_u8(28, 38, 41);
-pub const PANEL: Color = Color::srgb_u8(37, 50, 53);
-pub const RAIL: Color = Color::srgb_u8(23, 32, 35);
-pub const BAR: Color = Color::srgba(0.090, 0.125, 0.137, 0.97);
-pub const EDGE: Color = Color::srgb_u8(66, 83, 86);
-pub const FIELD: Color = Color::srgb_u8(24, 34, 37);
-pub const FIELD_EDGE: Color = Color::srgb_u8(104, 125, 128);
-pub const INK: Color = Color::srgb_u8(237, 239, 225);
-pub const INK_MUTED: Color = Color::srgb_u8(168, 185, 182);
-pub const INK_DISABLED: Color = Color::srgb_u8(112, 132, 132);
-/// Ocher: primary actions, invite codes, selections, and keyboard focus.
-pub const SIGNAL: Color = Color::srgb_u8(223, 184, 105);
-pub const DANGER: Color = Color::srgb_u8(244, 148, 133);
-pub const GOOD: Color = Color::srgb_u8(160, 206, 170);
-pub const SCRIM: Color = Color::srgba(0.035, 0.055, 0.063, 0.86);
+// Armored command-deck palette: gunmetal steel, brushed brass, phosphor status lamps, and chalk.
+pub const SCREEN: Color = Color::srgb_u8(13, 18, 21);
+pub const RAIL: Color = Color::srgb_u8(19, 26, 30);
+pub const PANEL: Color = Color::srgb_u8(26, 35, 40);
+pub const PANEL_HEADER: Color = Color::srgb_u8(17, 23, 27);
+pub const BAR: Color = Color::srgba(0.067, 0.094, 0.110, 0.98);
+pub const FIELD: Color = Color::srgb_u8(12, 17, 20);
+pub const EDGE: Color = Color::srgb_u8(54, 70, 77);
+pub const BEVEL_LIGHT: Color = Color::srgb_u8(94, 118, 127);
+pub const BEVEL_DARK: Color = Color::srgb_u8(8, 11, 13);
+pub const INK: Color = Color::srgb_u8(237, 240, 232);
+pub const INK_MUTED: Color = Color::srgb_u8(146, 166, 170);
+pub const INK_DISABLED: Color = Color::srgb_u8(86, 102, 107);
+/// Brushed tactical brass: primary actions, invite codes, active tabs, and keyboard focus.
+pub const SIGNAL: Color = Color::srgb_u8(224, 172, 68);
+pub const BRASS_LIGHT: Color = Color::srgb_u8(246, 208, 126);
+pub const BRASS_DARK: Color = Color::srgb_u8(132, 92, 26);
+pub const GOOD: Color = Color::srgb_u8(102, 204, 122);
+pub const WARNING: Color = Color::srgb_u8(232, 168, 56);
+pub const DANGER: Color = Color::srgb_u8(226, 92, 80);
+pub const DANGER_LIGHT: Color = Color::srgb_u8(245, 134, 124);
+pub const DANGER_DARK: Color = Color::srgb_u8(116, 36, 31);
+pub const SCRIM: Color = Color::srgba(0.024, 0.035, 0.043, 0.88);
+
+/// Asymmetric 3D metallic bevel with top-left catchlight and bottom-right shadow.
+pub const fn bevel(light: Color, dark: Color) -> BorderColor {
+    BorderColor {
+        top: light,
+        left: light,
+        right: dark,
+        bottom: dark,
+    }
+}
+
+/// Uniform four-sided border color usable in `const` contexts.
+pub const fn solid_border(color: Color) -> BorderColor {
+    bevel(color, color)
+}
+
+/// Raised gunmetal steel plate bevel.
+pub const fn bevel_raised() -> BorderColor {
+    bevel(BEVEL_LIGHT, BEVEL_DARK)
+}
+
+/// Recessed dark display-well bevel.
+pub const fn bevel_recessed() -> BorderColor {
+    bevel(BEVEL_DARK, BEVEL_LIGHT)
+}
+
+/// Precomputed bevel constants for direct use inside `bsn!` scenes.
+pub const BEVEL_RAISED: BorderColor = bevel_raised();
+pub const BEVEL_RECESSED: BorderColor = bevel_recessed();
+
+/// Raised brushed-brass CTA bevel.
+pub const fn bevel_brass() -> BorderColor {
+    bevel(BRASS_LIGHT, BRASS_DARK)
+}
+
+/// Depressed brushed-brass CTA bevel.
+pub const fn bevel_brass_pressed() -> BorderColor {
+    bevel(BRASS_DARK, BRASS_LIGHT)
+}
+
+/// Raised crimson destructive-button bevel.
+pub const fn bevel_danger() -> BorderColor {
+    bevel(DANGER_LIGHT, DANGER_DARK)
+}
+
+/// Depressed crimson destructive-button bevel.
+pub const fn bevel_danger_pressed() -> BorderColor {
+    bevel(DANGER_DARK, DANGER_LIGHT)
+}
 
 /// Visual weight of an interactive element.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tone {
-    /// Filled: the main action of its group.
+    /// Brushed brass plate: the main command of its group.
     Primary,
-    /// Outlined: everything else.
+    /// Beveled gunmetal steel push-button.
     #[default]
     Secondary,
-    /// Outlined in red: destructive actions.
+    /// Armored crimson plate: destructive or abort actions.
     Danger,
-    /// A sidebar destination.
+    /// Top command-deck navigation tab.
     Nav,
-    /// A selectable row in a list.
+    /// A selectable plate in a roster, list, or option bar.
     Item,
 }
 
@@ -124,7 +180,7 @@ fn game_font(size: f32) -> impl Fn(&mut TemplateContext) -> Result<TextFont> + C
         Ok(TextFont {
             font: context.resource::<AssetServer>().load(FONT).into(),
             font_size: FontSize::Px(size),
-            weight: if size >= 22.0 {
+            weight: if size >= 18.0 {
                 FontWeight::SEMIBOLD
             } else {
                 FontWeight::NORMAL
@@ -144,6 +200,20 @@ pub struct FitPreview(pub f32);
 #[derive(Component, Clone, Default)]
 pub struct Spinner;
 
+/// A small armored rivet dot for panel headers and console frames.
+pub fn rivet() -> impl Scene {
+    bsn! {
+        Node {
+            width: px(5),
+            height: px(5),
+            flex_shrink: 0.0,
+            border: UiRect::all(px(1)),
+        }
+        BackgroundColor(PANEL)
+        BEVEL_RAISED
+    }
+}
+
 /// A run of text in the game font.
 pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Scene {
     let content = Text::new(content);
@@ -158,7 +228,7 @@ pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Scene {
 /// A page or dialog heading.
 pub fn heading(content: impl Into<String>) -> impl Scene {
     let content = content.into();
-    bsn! { @text(content, 30.0, INK) }
+    bsn! { @text(content, 28.0, INK) }
 }
 
 /// Small explanatory text.
@@ -167,7 +237,43 @@ pub fn hint(content: impl Into<String>) -> impl Scene {
     bsn! { @text(content, 13.0, INK_MUTED) }
 }
 
-/// A touch-sized button that sends `action` when activated. Not in the tab order.
+/// Tactical page header bar with a brass vertical marker and steel underline.
+pub fn section_bar(title: impl Into<String>, subtitle: Option<String>) -> impl Scene {
+    let title = title.into();
+    let sub: Vec<Box<dyn SceneList>> =
+        subtitle.map_or_default(|s| vec![Box::new(EntityScene(hint(s))) as Box<dyn SceneList>]);
+    bsn! {
+        Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Stretch,
+            column_gap: px(12),
+            padding: UiRect::bottom(px(10)),
+            border: UiRect::bottom(px(2)),
+        }
+        BorderColor { bottom: EDGE, ..BorderColor::all(Color::NONE) }
+        Children [
+            Node {
+                width: px(4),
+                flex_shrink: 0.0,
+            }
+            BackgroundColor(SIGNAL)
+            --
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: px(3),
+                flex_grow: 1.0,
+                min_width: px(0),
+            }
+            Children [
+                @heading(title)
+                --
+                {sub}
+            ]
+        ]
+    }
+}
+
+/// A touch-sized beveled button that sends `action` when activated. Not in the tab order.
 pub fn plain_button(label: impl Into<String>, action: Action, tone: Tone) -> impl Scene {
     let label = label.into();
     let name = Name::new(label.clone());
@@ -181,8 +287,8 @@ pub fn plain_button(label: impl Into<String>, action: Action, tone: Tone) -> imp
             min_height: px(TOUCH_TARGET),
             min_width: px(TOUCH_TARGET),
             padding: UiRect::axes(px(16), px(8)),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(2)),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
             column_gap: px(8),
@@ -215,7 +321,7 @@ pub fn wide_button(label: impl Into<String>, action: Action, tone: Tone) -> impl
     }
 }
 
-/// A selectable list row with a title and a detail line.
+/// A selectable armored list plate with a title and a detail line.
 pub fn list_item(
     title: impl Into<String>,
     detail: impl Into<String>,
@@ -235,8 +341,8 @@ pub fn list_item(
             flex_direction: FlexDirection::Column,
             min_height: px(TOUCH_TARGET + 8.0),
             padding: UiRect::axes(px(14), px(8)),
-            border: UiRect { left: px(3), ..UiRect::all(px(1)) },
-            border_radius: BorderRadius::all(px(2)),
+            border: UiRect { left: px(3), top: px(2), right: px(2), bottom: px(2) },
+            border_radius: BorderRadius::all(px(1)),
             justify_content: JustifyContent::Center,
             row_gap: px(2),
         }
@@ -274,23 +380,95 @@ pub fn column(gap: f32, contents: impl SceneList) -> impl Scene {
     }
 }
 
-/// A bordered box.
+/// A beveled gunmetal armor plate.
 pub fn panel(contents: impl SceneList) -> impl Scene {
     bsn! {
         Node {
             flex_direction: FlexDirection::Column,
-            padding: UiRect::all(px(20)),
+            padding: UiRect::all(px(18)),
             row_gap: px(14),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(8)),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
         }
         BackgroundColor(PANEL)
-        BorderColor::all(EDGE)
+        BEVEL_RAISED
         Children [ {contents} ]
     }
 }
 
-/// A list beside its detail panel. The detail wraps below the list on narrow screens.
+/// A beveled armor plate with a riveted dark header bar and brass accent trim.
+pub fn armored_panel(title: impl Into<String>, contents: impl SceneList) -> impl Scene {
+    let title = title.into();
+    bsn! {
+        Node {
+            flex_direction: FlexDirection::Column,
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
+        }
+        BackgroundColor(PANEL)
+        BEVEL_RAISED
+        Children [
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(10),
+                padding: UiRect::axes(px(14), px(9)),
+                border: UiRect::bottom(px(2)),
+            }
+            BackgroundColor(PANEL_HEADER)
+            BorderColor { bottom: BRASS_DARK, ..BorderColor::all(Color::NONE) }
+            Children [
+                Node { width: px(4), height: px(14), flex_shrink: 0.0 }
+                BackgroundColor(SIGNAL)
+                --
+                @text(title, 16.0, INK)
+                Node { flex_grow: 1.0, min_width: px(0) }
+                --
+                @rivet()
+            ]
+            --
+            Node {
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(px(16)),
+                row_gap: px(12),
+            }
+            Children [ {contents} ]
+        ]
+    }
+}
+
+/// A recessed dark steel display well for lists or telemetry.
+pub fn well(contents: impl SceneList) -> impl Scene {
+    bsn! {
+        Node {
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(px(8)),
+            row_gap: px(6),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
+        }
+        BackgroundColor(FIELD)
+        BEVEL_RECESSED
+        Children [ {contents} ]
+    }
+}
+
+/// A recessed LCD readout strip for invite codes, QUIC URLs, or telemetry strings.
+pub fn readout_box(value: impl Into<String>) -> impl Scene {
+    let value = value.into();
+    bsn! {
+        Node {
+            padding: UiRect::axes(px(12), px(9)),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
+        }
+        BackgroundColor(FIELD)
+        BEVEL_RECESSED
+        Children [ @text(value, 13.0, SIGNAL) ]
+    }
+}
+
+/// A list beside its armored detail panel. The detail wraps below the list on narrow screens.
 pub fn split(list: impl SceneList, detail: impl SceneList) -> impl Scene {
     bsn! {
         Node {
@@ -303,30 +481,35 @@ pub fn split(list: impl SceneList, detail: impl SceneList) -> impl Scene {
             Node {
                 flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
-                flex_basis: px(280),
+                flex_basis: px(300),
                 min_width: px(0),
-                row_gap: px(8),
+                padding: UiRect::all(px(8)),
+                row_gap: px(6),
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::all(px(1)),
             }
+            BackgroundColor(FIELD)
+            BEVEL_RECESSED
             Children [ {list} ]
             --
             Node {
                 flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
-                flex_basis: px(280),
+                flex_basis: px(300),
                 min_width: px(0),
-                padding: UiRect::all(px(14)),
-                row_gap: px(10),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
+                padding: UiRect::all(px(16)),
+                row_gap: px(12),
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::all(px(1)),
             }
             BackgroundColor(PANEL)
-            BorderColor::all(EDGE)
+            BEVEL_RAISED
             Children [ {detail} ]
         ]
     }
 }
 
-/// A map image with plotting-table corner marks that keeps its proportions.
+/// A recon map preview framed inside a recessed dark well with brass targeting brackets.
 pub fn map_image(image: Handle<Image>, aspect: f32) -> impl Scene {
     bsn! {
         ImageNode { image: {image} }
@@ -334,9 +517,9 @@ pub fn map_image(image: Handle<Image>, aspect: f32) -> impl Scene {
         Node {
             align_self: AlignSelf::Center,
             margin: UiRect::vertical(px(4)),
-            border: UiRect::all(px(1)),
+            border: UiRect::all(px(2)),
         }
-        BorderColor::all(EDGE)
+        BEVEL_RECESSED
         Children [
             @preview_corner(true, true)
             --
@@ -353,12 +536,12 @@ fn preview_corner(left: bool, top: bool) -> impl Scene {
     bsn! {
         Node {
             position_type: PositionType::Absolute,
-            width: px(12),
-            height: px(12),
-            left: {if left { px(-4) } else { auto() }},
-            right: {if left { auto() } else { px(-4) }},
-            top: {if top { px(-4) } else { auto() }},
-            bottom: {if top { auto() } else { px(-4) }},
+            width: px(14),
+            height: px(14),
+            left: {if left { px(-5) } else { auto() }},
+            right: {if left { auto() } else { px(-5) }},
+            top: {if top { px(-5) } else { auto() }},
+            bottom: {if top { auto() } else { px(-5) }},
             border: UiRect {
                 left: {if left { px(2) } else { px(0) }},
                 right: {if left { px(0) } else { px(2) }},
@@ -370,42 +553,47 @@ fn preview_corner(left: bool, top: bool) -> impl Scene {
     }
 }
 
-/// A placeholder in place of a preview.
+/// A recessed tactical placeholder in place of a preview or empty list.
 pub fn empty_preview(message: impl Into<String>) -> impl Scene {
     let message = message.into();
     bsn! {
         Node {
             width: percent(100),
-            min_height: px(120),
+            min_height: px(112),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            padding: UiRect::all(px(12)),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(2)),
+            padding: UiRect::all(px(14)),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
         }
-        BorderColor::all(EDGE)
+        BackgroundColor(FIELD)
+        BEVEL_RECESSED
         Children [ @hint(message) ]
     }
 }
 
-/// A state label with a square lamp; the word carries the meaning without color.
+/// An armored status readout lamp; the word carries the meaning without color alone.
 pub fn badge(label: impl Into<String>, color: Color) -> impl Scene {
     let label = label.into();
     bsn! {
         Node {
-            padding: UiRect::axes(px(8), px(4)),
+            padding: UiRect::axes(px(10), px(5)),
             column_gap: px(8),
             align_items: AlignItems::Center,
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(1)),
         }
+        BackgroundColor(FIELD)
+        BEVEL_RECESSED
         Children [
-            Node { width: px(7), height: px(7), flex_shrink: 0.0 } BackgroundColor(color)
+            Node { width: px(8), height: px(8), flex_shrink: 0.0 } BackgroundColor(color)
             --
             @text(label, 13.0, INK) TextLayout { linebreak: LineBreak::NoWrap }
         ]
     }
 }
 
-/// A labeled single-line text input. Touch taps focus it and open the platform keyboard.
+/// A labeled recessed single-line text input. Touch taps focus it and open the platform keyboard.
 pub fn text_field(field: Field, value: &str, max_characters: usize) -> impl Scene {
     let editable = EditableText {
         max_characters: Some(max_characters),
@@ -423,22 +611,21 @@ pub fn text_field(field: Field, value: &str, max_characters: usize) -> impl Scen
         TextColor(INK)
         TextCursorStyle {
             color: SIGNAL,
-            selection_color: Color::srgb_u8(75, 96, 95),
+            selection_color: Color::srgb_u8(62, 86, 94),
             unfocused_selection_color: EDGE,
             selected_text_color: {Some(INK)},
-            selection_radius: 2.0,
+            selection_radius: 1.0,
         }
         Node {
             flex_grow: 1.0,
             min_width: px(0),
             height: px(TOUCH_TARGET),
-            // Centers one 16 px line (1.2 line height) inside the border.
-            padding: UiRect::axes(px(12), px(13)),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(2)),
+            padding: UiRect::axes(px(12), px(12)),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(1)),
         }
         BackgroundColor(FIELD)
-        BorderColor::all(FIELD_EDGE)
+        BEVEL_RECESSED
         Outline { width: px(2), offset: px(2), color: Color::NONE }
         on(super::on_field_edit)
         on(super::submit_on_enter)
@@ -466,7 +653,7 @@ pub fn spinner() -> impl Scene {
     }
 }
 
-/// A modal dialog over a dimmed screen.
+/// A riveted tactical modal dialog over a dimmed screen.
 pub fn dialog(title: impl Into<String>, contents: impl SceneList) -> impl Scene {
     dialog_with_title(text(title, 18.0, INK), contents)
 }
@@ -491,38 +678,59 @@ pub fn dialog_with_title(title: impl Scene, contents: impl SceneList) -> impl Sc
             Node {
                 flex_direction: FlexDirection::Column,
                 width: percent(100),
-                max_width: px(460),
+                max_width: px(480),
                 max_height: percent(100),
                 overflow: Overflow::scroll_y(),
-                padding: UiRect::all(px(20)),
-                row_gap: px(14),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::all(px(1)),
             }
             ScrollArea
             on(super::scroll_on_touch_drag)
             on(super::scroll_focus_into_view)
             BackgroundColor(PANEL)
-            BorderColor::all(FIELD_EDGE)
+            BEVEL_RAISED
             Children [
-                {title}
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(10),
+                    padding: UiRect::axes(px(18), px(12)),
+                    border: UiRect::bottom(px(2)),
+                    flex_shrink: 0.0,
+                }
+                BackgroundColor(PANEL_HEADER)
+                BorderColor { bottom: SIGNAL, ..BorderColor::all(Color::NONE) }
+                Children [
+                    Node { width: px(4), height: px(18), flex_shrink: 0.0 }
+                    BackgroundColor(SIGNAL)
+                    --
+                    Node { flex_grow: 1.0, min_width: px(0) }
+                    Children [ {title} ]
+                    --
+                    @rivet()
+                ]
                 --
-                {contents}
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(px(18)),
+                    row_gap: px(14),
+                }
+                Children [ {contents} ]
             ]
         ]
     }
 }
 
-/// Fill, border, and text colors for one control state.
+/// Fill, 3D beveled border, and text colors for one control state.
 pub struct Look {
     pub fill: Color,
-    pub edge: Color,
+    pub border: BorderColor,
     pub ink: Color,
 }
 
 impl Look {
-    const fn new(fill: Color, edge: Color, ink: Color) -> Self {
-        Self { fill, edge, ink }
+    const fn new(fill: Color, border: BorderColor, ink: Color) -> Self {
+        Self { fill, border, ink }
     }
 }
 
@@ -537,34 +745,83 @@ pub const fn button_look(
     pressed: bool,
     disabled: bool,
 ) -> Look {
-    const RAISED: Color = Color::srgb_u8(48, 66, 69);
-    const FILLED: Color = Color::srgb_u8(61, 81, 82);
+    const STEEL_IDLE: Color = Color::srgb_u8(34, 46, 52);
+    const STEEL_HOVER: Color = Color::srgb_u8(46, 62, 70);
+    const STEEL_PRESSED: Color = Color::srgb_u8(20, 28, 32);
+    const STEEL_SELECTED: Color = Color::srgb_u8(40, 54, 62);
+    const BRASS_HOVER: Color = Color::srgb_u8(242, 194, 96);
+    const BRASS_PRESSED: Color = Color::srgb_u8(180, 134, 44);
+    const CRIMSON_IDLE: Color = Color::srgb_u8(76, 30, 28);
+    const CRIMSON_HOVER: Color = Color::srgb_u8(108, 40, 36);
+    const CRIMSON_PRESSED: Color = Color::srgb_u8(54, 21, 19);
+    const NAV_IDLE: Color = Color::srgb_u8(22, 30, 35);
+    const NAV_HOVER: Color = Color::srgb_u8(34, 46, 53);
+
     if disabled {
-        return Look::new(PANEL, EDGE, INK_DISABLED);
+        return Look::new(PANEL, solid_border(EDGE), INK_DISABLED);
     }
     match (tone, selected, pressed, hovered) {
-        (Tone::Primary, _, true, _) => Look::new(Color::srgb_u8(191, 150, 77), SIGNAL, RAIL),
-        (Tone::Primary, _, false, true) => Look::new(Color::srgb_u8(241, 206, 143), SIGNAL, RAIL),
-        (Tone::Primary, _, false, false) => Look::new(SIGNAL, SIGNAL, RAIL),
-        (Tone::Danger, _, true, _) => Look::new(Color::srgb_u8(94, 52, 47), DANGER, INK),
-        (Tone::Danger, _, false, true) => Look::new(Color::srgb_u8(66, 43, 40), DANGER, INK),
-        (Tone::Danger, _, false, false) => Look::new(Color::NONE, DANGER, DANGER),
-        (Tone::Nav | Tone::Item, true, _, _) => Look::new(FILLED, SIGNAL, INK),
-        (_, _, true, _) => Look::new(FILLED, INK_MUTED, INK),
-        (_, _, false, true) => Look::new(RAISED, FIELD_EDGE, INK),
-        (Tone::Item, false, false, false) => Look::new(FIELD, EDGE, INK),
-        (Tone::Nav, false, false, false) => Look::new(Color::NONE, Color::NONE, INK_MUTED),
-        (_, _, false, false) => Look::new(Color::NONE, FIELD_EDGE, INK),
+        (Tone::Primary, _, true, _) => Look::new(BRASS_PRESSED, bevel_brass_pressed(), RAIL),
+        (Tone::Primary, _, false, true) => Look::new(BRASS_HOVER, bevel_brass(), RAIL),
+        (Tone::Primary, _, false, false) => Look::new(SIGNAL, bevel_brass(), RAIL),
+
+        (Tone::Danger, _, true, _) => Look::new(CRIMSON_PRESSED, bevel_danger_pressed(), INK),
+        (Tone::Danger, _, false, true) => Look::new(CRIMSON_HOVER, bevel_danger(), INK),
+        (Tone::Danger, _, false, false) => Look::new(CRIMSON_IDLE, bevel_danger(), INK),
+
+        (Tone::Nav, true, _, _) => Look::new(
+            STEEL_SELECTED,
+            BorderColor {
+                top: BEVEL_LIGHT,
+                left: BEVEL_LIGHT,
+                right: BEVEL_DARK,
+                bottom: SIGNAL,
+            },
+            BRASS_LIGHT,
+        ),
+        (Tone::Item, true, _, _) => Look::new(
+            STEEL_SELECTED,
+            BorderColor {
+                left: SIGNAL,
+                top: BEVEL_DARK,
+                right: BEVEL_LIGHT,
+                bottom: BEVEL_LIGHT,
+            },
+            INK,
+        ),
+        (Tone::Nav | Tone::Item, false, true, _) | (Tone::Secondary, _, true, _) => {
+            Look::new(STEEL_PRESSED, bevel_recessed(), INK)
+        }
+        (Tone::Nav, false, false, true) => Look::new(NAV_HOVER, bevel_raised(), INK),
+        (Tone::Nav, false, false, false) => Look::new(
+            NAV_IDLE,
+            BorderColor {
+                top: EDGE,
+                left: EDGE,
+                right: BEVEL_DARK,
+                bottom: BEVEL_DARK,
+            },
+            INK_MUTED,
+        ),
+        (Tone::Item, false, false, true) | (Tone::Secondary, _, false, true) => {
+            Look::new(STEEL_HOVER, bevel_raised(), INK)
+        }
+        (Tone::Item, false, false, false) => Look::new(
+            Color::srgb_u8(20, 28, 33),
+            bevel(Color::srgb_u8(56, 72, 80), BEVEL_DARK),
+            INK,
+        ),
+        (Tone::Secondary, _, false, false) => Look::new(STEEL_IDLE, bevel_raised(), INK),
     }
 }
 
 const fn field_look(focused: bool, disabled: bool) -> Look {
     if disabled {
-        Look::new(FIELD, EDGE, INK_DISABLED)
+        Look::new(FIELD, solid_border(EDGE), INK_DISABLED)
     } else if focused {
-        Look::new(FIELD, SIGNAL, INK)
+        Look::new(FIELD, solid_border(SIGNAL), INK)
     } else {
-        Look::new(FIELD, FIELD_EDGE, INK)
+        Look::new(FIELD, bevel_recessed(), INK)
     }
 }
 
@@ -624,15 +881,7 @@ pub fn update_looks(
         let selected = action.is_some_and(|action| action.selected(&view));
         let look = button_look(tone, selected, hovered.get(), pressed, disabled);
         fill.set_if_neq(BackgroundColor(look.fill));
-        let border = if selected && matches!(tone, Tone::Nav | Tone::Item) {
-            BorderColor {
-                left: SIGNAL,
-                ..BorderColor::all(EDGE)
-            }
-        } else {
-            BorderColor::all(look.edge)
-        };
-        edge.set_if_neq(border);
+        edge.set_if_neq(look.border);
         if outline.color != ring(entity) {
             outline.color = ring(entity);
         }
@@ -645,7 +894,7 @@ pub fn update_looks(
     for (entity, disabled, mut fill, mut edge, mut ink, mut outline) in &mut fields {
         let look = field_look(focused == Some(entity), disabled);
         fill.set_if_neq(BackgroundColor(look.fill));
-        edge.set_if_neq(BorderColor::all(look.edge));
+        edge.set_if_neq(look.border);
         ink.set_if_neq(TextColor(look.ink));
         if outline.color != Color::NONE {
             outline.color = Color::NONE;
@@ -726,7 +975,10 @@ pub fn update_availability(
 
 #[cfg(test)]
 mod tests {
-    use super::Field;
+    use super::{
+        BEVEL_DARK, BEVEL_LIGHT, Field, SIGNAL, Tone, bevel_brass, bevel_brass_pressed,
+        bevel_raised, bevel_recessed, button_look,
+    };
 
     #[test]
     fn fields_accept_their_typed_characters() {
@@ -750,5 +1002,31 @@ mod tests {
         assert!(Field::HostAssets.accepts('/'));
         assert!(Field::HostAssets.accepts(' '));
         assert!(!Field::HostAssets.accepts('\n'));
+    }
+
+    #[test]
+    fn buttons_invert_metallic_bevels_when_pressed_and_highlight_active_tabs() {
+        assert_eq!(
+            button_look(Tone::Secondary, false, false, false, false).border,
+            bevel_raised()
+        );
+        assert_eq!(
+            button_look(Tone::Secondary, false, false, true, false).border,
+            bevel_recessed()
+        );
+        assert_eq!(
+            button_look(Tone::Primary, false, false, false, false).border,
+            bevel_brass()
+        );
+        assert_eq!(
+            button_look(Tone::Primary, false, false, true, false).border,
+            bevel_brass_pressed()
+        );
+        let nav = button_look(Tone::Nav, true, false, false, false);
+        assert_eq!(nav.border.bottom, SIGNAL);
+        assert_eq!(nav.border.top, BEVEL_LIGHT);
+        assert_eq!(nav.border.right, BEVEL_DARK);
+        let item = button_look(Tone::Item, true, false, false, false);
+        assert_eq!(item.border.left, SIGNAL);
     }
 }

@@ -22,7 +22,10 @@ use crate::{
     map::{to_world, to_world_distance},
     menu::{
         Menu,
-        widgets::{BAR, EDGE, INK, INK_MUTED, SIGNAL, Tone, button_look},
+        widgets::{
+            BAR, FIELD, INK, INK_MUTED, PANEL, SIGNAL, Tone, bevel_raised, bevel_recessed,
+            button_look,
+        },
     },
     pause_menu::{PauseMenu, world_input_blocked},
     server_assets::{ServerAssets, load_image},
@@ -174,16 +177,16 @@ fn spawn_balances(
             ResourceBar,
             DespawnOnExit(AppState::InGame),
             Pickable::IGNORE,
-            BackgroundColor(BAR),
-            BorderColor::all(EDGE),
+            BackgroundColor(PANEL),
+            bevel_raised(),
             GlobalZIndex(2),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(68),
                 top: px(12),
-                padding: UiRect::axes(px(8), px(4)),
-                column_gap: px(12),
-                border: UiRect::all(px(1)),
+                padding: UiRect::axes(px(6), px(4)),
+                column_gap: px(8),
+                border: UiRect::all(px(2)),
                 ..default()
             },
         ))
@@ -191,10 +194,14 @@ fn spawn_balances(
             for kind in [ResourceKind::Wood, ResourceKind::Gold] {
                 bar.spawn((
                     Node {
-                        column_gap: px(3),
+                        column_gap: px(5),
+                        padding: UiRect::axes(px(7), px(2)),
+                        border: UiRect::all(px(1)),
                         align_items: AlignItems::Center,
                         ..default()
                     },
+                    BackgroundColor(FIELD),
+                    bevel_recessed(),
                     Pickable::IGNORE,
                 ))
                 .with_children(|item| {
@@ -309,9 +316,9 @@ fn spawn_economy_button(
         Hovered::default(),
         Node {
             display: Display::None,
-            width: px(if desktop { 46.0 } else { ACTION_WIDTH }),
-            height: px(if desktop { 46.0 } else { ACTION_HEIGHT }),
-            border: UiRect::all(px(1)),
+            width: px(if desktop { 44.0 } else { ACTION_WIDTH }),
+            height: px(if desktop { 44.0 } else { ACTION_HEIGHT }),
+            border: UiRect::all(px(2)),
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -319,7 +326,7 @@ fn spawn_economy_button(
             ..default()
         },
         BackgroundColor(BAR),
-        BorderColor::all(EDGE),
+        bevel_raised(),
         observe(activate_economy),
     ))
     .with_children(|button| {
@@ -517,7 +524,11 @@ fn update_skirmish(
         }
         let look = button_look(Tone::Item, selected, hovered.get(), pressed, disabled);
         fill.set_if_neq(BackgroundColor(look.fill));
-        border.set_if_neq(BorderColor::all(if selected { SIGNAL } else { look.edge }));
+        border.set_if_neq(if selected {
+            BorderColor::all(SIGNAL)
+        } else {
+            look.border
+        });
         for child in children {
             if let Ok((mut text, cost)) = inks.get_mut(*child) {
                 text.0 = if cost && !disabled {
