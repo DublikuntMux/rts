@@ -15,6 +15,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+clap.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 rts_base.workspace = true
 rts_net = { workspace = true, features = ["quic"] }
