@@ -5,8 +5,6 @@ use crate::{
     NetError, PROTOCOL_VERSION, check_size, minify::minify_ron, validate_map_name, validate_players,
 };
 
-pub mod wire;
-
 /// Maximum bytes in each original rules/map document.
 pub const MAX_SETUP_BYTES: usize = 4 * 1024 * 1024;
 

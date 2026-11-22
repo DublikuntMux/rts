@@ -14,7 +14,7 @@ use crate::layout::{RANDOM_MAP_NAME, random_setup};
 pub type ClientId = u64;
 
 /// Maximum buffered input lead relative to the authoritative simulation tick.
-pub const MAX_FUTURE_TICKS: u32 = 8;
+pub const MAX_FUTURE_TICKS: u32 = 16;
 
 /// Resource limits, socket timeouts and server-owned match content.
 #[derive(Clone, Debug)]

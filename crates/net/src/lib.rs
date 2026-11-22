@@ -1,8 +1,10 @@
-//! Transport-independent authoritative turn protocol, match setup and verified replay files.
+//! Transport-independent authoritative turn protocol, compact binary framing, match setup, and
+//! verified replay files.
 
 mod minify;
 mod replay;
 mod setup;
+mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,7 +18,7 @@ pub use replay::{
 pub use rts_base::INPUT_DELAY_TICKS;
 pub use setup::{LobbySetup, MAX_SETUP_BYTES, MatchSetup};
 
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 pub const MAX_NAME_CHARS: usize = 24;
 pub const MAX_MAP_NAME_CHARS: usize = 64;
 pub const MAX_LISTED_ROOMS: usize = 64;
@@ -25,8 +27,8 @@ pub const MAX_MESSAGE_BYTES: usize = 65_536;
 /// One player's view frame. A frame lists every tile explored on that tick and every unit in
 /// sight that changed, so it is larger than a client message.
 pub const MAX_VIEW_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-/// Bounds the binary setup header and both compressed RON documents.
-pub const MAX_SERVER_MESSAGE_BYTES: usize = setup::wire::MAX_FRAME_BYTES;
+/// Bounds any server wire frame, including compressed lobby setup.
+pub const MAX_SERVER_MESSAGE_BYTES: usize = wire::MAX_SERVER_FRAME_BYTES;
 /// Maximum commands in each player's batch for a turn.
 pub const MAX_COMMANDS_PER_TURN: usize = 64;
 pub const MAX_UNITS_PER_COMMAND: usize = 1024;
@@ -169,7 +171,7 @@ pub struct LobbySlot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ServerMessage {
-    /// Public rules and map name for a room. Sent as a compressed binary frame.
+    /// Public rules and map name for a room.
     #[serde(skip)]
     Setup(LobbySetup),
     Rooms {
@@ -198,13 +200,6 @@ pub enum ServerMessage {
     Error {
         message: String,
     },
-}
-
-/// An encoded WebSocket application message, without a socket-library dependency.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServerFrame {
-    Text(String),
-    Binary(Vec<u8>),
 }
 
 /// Validates a player's batch, bounding selections and repeated orders per unit.
@@ -328,14 +323,6 @@ impl ClientMessage {
 }
 
 impl ServerMessage {
-    const fn wire_limit(&self) -> usize {
-        match self {
-            Self::Setup(_) => MAX_SERVER_MESSAGE_BYTES,
-            Self::View { .. } => MAX_VIEW_MESSAGE_BYTES,
-            _ => MAX_MESSAGE_BYTES,
-        }
-    }
-
     fn validate(&self) -> Result<(), NetError> {
         match self {
             Self::Setup(setup) => setup.rules().map(|_| ()),
@@ -442,52 +429,42 @@ impl std::fmt::Write for BoundedText {
     }
 }
 
-/// # Errors
-/// Returns an error for malformed, incompatible, or oversized messages.
-pub fn decode_client(text: &str) -> Result<ClientMessage, NetError> {
-    let message: ClientMessage = decode(text, MAX_MESSAGE_BYTES)?;
-    message.validate()?;
-    Ok(message)
-}
-
-/// Decodes a server text frame. Setup is accepted only by [`decode_server_binary`].
+/// Decodes a compact binary client wire message and validates it.
 ///
 /// # Errors
 /// Returns an error for malformed, incompatible, or oversized messages.
-pub fn decode_server(text: &str) -> Result<ServerMessage, NetError> {
-    let message: ServerMessage = decode(text, MAX_VIEW_MESSAGE_BYTES)?;
-    check_size(text.len(), message.wire_limit())?;
+pub fn decode_client(bytes: &[u8]) -> Result<ClientMessage, NetError> {
+    let message = wire::decode_client(bytes)?;
     message.validate()?;
     Ok(message)
 }
 
-/// Decodes a binary setup frame and validates its decompressed configuration.
+/// Decodes a compact binary server wire message and validates it.
 ///
 /// # Errors
-/// Returns an error for an incompatible header, invalid lengths, corrupt streams or setup.
-pub fn decode_server_binary(bytes: &[u8]) -> Result<ServerMessage, NetError> {
-    let message = ServerMessage::Setup(setup::wire::decode(bytes)?);
+/// Returns an error for malformed, incompatible, or oversized messages.
+pub fn decode_server(bytes: &[u8]) -> Result<ServerMessage, NetError> {
+    let message = wire::decode_server(bytes)?;
     message.validate()?;
     Ok(message)
 }
 
-/// # Errors
-/// Returns an error for invalid or oversized messages or failed RON serialization.
-pub fn encode_client(message: &ClientMessage) -> Result<String, NetError> {
-    message.validate()?;
-    encode(message, MAX_MESSAGE_BYTES)
-}
-
-/// Encodes setup as raw binary and other messages as RON text.
+/// Encodes a validated client message into compact binary wire bytes.
 ///
 /// # Errors
-/// Returns an error for invalid setup/messages, excessive sizes or failed serialization.
-pub fn encode_server(message: &ServerMessage) -> Result<ServerFrame, NetError> {
+/// Returns an error for invalid or oversized messages.
+pub fn encode_client(message: &ClientMessage) -> Result<Vec<u8>, NetError> {
     message.validate()?;
-    match message {
-        ServerMessage::Setup(setup) => setup::wire::encode(setup).map(ServerFrame::Binary),
-        _ => encode(message, message.wire_limit()).map(ServerFrame::Text),
-    }
+    wire::encode_client(message)
+}
+
+/// Encodes a validated server message into compact binary wire bytes.
+///
+/// # Errors
+/// Returns an error for invalid setup/messages or excessive sizes.
+pub fn encode_server(message: &ServerMessage) -> Result<Vec<u8>, NetError> {
+    message.validate()?;
+    wire::encode_server(message)
 }
 
 #[cfg(test)]

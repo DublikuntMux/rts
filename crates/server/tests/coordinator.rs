@@ -476,7 +476,7 @@ fn inputs_authenticate_slots_allow_gaps_and_reject_past_duplicate_out_of_order_a
             &mut server,
             1,
             ClientMessage::Input {
-                tick: 16,
+                tick: 8 + MAX_FUTURE_TICKS,
                 commands: vec![]
             }
         )
@@ -567,9 +567,7 @@ fn full_room_inputs_strip_nonexistent_and_forged_unit_selections() {
     let messages = server.advance(Duration::from_millis(50));
     assert_eq!(messages.len(), 8);
     for delivery in &messages {
-        let rts_net::ServerFrame::Text(encoded) = encode_server(&delivery.message).unwrap() else {
-            panic!("views must use text frames")
-        };
+        let encoded = encode_server(&delivery.message).unwrap();
         assert_eq!(rts_net::decode_server(&encoded).unwrap(), delivery.message);
     }
     let mut reference = content.simulation().unwrap();

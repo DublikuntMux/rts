@@ -7,8 +7,8 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use rts_net::{
-    ClientMessage, MAX_MESSAGE_BYTES, MAX_SERVER_MESSAGE_BYTES, NetError, ServerFrame,
-    ServerMessage, decode_client, encode_server,
+    ClientMessage, MAX_MESSAGE_BYTES, MAX_SERVER_MESSAGE_BYTES, NetError, ServerMessage,
+    decode_client, encode_server,
 };
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -153,10 +153,7 @@ fn dispatch(
 }
 
 fn encode_message(message: &ServerMessage) -> Result<Message, NetError> {
-    encode_server(message).map(|frame| match frame {
-        ServerFrame::Text(text) => Message::Text(text.into()),
-        ServerFrame::Binary(bytes) => Message::Binary(bytes.into()),
-    })
+    encode_server(message).map(|bytes| Message::Binary(bytes.into()))
 }
 
 async fn connection(
@@ -195,7 +192,7 @@ async fn connection(
             }
             incoming = socket.next() => {
                 let event = match incoming {
-                    Some(Ok(Message::Text(text))) => match decode_client(&text) {
+                    Some(Ok(Message::Binary(bytes))) => match decode_client(&bytes) {
                         Ok(message) => Event::Message(id, message),
                         Err(NetError::Invalid(message)) if message == "protocol version does not match" =>
                             Event::Invalid(id, "protocol version does not match"),
@@ -207,7 +204,7 @@ async fn connection(
                         if !matches!(timeout(config.peer_timeout, socket.flush()).await, Ok(Ok(()))) { return; }
                         Event::Activity(id)
                     }
-                    Some(Ok(Message::Binary(_))) => Event::Invalid(id, "invalid or oversized protocol message"),
+                    Some(Ok(Message::Text(_))) => Event::Invalid(id, "invalid or oversized protocol message"),
                     Some(Ok(Message::Frame(_))) => continue,
                     Some(Ok(Message::Close(_)) | Err(_)) | None => return,
                 };
@@ -314,11 +311,11 @@ mod tests {
         assert!(coordinator.is_connected(2));
         assert!(host_rx.is_closed());
         assert!(!outbound.contains_key(&1));
-        let Message::Text(text) = guest_rx.try_recv().unwrap() else {
+        let Message::Binary(bytes) = guest_rx.try_recv().unwrap() else {
             panic!("expected room end")
         };
         assert!(matches!(
-            rts_net::decode_server(&text).unwrap(),
+            rts_net::decode_server(&bytes).unwrap(),
             ServerMessage::Ended { .. }
         ));
     }

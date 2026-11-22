@@ -20,7 +20,7 @@ use rts_base::{Command, MatchOutcome, PlayerId, PlayerView, Sim, ViewFrame, View
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, LobbySetup, LobbySlot, MAX_SERVER_MESSAGE_BYTES, MatchSetup,
     PROTOCOL_VERSION, PlayerInput, Recording, Replay, RoomInfo, ServerMessage, Turn, ViewReplay,
-    decode_server, decode_server_binary, encode_client,
+    decode_server, encode_client,
 };
 
 use crate::{
@@ -456,9 +456,9 @@ impl Connection {
     }
 
     fn send(&mut self, message: &ClientMessage) -> Result<(), String> {
-        let text = encode_client(message)
+        let bytes = encode_client(message)
             .map_err(|error| format!("Cannot send to the server: {error}"))?;
-        self.sender.send(WsMessage::Text(text));
+        self.sender.send(WsMessage::Binary(bytes));
         Ok(())
     }
 }
@@ -847,10 +847,11 @@ fn stop_match(session: &mut Session, status: &mut SessionStatus, game: Option<&m
 
 fn decode_message(message: WsMessage) -> Result<Option<ServerMessage>, String> {
     match message {
-        WsMessage::Text(text) => decode_server(&text),
-        WsMessage::Binary(bytes) => decode_server_binary(&bytes),
+        WsMessage::Binary(bytes) => decode_server(&bytes),
         WsMessage::Ping(_) | WsMessage::Pong(_) => return Ok(None),
-        WsMessage::Unknown(_) => return Err("Server sent an unsupported message.".into()),
+        WsMessage::Text(_) | WsMessage::Unknown(_) => {
+            return Err("Server sent an unsupported message.".into());
+        }
     }
     .map(Some)
     .map_err(|error| format!("Invalid server response: {error}"))
@@ -1129,7 +1130,7 @@ fn advance(
                 .unwrap_or(0)
                 .checked_add(INPUT_DELAY_TICKS)
                 .ok_or("Match tick limit reached.")?;
-            if target > session.submitted_tick {
+            if !game.pending.is_empty() && target > session.submitted_tick {
                 network
                     .0
                     .as_mut()

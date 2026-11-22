@@ -2,30 +2,9 @@ use rts_base::{Command, DepositId, IVec2, PlayerId, TILE, UnitId};
 use rts_net::{
     ClientMessage, INPUT_DELAY_TICKS, LobbySetup, MAX_COMMANDS_PER_TURN, MAX_MESSAGE_BYTES,
     MAX_SETUP_BYTES, MAX_UNITS_PER_COMMAND, MatchSetup, PROTOCOL_VERSION, PlayerInput, Replay,
-    ServerFrame, ServerMessage, Turn, decode_client, decode_server, decode_server_binary,
-    encode_client, encode_server, validate_commands,
+    ServerMessage, Turn, decode_client, decode_server, encode_client, encode_server,
+    validate_commands,
 };
-
-fn text_frame(message: &ServerMessage) -> String {
-    let ServerFrame::Text(text) = encode_server(message).unwrap() else {
-        panic!("expected text frame")
-    };
-    text
-}
-
-fn binary_frame(message: &ServerMessage) -> Vec<u8> {
-    let ServerFrame::Binary(bytes) = encode_server(message).unwrap() else {
-        panic!("expected binary frame")
-    };
-    bytes
-}
-
-fn decode_frame(frame: &ServerFrame) -> Result<ServerMessage, rts_net::NetError> {
-    match frame {
-        ServerFrame::Text(text) => decode_server(text),
-        ServerFrame::Binary(bytes) => decode_server_binary(bytes),
-    }
-}
 
 fn setup() -> MatchSetup {
     MatchSetup {
@@ -94,7 +73,11 @@ fn stop_command() -> Command {
 }
 
 #[test]
-fn all_wire_messages_roundtrip() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "covers every client and server wire variant in one round-trip check"
+)]
+fn all_wire_messages_roundtrip_and_stay_compact() {
     for message in [
         ClientMessage::Rooms {
             version: PROTOCOL_VERSION,
@@ -143,11 +126,32 @@ fn all_wire_messages_roundtrip() {
         },
         ClientMessage::Leave,
     ] {
-        assert_eq!(
-            decode_client(&encode_client(&message).unwrap()).unwrap(),
-            message
+        let encoded = encode_client(&message).unwrap();
+        let ron_len = ron::to_string(&message).unwrap().len();
+        assert!(
+            encoded.len() < ron_len,
+            "binary ({}) should be smaller than RON ({ron_len}) for {message:?}",
+            encoded.len()
         );
+        assert_eq!(decode_client(&encoded).unwrap(), message);
     }
+
+    let sample_frame = frame();
+    let frame_bytes = encode_server(&ServerMessage::View {
+        frame: sample_frame.clone(),
+    })
+    .unwrap();
+    let frame_ron_len = ron::to_string(&ServerMessage::View {
+        frame: sample_frame.clone(),
+    })
+    .unwrap()
+    .len();
+    assert!(
+        frame_bytes.len() * 4 < frame_ron_len,
+        "binary view frame ({}) should be at least 4x smaller than RON ({frame_ron_len})",
+        frame_bytes.len()
+    );
+
     for message in [
         ServerMessage::Rooms {
             rooms: vec![room_info()],
@@ -174,7 +178,9 @@ fn all_wire_messages_roundtrip() {
             input_delay: INPUT_DELAY_TICKS,
             view: intro(),
         },
-        ServerMessage::View { frame: frame() },
+        ServerMessage::View {
+            frame: sample_frame,
+        },
         ServerMessage::Ended {
             reason: "disconnected".to_owned(),
         },
@@ -187,7 +193,7 @@ fn all_wire_messages_roundtrip() {
             _ => message.clone(),
         };
         assert_eq!(
-            decode_frame(&encode_server(&message).unwrap()).unwrap(),
+            decode_server(&encode_server(&message).unwrap()).unwrap(),
             expected
         );
     }
@@ -299,39 +305,28 @@ fn turn_checks_command_ownership_in_the_simulation() {
 }
 
 #[test]
-fn rejects_malformed_versions_slots_codes_ticks_and_unknown_fields() {
+fn rejects_malformed_truncated_trailing_and_invalid_wire_frames() {
     for data in [
-        "",
-        "Input(",
-        "Start trailing",
-        "Start(extra: 0)",
-        "Create(version: 2, checksum: 0, players: 2)",
-        "Create(version: 1, checksum: 0, players: 0)",
-        "Create(version: 1, checksum: 0, players: 9)",
-        "Join(version: 1, code: \"abc123\", checksum: 0)",
-        "Join(version: 1, code: \"ABC12\", checksum: 0)",
-        "Create(version: 1)",
-        "Create(version: 2)",
-        "Create(version: 3)",
-        "Create(version: 2, checksum: 0)",
-        "Join(version: 4, code: \"abc123\")",
-        "Join(version: 4, code: \"ABC12\")",
-        "Input(tick: 1, player: (0), commands: [])",
-        "Input(tick: 0, commands: [])",
-        "Hash(tick: 0, hash: 0)",
-        "Create(version: 1, checksum: 0, players: 2, extra: 1)",
+        &[][..],
+        &[99],
+        &[0, 9],                               // Rooms with old version 9
+        &[0, 10, 0],                           // trailing byte
+        &[4, 2],                               // Ready with invalid bool
+        &[5, 0],                               // Start with trailing byte
+        &[6, 0, 0],                            // Input with tick 0
+        &[0x80, 0xff, 0xff, 0xff, 0xff, 0xff], // corrupt compressed header
+        b"Rooms(version:10)",
     ] {
-        assert!(decode_client(data).is_err(), "accepted {data}");
+        assert!(decode_client(data).is_err(), "accepted {data:?}");
     }
     for data in [
-        "Started(players: 2, input_delay: 0)",
-        "Lobby(code: \"ABC123\", player: (0), players: 2, capacity: 2, ready: 3)",
-        "Turn(turn:(tick:1,inputs:[]),hash:0)",
-        "Lobby(code: \"ABC123\", player: (2), players: 2, capacity: 2)",
-        "Turn((tick: 1, inputs: []))",
-        "HashConfirmed(tick: 0, hash: 0)",
+        &[][..],
+        &[99],
+        &[3, 2, 0], // Started with truncated payload
+        &[4, 0],    // truncated View
+        b"Turn(turn:(tick:1,inputs:[]),hash:0)",
     ] {
-        assert!(decode_server(data).is_err(), "accepted {data}");
+        assert!(decode_server(data).is_err(), "accepted {data:?}");
     }
 }
 
@@ -360,7 +355,6 @@ fn enforces_command_unit_and_frame_limits_on_encode_and_decode() {
     ] {
         let message = ClientMessage::Input { tick: 2, commands };
         assert!(encode_client(&message).is_err());
-        assert!(decode_client(&ron::to_string(&message).unwrap()).is_err());
         if let ClientMessage::Input { commands, .. } = message {
             assert!(
                 turn(1, commands)
@@ -369,8 +363,8 @@ fn enforces_command_unit_and_frame_limits_on_encode_and_decode() {
             );
         }
     }
-    assert!(decode_client(&" ".repeat(MAX_MESSAGE_BYTES + 1)).is_err());
-    assert!(decode_server(&" ".repeat(MAX_MESSAGE_BYTES + 1)).is_err());
+    assert!(decode_client(&vec![0; MAX_MESSAGE_BYTES + 1]).is_err());
+    assert!(decode_server(&vec![6; MAX_MESSAGE_BYTES + 1]).is_err());
     let large = ServerMessage::Error {
         message: "x".repeat(MAX_MESSAGE_BYTES),
     };
@@ -463,8 +457,6 @@ fn replay_rejects_invalid_continuity_versions_players_and_corruption() {
 #[test]
 fn setup_messages_minify_and_compress_large_rules_and_validate_content() {
     let mut content = lobby();
-    // The rules document can reach its 4 MiB limit. Quoted and backslash characters in
-    // comments expand when carried inside a RON string.
     content.rules.push_str("\n//");
     content
         .rules
@@ -473,11 +465,11 @@ fn setup_messages_minify_and_compress_large_rules_and_validate_content() {
         .rules
         .push_str(&" ".repeat(MAX_SETUP_BYTES - content.rules.len()));
     let message = ServerMessage::Setup(content.clone());
-    let encoded = binary_frame(&message);
+    let encoded = encode_server(&message).unwrap();
     assert!(encoded.len() < content.rules.len());
     assert!(encoded.len() < rts_net::MAX_SERVER_MESSAGE_BYTES);
     assert_eq!(
-        decode_server_binary(&encoded).unwrap(),
+        decode_server(&encoded).unwrap(),
         ServerMessage::Setup(content.minified())
     );
     assert_eq!(content.checksum(), content.minified().checksum());
@@ -502,19 +494,18 @@ fn setup_messages_minify_and_compress_large_rules_and_validate_content() {
         let message = ServerMessage::Setup(invalid);
         assert!(encode_server(&message).is_err());
     }
-    assert!(decode_server(&" ".repeat(rts_net::MAX_SERVER_MESSAGE_BYTES + 1)).is_err());
+    assert!(decode_server(&vec![0; rts_net::MAX_SERVER_MESSAGE_BYTES + 1]).is_err());
 }
 
 #[test]
 fn lobby_setup_reveals_no_map_content_and_checks_every_field() {
     let content = lobby();
     let ServerMessage::Setup(decoded) =
-        decode_server_binary(&binary_frame(&ServerMessage::Setup(content.clone()))).unwrap()
+        decode_server(&encode_server(&ServerMessage::Setup(content.clone())).unwrap()).unwrap()
     else {
         panic!("expected setup")
     };
     assert_eq!(decoded, content.minified());
-    // Rules are public; the map's terrain, units, starts and the seed never travel.
     let map = setup().map;
     assert!(!decoded.rules.contains("network") && !map.contains("Network"));
     for index in 0..3 {
@@ -539,42 +530,27 @@ fn view_messages_are_bounded_and_large_input_still_fits() {
         tick: u32::MAX,
         commands,
     };
-    let client_text = encode_client(&client).unwrap();
-    assert!(client_text.len() < MAX_MESSAGE_BYTES);
-    assert_eq!(decode_client(&client_text).unwrap(), client);
+    let client_bytes = encode_client(&client).unwrap();
+    assert!(client_bytes.len() < MAX_MESSAGE_BYTES);
+    assert_eq!(decode_client(&client_bytes).unwrap(), client);
+
     let mut large = frame();
     let unit = large.units[0].clone();
-    while text_frame(&ServerMessage::View {
-        frame: large.clone(),
-    })
-    .len()
-        <= MAX_MESSAGE_BYTES
-    {
-        large.units.extend(std::iter::repeat_n(unit.clone(), 256));
-    }
+    large.units.extend(std::iter::repeat_n(unit, 1024));
     let message = ServerMessage::View { frame: large };
-    let encoded = text_frame(&message);
+    let encoded = encode_server(&message).unwrap();
     assert!(encoded.len() <= rts_net::MAX_VIEW_MESSAGE_BYTES);
-    assert_eq!(decode_server(&encoded).unwrap(), message);
-    let oversized = format!("{encoded}{}", " ".repeat(rts_net::MAX_VIEW_MESSAGE_BYTES));
-    assert!(decode_server(&oversized).is_err());
-    let large = ServerMessage::Error {
-        message: "x".repeat(MAX_MESSAGE_BYTES),
-    };
-    assert!(decode_server(&ron::to_string(&large).unwrap()).is_err());
-    let started = ServerMessage::Started {
-        players: 2,
-        input_delay: INPUT_DELAY_TICKS,
-        view: intro(),
-    };
     assert!(
-        decode_server(&format!(
-            "{}{}",
-            text_frame(&started),
-            " ".repeat(MAX_MESSAGE_BYTES)
-        ))
-        .is_err()
+        encoded.len() < 4096,
+        "1025 units compressed cleanly to {} bytes",
+        encoded.len()
     );
+    assert_eq!(decode_server(&encoded).unwrap(), message);
+
+    let mut oversized = encoded;
+    oversized.resize(rts_net::MAX_VIEW_MESSAGE_BYTES + 1, 0);
+    assert!(decode_server(&oversized).is_err());
+
     for view in [
         rts_base::ViewIntro {
             players: 3,
@@ -615,13 +591,11 @@ fn command_work_bounds_reject_duplicate_selections_and_repeated_orders() {
             commands: vec![command],
         };
         assert!(encode_client(&message).is_err());
-        assert!(decode_client(&ron::to_string(&message).unwrap()).is_err());
     }
     let allowed = vec![stop_command(); MAX_ORDERS_PER_UNIT_PER_TURN];
     assert!(validate_commands(&allowed).is_ok());
     let rejected = vec![stop_command(); MAX_ORDERS_PER_UNIT_PER_TURN + 1];
     assert!(validate_commands(&rejected).is_err());
-    // Normal ordered replacements stay valid.
     assert!(validate_commands(&[move_command(), stop_command()]).is_ok());
     let units: Vec<_> = (0..u32::try_from(MAX_UNIT_SELECTIONS_PER_TURN / 2).unwrap())
         .map(UnitId)
@@ -647,7 +621,6 @@ fn command_work_bounds_reject_duplicate_selections_and_repeated_orders() {
             commands: turn.inputs[0].commands.clone(),
         };
         assert!(encode_client(&message).is_err());
-        assert!(decode_client(&ron::to_string(&message).unwrap()).is_err());
     }
 }
 
@@ -667,9 +640,9 @@ fn minified_compressed_setup_preserves_literals_checksum_and_simulation() {
     assert!(compact.rules.contains("speed:2.500000"));
     assert!(compact.rules.len() < original.rules.len());
     assert_eq!(compact.checksum(), content.checksum());
-    let encoded = binary_frame(&ServerMessage::Setup(content));
+    let encoded = encode_server(&ServerMessage::Setup(content)).unwrap();
     assert!(encoded.len() < compact.rules.len());
-    let ServerMessage::Setup(decoded) = decode_server_binary(&encoded).unwrap() else {
+    let ServerMessage::Setup(decoded) = decode_server(&encoded).unwrap() else {
         panic!("expected setup")
     };
     assert_eq!(decoded, compact);
@@ -718,63 +691,20 @@ fn setup_checksum_ignores_comments_and_formatting_but_preserves_literal_spelling
 }
 
 #[test]
-fn binary_setup_rejects_forged_frames_before_client_readiness() {
-    use miniz_oxide::deflate::compress_to_vec_zlib;
-
-    let compact = lobby().minified();
-    let map = compress_to_vec_zlib(compact.map.as_bytes(), 6);
-    let wire = |rules_len: u32, rules: &[u8]| {
-        let rules = compress_to_vec_zlib(rules, 6);
-        let mut bytes = b"RTSS".to_vec();
-        bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-        bytes.push(2);
-        bytes.extend_from_slice(&rules_len.to_le_bytes());
-        bytes.extend_from_slice(&u32::try_from(rules.len()).unwrap().to_le_bytes());
-        bytes.extend_from_slice(&u32::try_from(compact.map.len()).unwrap().to_le_bytes());
-        bytes.extend_from_slice(&u32::try_from(map.len()).unwrap().to_le_bytes());
-        bytes.extend_from_slice(&rules);
-        bytes.extend_from_slice(&map);
-        bytes
-    };
-    let valid = wire(
-        u32::try_from(compact.rules.len()).unwrap(),
-        compact.rules.as_bytes(),
-    );
-    assert_eq!(binary_frame(&ServerMessage::Setup(lobby())), valid);
-    assert_eq!(
-        decode_server_binary(&valid).unwrap(),
-        ServerMessage::Setup(compact.clone())
-    );
+fn binary_setup_rejects_truncation_corruption_and_trailing_bytes() {
+    let valid = encode_server(&ServerMessage::Setup(lobby())).unwrap();
     for end in 0..valid.len() {
         assert!(
-            decode_server_binary(&valid[..end]).is_err(),
+            decode_server(&valid[..end]).is_err(),
             "accepted truncation {end}"
         );
     }
-    for offset in [9, 13, 17, 21] {
-        let mut invalid = valid.clone();
-        invalid[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(decode_server_binary(&invalid).is_err());
-    }
-    for (offset, value) in [(0, b'?'), (4, 0), (8, 0), (8, 9)] {
-        let mut invalid = valid.clone();
-        invalid[offset] = value;
-        assert!(decode_server_binary(&invalid).is_err());
-    }
     let mut trailing = valid.clone();
     trailing.push(0);
-    assert!(decode_server_binary(&trailing).is_err());
+    assert!(decode_server(&trailing).is_err());
     let mut corrupt = valid;
     *corrupt.last_mut().unwrap() ^= 1;
-    assert!(decode_server_binary(&corrupt).is_err());
-    assert!(decode_server_binary(&wire(0, compact.rules.as_bytes())).is_err());
-    assert!(decode_server_binary(&wire(1, &[255])).is_err());
-    assert!(decode_server_binary(&wire(7, b"invalid")).is_err());
-    assert!(decode_server_binary(&vec![0; rts_net::MAX_SERVER_MESSAGE_BYTES + 1]).is_err());
-    assert!(decode_server_binary(b"Turn(turn:(tick:1,inputs:[]),hash:0)").is_err());
-    // Setup is binary-only; no legacy plaintext or base64 decoder remains.
-    assert!(decode_server(&format!("Setup({})", ron::to_string(&setup()).unwrap())).is_err());
-    assert!(decode_server("Setup((rules:(len:0,zlib:\"eJwDAAAAAAE=\"),map:(len:0,zlib:\"eJwDAAAAAAE=\"),seed:42,players:2))").is_err());
+    assert!(decode_server(&corrupt).is_err());
 }
 
 fn room_info() -> rts_net::RoomInfo {
@@ -789,10 +719,6 @@ fn room_info() -> rts_net::RoomInfo {
 
 fn assert_invalid_server(message: &ServerMessage) {
     assert!(encode_server(message).is_err(), "encoded {message:?}");
-    assert!(
-        decode_server(&ron::to_string(message).unwrap()).is_err(),
-        "decoded {message:?}"
-    );
 }
 
 #[test]
@@ -850,7 +776,6 @@ fn names_validate_unicode_character_limits_whitespace_and_controls() {
             },
         ] {
             assert!(encode_client(&message).is_err());
-            assert!(decode_client(&ron::to_string(&message).unwrap()).is_err());
         }
         let mut room = room_info();
         room.host = invalid.clone();
@@ -875,7 +800,10 @@ fn room_lists_validate_all_fields_counts_and_small_message_limit() {
     let maximum = ServerMessage::Rooms {
         rooms: vec![room.clone(); MAX_LISTED_ROOMS],
     };
-    assert_eq!(decode_server(&text_frame(&maximum)).unwrap(), maximum);
+    assert_eq!(
+        decode_server(&encode_server(&maximum).unwrap()).unwrap(),
+        maximum
+    );
     assert_invalid_server(&ServerMessage::Rooms {
         rooms: vec![room_info(); MAX_LISTED_ROOMS + 1],
     });
@@ -893,24 +821,18 @@ fn room_lists_validate_all_fields_counts_and_small_message_limit() {
         }
         assert_invalid_server(&ServerMessage::Rooms { rooms: vec![room] });
     }
-    // Full rooms are valid on the wire, though the server does not list them.
     room.players = 1;
     room.capacity = 1;
     room.map.clear();
     let message = ServerMessage::Rooms { rooms: vec![room] };
-    assert_eq!(decode_server(&text_frame(&message)).unwrap(), message);
-    assert!(
-        decode_server(&format!(
-            "{}{}",
-            text_frame(&message),
-            " ".repeat(MAX_MESSAGE_BYTES)
-        ))
-        .is_err()
+    assert_eq!(
+        decode_server(&encode_server(&message).unwrap()).unwrap(),
+        message
     );
 }
 
 #[test]
-fn lobby_validates_host_receiver_slot_count_names_and_unknown_fields() {
+fn lobby_validates_host_receiver_slot_count_and_names() {
     let member = Some(rts_net::LobbySlot {
         name: "Player".into(),
         ready: true,
@@ -921,7 +843,10 @@ fn lobby_validates_host_receiver_slot_count_names_and_unknown_fields() {
         public: false,
         slots: vec![member.clone(), None, member.clone()],
     };
-    assert_eq!(decode_server(&text_frame(&valid)).unwrap(), valid);
+    assert_eq!(
+        decode_server(&encode_server(&valid).unwrap()).unwrap(),
+        valid
+    );
     for (player, slots) in [
         (0, vec![]),
         (0, vec![member.clone(); rts_base::MAX_PLAYERS + 1]),
@@ -937,46 +862,17 @@ fn lobby_validates_host_receiver_slot_count_names_and_unknown_fields() {
             slots,
         });
     }
-    for message in [
-        "Rooms(rooms:[(code:\"AB12C3\",host:\"Host\",map:\"Map\",players:1,capacity:2,extra:0)])",
-        "Lobby(code:\"AB12C3\",player:(0),public:true,slots:[Some((name:\"Host\",ready:false,extra:0))])",
-        "Rooms(rooms:[],extra:0)",
-    ] {
-        assert!(decode_server(message).is_err(), "accepted {message}");
-    }
-    for message in [
-        "Rooms(version:5,extra:0)",
-        "Create(version:5,name:\"Host\",public:true,extra:0)",
-        "Join(version:5,code:\"AB12C3\",name:\"Guest\",extra:0)",
-        "Loaded(checksum:0,extra:0)",
-        "Ready(ready:true,extra:0)",
-        "Ready(checksum:0)",
-        "Rooms(version:4)",
-    ] {
-        assert!(decode_client(message).is_err(), "accepted {message}");
-    }
-    assert!(
-        decode_server(&format!(
-            "{}{}",
-            text_frame(&valid),
-            " ".repeat(MAX_MESSAGE_BYTES)
-        ))
-        .is_err()
-    );
 }
 
 #[test]
-fn version_7_is_rejected_on_live_wire() {
-    assert!(decode_client("Rooms(version:7)").is_err());
-
-    let mut bytes = binary_frame(&ServerMessage::Setup(lobby()));
-    bytes[4..8].copy_from_slice(&7_u32.to_le_bytes());
-    assert!(decode_server_binary(&bytes).is_err());
+fn older_protocol_versions_are_rejected_on_live_wire() {
+    for old_version in [7_u8, 8, 9] {
+        assert!(decode_client(&[0, old_version]).is_err());
+    }
 }
 
 #[test]
 fn an_original_v7_sandbox_replay_still_verifies_and_can_continue() {
-    // Recorded using the v7 encoder and simulation.
     let original = concat!(
         r#"(version:7,setup:("#,
         r#"rules:"(tile_capacity:4,terrain:[(id:\"grass\",symbol:\'.\',speed_modifier:1,color:\"green\")],"#,

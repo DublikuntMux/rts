@@ -853,18 +853,15 @@ fn online_backlog_catches_up_with_bounded_work_and_a_private_replay() {
 }
 
 #[test]
-fn websocket_message_decoder_accepts_binary_setup_and_text_views() {
-    use rts_net::{ServerFrame, encode_server};
+fn message_decoder_accepts_compact_binary_server_frames() {
+    use rts_net::encode_server;
 
     let lobby = LobbySetup {
         rules: setup().rules,
         map: "Proving Grounds".into(),
         players: 2,
     };
-    let ServerFrame::Binary(bytes) = encode_server(&ServerMessage::Setup(lobby.clone())).unwrap()
-    else {
-        panic!("setup must be binary")
-    };
+    let bytes = encode_server(&ServerMessage::Setup(lobby.clone())).unwrap();
     assert_eq!(
         decode_message(WsMessage::Binary(bytes)).unwrap(),
         Some(ServerMessage::Setup(lobby.minified()))
@@ -881,14 +878,11 @@ fn websocket_message_decoder_accepts_binary_setup_and_text_views() {
             frame: knowledge.observe(&sim),
         },
     ] {
-        let ServerFrame::Text(text) = encode_server(&message).unwrap() else {
-            panic!("gameplay messages must be text")
-        };
+        let bytes = encode_server(&message).unwrap();
         assert_eq!(
-            decode_message(WsMessage::Text(text.clone())).unwrap(),
+            decode_message(WsMessage::Binary(bytes)).unwrap(),
             Some(message)
         );
-        assert!(decode_message(WsMessage::Binary(text.into_bytes())).is_err());
     }
     assert!(decode_message(WsMessage::Text("Setup(())".into())).is_err());
     assert_eq!(decode_message(WsMessage::Ping(vec![])).unwrap(), None);

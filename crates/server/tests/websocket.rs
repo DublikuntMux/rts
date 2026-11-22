@@ -4,7 +4,7 @@ use futures_util::{SinkExt, StreamExt};
 use rts_base::{Command, IVec2, PlayerId, PlayerView, Rules, TILE, UnitId};
 use rts_net::{
     ClientMessage, LobbySetup, MAX_MESSAGE_BYTES, MatchSetup, PROTOCOL_VERSION, Recording,
-    ServerMessage, ViewReplay, decode_server, decode_server_binary, encode_client,
+    ServerMessage, ViewReplay, decode_server, encode_client,
 };
 use rts_server::{Config, RANDOM_MAP_NAME, serve_with_config};
 use tokio::{
@@ -51,7 +51,7 @@ impl Drop for Server {
 
 async fn send(client: &mut Client, message: &ClientMessage) {
     client
-        .send(Message::Text(encode_client(message).unwrap().into()))
+        .send(Message::Binary(encode_client(message).unwrap().into()))
         .await
         .unwrap();
 }
@@ -60,8 +60,7 @@ async fn receive(client: &mut Client) -> ServerMessage {
     timeout(Duration::from_secs(3), async {
         loop {
             match client.next().await.unwrap().unwrap() {
-                Message::Text(text) => return decode_server(&text).unwrap(),
-                Message::Binary(bytes) => return decode_server_binary(&bytes).unwrap(),
+                Message::Binary(bytes) => return decode_server(&bytes).unwrap(),
                 Message::Ping(_) => client.flush().await.unwrap(),
                 message => panic!("expected server frame, got {message:?}"),
             }
@@ -585,7 +584,7 @@ async fn guest_disconnect_updates_lobby_and_oversized_client_input_ends_match() 
     ready(&mut host, &mut guest, setup.checksum()).await;
     start(&mut host, &mut guest, &setup).await;
     guest
-        .send(Message::Text(" ".repeat(MAX_MESSAGE_BYTES + 1).into()))
+        .send(Message::Binary(vec![0xff; MAX_MESSAGE_BYTES + 1].into()))
         .await
         .unwrap();
     // A close may cross the first tick on slow machines.
@@ -649,7 +648,7 @@ async fn room_browsing_and_leaving_reuse_the_same_websocket_connections() {
     let server = Server::new(Config::default()).await;
     let (mut host, mut guest) = (server.connect().await, server.connect().await);
     guest
-        .send(Message::Text("Rooms(version:4)".into()))
+        .send(Message::Binary(vec![0, 4].into()))
         .await
         .unwrap();
     assert_eq!(
