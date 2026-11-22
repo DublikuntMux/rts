@@ -1,4 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -7,7 +6,6 @@ async fn main() {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn run() -> std::io::Result<()> {
     let (address, config) = configuration(std::env::args().skip(1))?;
     // configuration validates the complete map and rules before opening the port.
@@ -19,7 +17,6 @@ async fn run() -> std::io::Result<()> {
     rts_server::serve_with_config(listener, config).await
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn configuration(
     arguments: impl IntoIterator<Item = String>,
 ) -> std::io::Result<(String, rts_server::Config)> {
@@ -77,7 +74,6 @@ fn configuration(
     Ok((address, config))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn read_document(path: &str) -> std::io::Result<String> {
     use std::io::{Error, ErrorKind, Read};
     let file = std::fs::File::open(path)?;
@@ -93,10 +89,7 @@ fn read_document(path: &str) -> std::io::Result<String> {
     Ok(text)
 }
 
-#[cfg(target_arch = "wasm32")]
-fn main() {}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

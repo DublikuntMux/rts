@@ -1,7 +1,5 @@
 mod camera;
 mod crash;
-#[cfg(target_arch = "wasm32")]
-mod download;
 mod effects;
 mod font;
 mod game;
@@ -12,7 +10,6 @@ mod map;
 mod menu;
 mod pause_menu;
 mod preview;
-mod replay_io;
 mod session;
 mod settings;
 mod skirmish;
@@ -61,7 +58,6 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
                     primary_window: Some(Window {
                         title: "RTS".into(),
                         name: Some("cudzinec.rts".into()),
-                        fit_canvas_to_parent: true,
                         ..default()
                     }),
                     ..default()

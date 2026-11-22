@@ -6,13 +6,10 @@
 
 mod coordinator;
 mod layout;
+mod runtime;
 
 pub use coordinator::{
     ClientId, Config, Coordinator, Delivery, MAX_CATCH_UP_TURNS, MAX_FUTURE_TICKS,
 };
 pub use layout::{RANDOM_MAP_NAME, random_setup};
-
-#[cfg(not(target_arch = "wasm32"))]
-mod runtime;
-#[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{serve, serve_with_config};

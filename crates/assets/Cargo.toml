@@ -14,8 +14,5 @@ ron.workspace = true
 rts_base.workspace = true
 serde.workspace = true
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures.workspace = true
-
 [build-dependencies]
 bevy_asset_packer.workspace = true

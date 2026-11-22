@@ -1,8 +1,7 @@
 //! Game assets: opening the asset pack on each platform and loading game data files.
 //!
 //! `build.rs` packs the repository's `assets/` folder into `assets.pack` next to the build
-//! output. Desktop reads it beside the executable, web fetches it, and Android maps it from
-//! the APK.
+//! output. Desktop reads it beside the executable, and Android maps it from the APK.
 
 mod data;
 mod graphics;
@@ -14,26 +13,17 @@ pub use crate::graphics::{Graphics, HealthBarStyle, SelectionStyle, TerrainDetai
 
 const ASSET_PACK: &str = "assets.pack";
 
-/// Opens this platform's asset pack and passes it to `start`. On the web this happens after the
-/// pack is downloaded.
+/// Opens this platform's asset pack and passes it to `start`.
 ///
 /// # Panics
 ///
 /// Panics if the asset pack is missing or corrupt.
 pub fn with_bundle(start: impl FnOnce(AssetBundle) + 'static) {
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_futures::spawn_local(async {
-        let bundle = AssetBundle::from_url(ASSET_PACK, None)
-            .await
-            .unwrap_or_else(|error| panic!("open {ASSET_PACK}: {error:#}"));
-        start(bundle);
-    });
-    #[cfg(not(target_arch = "wasm32"))]
     start(open_bundle());
 }
 
 /// Opens the desktop pack next to the executable.
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 fn open_bundle() -> AssetBundle {
     let path = std::env::current_exe()
         .expect("locate the game executable")

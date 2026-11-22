@@ -5,8 +5,6 @@
 //! Smaller changes, such as messages, availability, and selection highlights, update in place.
 //! The menu only reads [`SessionStatus`] and sends [`SessionAction`]s; the session does the work.
 
-#[cfg(target_arch = "wasm32")]
-mod browser_input;
 mod pages;
 mod previews;
 pub mod widgets;
@@ -55,8 +53,6 @@ pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(target_arch = "wasm32")]
-        browser_input::install(app);
         if !app.is_plugin_added::<TabNavigationPlugin>() {
             app.add_plugins(TabNavigationPlugin);
         }
@@ -424,8 +420,6 @@ pub enum Action {
     Delete(Shelf),
     WatchReplay,
     SaveLastReplay,
-    ImportReplay,
-    ExportReplay,
     UseRecentServer,
     Connect,
     Disconnect,
@@ -466,16 +460,13 @@ impl Action {
             Self::LoadSave | Self::Delete(Shelf::Saves) => {
                 view.selected_record(Shelf::Saves).is_some()
             }
-            Self::Delete(Shelf::Replays) | Self::ExportReplay => {
-                view.selected_record(Shelf::Replays).is_some()
-            }
+            Self::Delete(Shelf::Replays) => view.selected_record(Shelf::Replays).is_some(),
             Self::WatchReplay => match &menu.replays.selected {
                 Some(ReplayPick::Last) => status.has_replay,
                 Some(ReplayPick::Stored(_)) => view.selected_record(Shelf::Replays).is_some(),
                 None => false,
             },
             Self::SaveLastReplay | Self::Game(SessionAction::SaveReplay) => status.has_replay,
-            Self::ImportReplay => !status.importing,
             Self::UseRecentServer => view.settings.recent_server.is_some(),
             Self::Connect => view.form.url_valid() && !status.connecting(),
             Self::Disconnect => status.connected() || status.connecting(),
@@ -629,14 +620,6 @@ fn perform(
             },
             Action::SaveLastReplay => {
                 session.write(SessionAction::SaveReplay);
-            }
-            Action::ImportReplay => {
-                session.write(SessionAction::ImportReplay);
-            }
-            Action::ExportReplay => {
-                if let Some(id) = menu.replays.selected_id() {
-                    session.write(SessionAction::ExportReplay { id: id.into() });
-                }
             }
             Action::UseRecentServer => {
                 if let Some(url) = &settings.recent_server {

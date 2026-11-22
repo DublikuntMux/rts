@@ -2,9 +2,7 @@
 //!
 //! Nothing is sent anywhere. A panic writes `crash-report.txt` next to the saved games, holding
 //! the version, platform, panic message, location, backtrace, and the end of `game.log`. The next
-//! launch reads that report, the menu offers it, and the player exports or discards it. Browser
-//! builds keep the report in `localStorage` and also record JavaScript errors, which never reach
-//! a Rust panic hook.
+//! launch reads that report, the menu offers it, and the player exports or discards it.
 
 use std::{
     fmt::{Debug, Write as _},
@@ -23,34 +21,23 @@ use bevy::{
     prelude::Resource,
 };
 
-/// Report file name, in the data folder or browser storage.
+/// Report file name, in the data folder.
 const REPORT_NAME: &str = "crash-report.txt";
 /// Log file name, in the data folder.
-#[cfg(not(target_arch = "wasm32"))]
 const LOG_NAME: &str = "game.log";
 /// The log kept after a rotation, so one previous run stays readable.
-#[cfg(not(target_arch = "wasm32"))]
 const ROTATED_LOG_NAME: &str = "game.log.1";
 /// The log rotates once it grows past this size, so it cannot fill the disk.
-#[cfg(not(target_arch = "wasm32"))]
 const LOG_LIMIT: u64 = 512 * 1024;
 /// Log bytes a report keeps, counted from the end.
 const REPORT_LOG_BYTES: usize = 48 * 1024;
-/// Longest JavaScript error report kept, in bytes.
-#[cfg(target_arch = "wasm32")]
-const JS_REPORT_LIMIT: usize = 64 * 1024;
-/// Log lines browser builds keep in memory, because they have no log file.
-#[cfg(target_arch = "wasm32")]
-const RING_LINES: usize = 500;
 /// Longest log line kept, in bytes. Third-party crates log whole payloads.
 const LINE_LIMIT: usize = 1000;
 
-/// The data folder, resolved once. Browsers have browser storage instead.
-#[cfg(not(target_arch = "wasm32"))]
+/// The data folder, resolved once.
 static DATA_DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
 
-/// The application data folder, or nothing in browsers.
-#[cfg(not(target_arch = "wasm32"))]
+/// The application data folder.
 fn data_dir() -> Option<&'static std::path::Path> {
     DATA_DIR.get_or_init(crate::storage::data_dir).as_deref()
 }
@@ -125,7 +112,7 @@ impl CrashReport {
 // ---------------------------------------------------------------------------
 
 /// Installs the panic hook after Bevy's platform hook and before startup work, so startup
-/// failures are captured and Bevy still prints the panic to the terminal or browser console.
+/// failures are captured and Bevy still prints the panic to the terminal.
 pub fn install() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
@@ -134,8 +121,6 @@ pub fn install() {
             store(&report_for(info));
             previous(info);
         }));
-        #[cfg(target_arch = "wasm32")]
-        browser::watch_errors();
     });
 }
 
@@ -145,22 +130,13 @@ fn report_for(info: &PanicHookInfo<'_>) -> String {
         .location()
         .map_or_else(|| "unknown".to_owned(), ToString::to_string);
     let mut report = header(panic_message(info), &location);
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        report.push_str("\nBacktrace:\n");
-        report.push_str(&std::backtrace::Backtrace::force_capture().to_string());
-        report.push('\n');
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        report.push_str("\nBacktrace:\n");
-        report.push_str(&browser::stack(js_sys::Error::new("Rust panic").into()));
-        report.push('\n');
-    }
+    report.push_str("\nBacktrace:\n");
+    report.push_str(&std::backtrace::Backtrace::force_capture().to_string());
+    report.push('\n');
     with_log(report)
 }
 
-/// Appends the same recent diagnostics to Rust panics and browser failures.
+/// Appends the recent diagnostics to a crash report.
 fn with_log(mut report: String) -> String {
     let log = recent_log(REPORT_LOG_BYTES);
     if !log.is_empty() {
@@ -186,11 +162,7 @@ fn header(message: &str, location: &str) -> String {
          Location: {location}\n",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        if cfg!(target_arch = "wasm32") {
-            "web"
-        } else {
-            std::env::consts::OS
-        },
+        std::env::consts::OS,
         std::env::consts::ARCH,
         if cfg!(debug_assertions) {
             "debug"
@@ -253,20 +225,14 @@ impl Visit for Fields {
 // ---------------------------------------------------------------------------
 
 fn write_log(line: &str) {
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(root) = data_dir() {
         native::log(root, line);
     }
-    #[cfg(target_arch = "wasm32")]
-    sink::log(line);
 }
 
 /// The end of the log, at most `limit` bytes.
 fn recent_log(limit: usize) -> String {
-    #[cfg(not(target_arch = "wasm32"))]
-    return data_dir().map_or_else(String::new, |root| native::recent_log(root, limit));
-    #[cfg(target_arch = "wasm32")]
-    sink::recent(limit)
+    data_dir().map_or_else(String::new, |root| native::recent_log(root, limit))
 }
 
 /// The end of `text`, at most `limit` bytes and never inside a character.
@@ -298,44 +264,26 @@ fn clip(text: &str, limit: usize) -> &str {
 // ---------------------------------------------------------------------------
 
 fn stored() -> Option<String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    return native::read(data_dir()?);
-    #[cfg(target_arch = "wasm32")]
-    browser::read()
+    native::read(data_dir()?)
 }
 
 fn store(text: &str) {
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(root) = data_dir() {
         native::write(root, text);
     }
-    #[cfg(target_arch = "wasm32")]
-    browser::write_panic(text);
 }
 
 fn discard_stored() {
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(root) = data_dir() {
         native::discard(root);
     }
-    #[cfg(target_arch = "wasm32")]
-    browser::delete();
 }
 
 fn export_text(text: &str) -> Result<String, String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let root = data_dir().ok_or("Cannot locate the app data folder.")?;
-        let folder = native::export_folder(root);
-        let path = native::export(root, &folder, text)?;
-        Ok(format!("Crash report saved to {}.", path.display()))
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        crate::download::save(REPORT_NAME, "text/plain", text)?;
-        browser::delete();
-        Ok("Crash report download started.".into())
-    }
+    let root = data_dir().ok_or("Cannot locate the app data folder.")?;
+    let folder = native::export_folder(root);
+    let path = native::export(root, &folder, text)?;
+    Ok(format!("Crash report saved to {}.", path.display()))
 }
 
 // ---------------------------------------------------------------------------
@@ -385,10 +333,9 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Platforms
+// Storage
 // ---------------------------------------------------------------------------
 
-#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use std::{
         fs::{self, File, OpenOptions},
@@ -528,132 +475,6 @@ mod native {
         }
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
         super::tail(&text, limit).to_owned()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-mod sink {
-    use std::{
-        collections::VecDeque,
-        sync::{Mutex, OnceLock},
-    };
-
-    use super::RING_LINES;
-
-    /// Recent log lines, because browsers have no writable log file.
-    static LINES: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
-
-    pub fn log(line: &str) {
-        let Ok(mut lines) = LINES.get_or_init(|| Mutex::new(VecDeque::new())).lock() else {
-            return;
-        };
-        if lines.len() == RING_LINES {
-            lines.pop_front();
-        }
-        lines.push_back(line.to_owned());
-    }
-
-    pub fn recent(limit: usize) -> String {
-        let Some(lines) = LINES.get() else {
-            return String::new();
-        };
-        let Ok(lines) = lines.lock() else {
-            return String::new();
-        };
-        let text = lines.iter().cloned().collect::<Vec<_>>().join("\n");
-        super::tail(&text, limit).to_owned()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-mod browser {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use wasm_bindgen::{JsCast, JsValue, closure::Closure};
-
-    /// Storage key. Reports are plain text, not the compressed documents `storage` keeps.
-    const KEY: &str = "rts/crash-report.txt";
-    /// The browser also reports the trap or rejected promise caused by a Rust panic. That
-    /// secondary event must not replace the panic message and Rust source location.
-    static PANICKED: AtomicBool = AtomicBool::new(false);
-
-    fn storage() -> Option<web_sys::Storage> {
-        web_sys::window()?.local_storage().ok().flatten()
-    }
-
-    pub fn read() -> Option<String> {
-        storage()?.get_item(KEY).ok().flatten()
-    }
-
-    fn write(text: &str) {
-        if let Some(storage) = storage() {
-            let _ = storage.set_item(KEY, text);
-        }
-    }
-
-    pub fn write_panic(text: &str) {
-        PANICKED.store(true, Ordering::Relaxed);
-        write(text);
-    }
-
-    fn record_error(message: &str, location: &str, stack: &str) {
-        if PANICKED.load(Ordering::Relaxed) {
-            return;
-        }
-        let mut report = super::header(message, location);
-        report.push_str("\nBacktrace:\n");
-        report.push_str(stack);
-        report.push('\n');
-        let report = super::with_log(report);
-        write(super::clip(&report, super::JS_REPORT_LIMIT));
-    }
-
-    pub fn delete() {
-        if let Some(storage) = storage() {
-            let _ = storage.remove_item(KEY);
-        }
-    }
-
-    /// Records browser errors, which never reach the Rust panic hook: a wasm trap ends the module
-    /// without unwinding, and script errors happen outside it.
-    pub fn watch_errors() {
-        let Some(window) = web_sys::window() else {
-            return;
-        };
-        let errors = Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| {
-            if let Ok(event) = event.dyn_into::<web_sys::ErrorEvent>() {
-                record_error(
-                    &format!("JavaScript error: {}", event.message()),
-                    &format!("{}:{}:{}", event.filename(), event.lineno(), event.colno()),
-                    &stack(event.error()),
-                );
-            }
-        });
-        let _ = window.add_event_listener_with_callback("error", errors.as_ref().unchecked_ref());
-        errors.forget();
-
-        let rejections = Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| {
-            if let Ok(event) = event.dyn_into::<web_sys::PromiseRejectionEvent>() {
-                record_error(
-                    "Unhandled promise rejection",
-                    "unknown",
-                    &stack(event.reason()),
-                );
-            }
-        });
-        let _ = window.add_event_listener_with_callback(
-            "unhandledrejection",
-            rejections.as_ref().unchecked_ref(),
-        );
-        rejections.forget();
-    }
-
-    /// A thrown value's stack trace, when it has one.
-    pub(super) fn stack(value: JsValue) -> String {
-        js_sys::Reflect::get(&value, &JsValue::from_str("stack"))
-            .ok()
-            .and_then(|stack| stack.as_string())
-            .unwrap_or_else(|| format!("{value:?}"))
     }
 }
 

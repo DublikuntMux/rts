@@ -179,17 +179,6 @@ impl Library {
             .map_err(|error| format!("Cannot load: {error}"))
     }
 
-    /// Reads a stored recording's text without verifying it, for export.
-    ///
-    /// # Errors
-    /// Returns an error for a missing or unreadable record.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    pub fn load_text(&self, kind: Shelf, id: &str) -> Result<String, String> {
-        self.store
-            .read(&format!("{}/{id}{DATA}", kind.folder()))?
-            .ok_or_else(|| "This file no longer exists.".into())
-    }
-
     /// # Errors
     /// Returns an error when storage refuses the deletion.
     pub fn delete(&mut self, kind: Shelf, id: &str) -> Result<(), String> {
@@ -290,7 +279,7 @@ pub fn duration(ticks: u32) -> String {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use rts_base::{PlayerId, PlayerKnowledge};
     use rts_net::{PlayerInput, Replay, Turn, ViewReplay};

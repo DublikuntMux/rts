@@ -74,7 +74,6 @@ fn local_input_delay_and_replay_share_the_same_turns() {
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -239,26 +238,6 @@ fn playback_keeps_the_original_recording_available_after_finishing_and_leaving()
     assert_eq!(session.last_replay.as_ref(), Some(&replay));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn duplicate_import_actions_do_not_replace_an_in_progress_picker() {
-    let mut app = headless();
-    app.world_mut().resource_mut::<SessionStatus>().importing = true;
-    app.world_mut().write_message(SessionAction::ImportReplay);
-    app.update();
-    assert!(status(&app).importing);
-    assert_eq!(
-        status(&app).message,
-        "A replay import is already in progress."
-    );
-    app.world()
-        .non_send::<ReplayIo>()
-        .complete_for_test(Replay::new(setup()).unwrap().to_ron().unwrap());
-    app.update();
-    assert!(!status(&app).importing);
-    assert_eq!(status(&app).message, "Imported as Replay 01.");
-}
-
 #[test]
 fn absent_network_frame_stalls_without_consuming_input_or_changing_state() {
     let mut session = Session::default();
@@ -299,7 +278,6 @@ fn absent_network_frame_stalls_without_consuming_input_or_changing_state() {
     assert_eq!(game.pending, pending);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn headless() -> App {
     use crate::{game::CatalogMap, storage::tests::temporary_store};
 
@@ -319,42 +297,10 @@ fn headless() -> App {
     app
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn status(app: &App) -> &SessionStatus {
     app.world().resource::<SessionStatus>()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn imported_replay_joins_the_library_without_replacing_a_starting_match() {
-    let mut app = headless();
-    let text = Replay::new(setup()).unwrap().to_ron().unwrap();
-    app.world().non_send::<ReplayIo>().complete_for_test(text);
-    app.world_mut().write_message(SessionAction::NewGame {
-        map: 0,
-        difficulty: rts_ai::Difficulty::Normal,
-    });
-    app.update();
-    assert!(app.world().resource::<Session>().mode == Mode::Offline);
-    assert!(app.world().resource::<Match>().accepts_orders);
-    assert_eq!(status(&app).message, "Imported as Replay 01.");
-    assert_eq!(
-        app.world()
-            .resource::<Library>()
-            .records(Shelf::Replays)
-            .len(),
-        1
-    );
-    app.update();
-    assert_eq!(
-        *app.world().resource::<State<AppState>>().get(),
-        AppState::InGame
-    );
-    assert_eq!(status(&app).kind, MatchKind::Solo);
-    assert!(status(&app).can_save_game());
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn saved_solo_game_continues_from_its_recorded_state() {
     let mut app = headless();
@@ -423,7 +369,6 @@ fn saved_solo_game_continues_from_its_recorded_state() {
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test(flavor = "current_thread")]
 #[expect(
     clippy::too_many_lines,
@@ -652,7 +597,6 @@ async fn real_client_sessions_play_private_views_of_a_server_mod() {
     server.abort();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn deliver(app: &mut App, message: ServerMessage) -> Result<Option<ClientMessage>, String> {
     use bevy::ecs::system::SystemState;
 
@@ -678,7 +622,6 @@ fn deliver(app: &mut App, message: ServerMessage) -> Result<Option<ClientMessage
     result
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn lobby_message(ready: [bool; 2]) -> ServerMessage {
     ServerMessage::Lobby {
         code: "AAAAAA".into(),
@@ -697,7 +640,6 @@ fn lobby_message(ready: [bool; 2]) -> ServerMessage {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn setup_acknowledges_server_content_and_start_requires_readiness() {
     let mut app = headless();
@@ -775,7 +717,6 @@ fn setup_acknowledges_server_content_and_start_requires_readiness() {
     assert_eq!(replay.map, "Proving Grounds");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn closed_room_returns_to_the_room_list_and_stale_lobbies_are_ignored() {
     let mut app = headless();
@@ -812,7 +753,6 @@ fn closed_room_returns_to_the_room_list_and_stale_lobbies_are_ignored() {
     assert!(status(&app).error);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn refusal_while_connecting_fails_the_connection_and_later_errors_do_not() {
     let mut app = headless();
@@ -866,7 +806,6 @@ fn invalid_server_frame_is_rejected_before_recording() {
     assert_eq!(replay.frames, []);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn rejected_request_does_not_terminate_an_authoritative_match() {
     let mut app = headless();

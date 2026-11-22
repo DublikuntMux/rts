@@ -53,7 +53,7 @@ impl Settings {
 
     /// Whether this platform can switch to fullscreen.
     pub const fn fullscreen_supported() -> bool {
-        !cfg!(any(target_arch = "wasm32", target_os = "android"))
+        !cfg!(target_os = "android")
     }
 }
 

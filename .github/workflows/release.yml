@@ -12,11 +12,6 @@ on:
         required: false
         type: boolean
         default: false
-      deploy_web:
-        description: "Deploy the web build to GitHub Pages"
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -89,7 +84,6 @@ jobs:
       - name: Append downloads
         env:
           TAG: ${{ steps.meta.outputs.tag }}
-          DEPLOY_WEB: ${{ inputs.deploy_web }}
         run: |
           {
             printf '\n'
@@ -98,11 +92,7 @@ jobs:
             printf '| --- | --- |\n'
             printf '| Linux (x86_64) | rts-linux-x86_64-%s.tar.gz |\n' "$TAG"
             printf '| Windows (x86_64) | rts-windows-x86_64-%s.zip |\n' "$TAG"
-            printf '| Android | rts-android-%s.apk |\n' "$TAG"
-            printf '| Web | rts-web-%s.zip |\n\n' "$TAG"
-            if [ "$DEPLOY_WEB" = "true" ]; then
-              printf 'The web build is also published to GitHub Pages.\n\n'
-            fi
+            printf '| Android | rts-android-%s.apk |\n\n' "$TAG"
             printf '## Notes\n\n'
             printf -- '- Keep assets.pack next to rts on Linux and Windows.\n'
             printf -- '- The Android APK is a release build signed with the debug key.\n'
@@ -112,76 +102,6 @@ jobs:
           name: changelog
           path: release-notes.md
           retention-days: 7
-
-  web:
-    name: Web
-    runs-on: ubuntu-latest
-    needs: prepare
-    timeout-minutes: 60
-    env:
-      TAG: ${{ needs.prepare.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Choose the GitHub Pages base path
-        id: pages
-        run: |
-          owner="${GITHUB_REPOSITORY%%/*}"
-          repo="${GITHUB_REPOSITORY#*/}"
-          if [ "$repo" = "$owner.github.io" ]; then
-            public_url="/"
-          else
-            public_url="/$repo/"
-          fi
-          echo "public_url=$public_url" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-wasm
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: trunk
-      - name: Cache Trunk tools
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/trunk
-          key: trunk-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: trunk-${{ runner.os }}-
-      - name: Build the web bundle
-        run: trunk build --release --public-url "${{ steps.pages.outputs.public_url }}"
-      - name: Package the web bundle
-        run: |
-          set -euo pipefail
-          test -f dist/assets.pack
-          cd dist
-          zip -qr "../rts-web-${TAG}.zip" .
-      - uses: actions/upload-artifact@v7
-        with:
-          name: rts-web
-          path: rts-web-*.zip
-          retention-days: 7
-          if-no-files-found: error
-      - uses: actions/upload-pages-artifact@v5
-        if: ${{ inputs.deploy_web }}
-        with:
-          path: dist
-
-  deploy-web:
-    name: Deploy web
-    runs-on: ubuntu-latest
-    needs: [web, release]
-    if: ${{ inputs.deploy_web }}
-    timeout-minutes: 10
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
 
   desktop:
     name: Desktop (${{ matrix.name }})
@@ -315,7 +235,7 @@ jobs:
   release:
     name: Publish
     runs-on: ubuntu-latest
-    needs: [prepare, web, desktop, android]
+    needs: [prepare, desktop, android]
     timeout-minutes: 15
     permissions:
       contents: write
@@ -338,8 +258,7 @@ jobs:
           for asset in \
             "rts-linux-x86_64-${TAG}.tar.gz" \
             "rts-windows-x86_64-${TAG}.zip" \
-            "rts-android-${TAG}.apk" \
-            "rts-web-${TAG}.zip"; do
+            "rts-android-${TAG}.apk"; do
             if [ ! -s "release-assets/$asset" ]; then
               echo "::error::missing release asset: $asset"
               exit 1

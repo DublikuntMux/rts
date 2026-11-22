@@ -155,13 +155,10 @@ pub fn menu_root(compact: bool) -> impl Scene {
             compact,
         ))
     })
-    .chain(when(
-        !cfg!(target_arch = "wasm32"),
-        bsn! {
-            @nav_button("Quit", Action::Quit, compact)
-            Node { margin: {if compact { UiRect::ZERO } else { UiRect::top(auto()) }} }
-        },
-    ))
+    .chain(std::iter::once(boxed(bsn! {
+        @nav_button("Quit", Action::Quit, compact)
+        Node { margin: {if compact { UiRect::ZERO } else { UiRect::top(auto()) }} }
+    })))
     .collect();
     bsn! {
         #Menu
@@ -537,14 +534,7 @@ fn browser(view: &View, shelf: Shelf) -> impl SceneList {
     };
     let footer: Scenes = match shelf {
         Shelf::Saves => vec![boxed(hint("Map filtering is optional."))],
-        Shelf::Replays => when(
-            cfg!(target_arch = "wasm32"),
-            row(bsn_list! {
-                @button("Import replay file", Action::ImportReplay, Tone::Secondary)
-                --
-                @hint("Replays are kept in this browser's storage.")
-            }),
-        ),
+        Shelf::Replays => Vec::new(),
     };
     bsn_list! {
         @heading(title)
@@ -627,8 +617,6 @@ fn browser_detail(view: &View, shelf: Shelf) -> Scenes {
                 })),
                 Shelf::Replays => boxed(row(bsn_list! {
                     @wide_button("Watch replay", Action::WatchReplay, Tone::Primary)
-                    --
-                    {when(cfg!(target_arch = "wasm32"), button("Export", Action::ExportReplay, Tone::Secondary))}
                     --
                     @button("Delete…", Action::Delete(Shelf::Replays), Tone::Danger)
                 })),

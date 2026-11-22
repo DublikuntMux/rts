@@ -29,7 +29,6 @@ use crate::{
     library::{Library, Shelf},
     menu::Menu,
     pause_menu::{PauseMenu, world_input_blocked},
-    replay_io::ReplayIo,
 };
 
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -74,12 +73,6 @@ pub enum SessionAction {
     SaveReplay,
     Delete {
         shelf: Shelf,
-        id: String,
-    },
-    /// Adds a replay file chosen by the player (browser only).
-    ImportReplay,
-    /// Downloads a stored replay (browser only).
-    ExportReplay {
         id: String,
     },
 }
@@ -210,8 +203,6 @@ pub struct SessionStatus {
     pub result: Option<MatchResult>,
     /// A recorded match exists: the current one or the last one played.
     pub has_replay: bool,
-    /// A replay file is being imported.
-    pub importing: bool,
 }
 
 impl SessionStatus {
@@ -435,12 +426,8 @@ impl Connection {
         if url.len() > 2048 || !(url.starts_with("ws://") || url.starts_with("wss://")) {
             return Err("Enter a server address beginning with ws:// or wss://.".into());
         }
-        #[cfg(not(target_arch = "wasm32"))]
         if url.starts_with("wss://") {
-            return Err(
-                "This native build uses ws:// servers. Secure browser connections use wss://."
-                    .into(),
-            );
+            return Err("This build uses ws:// servers.".into());
         }
         // Bound incoming events even when rendering is paused or the peer floods its socket.
         let (tx, receiver) = mpsc::sync_channel(128);
@@ -513,16 +500,10 @@ impl Plugin for SessionPlugin {
         app.init_resource::<Session>()
             .init_resource::<SessionStatus>()
             .init_resource::<PauseMenu>()
-            .init_non_send::<ReplayIo>()
             .insert_non_send(Network::default())
             .add_message::<SessionAction>()
             .add_systems(PreUpdate, poll_network)
-            .add_systems(
-                Update,
-                (handle_actions, finish_replay_import)
-                    .chain()
-                    .in_set(SessionActions),
-            )
+            .add_systems(Update, handle_actions.in_set(SessionActions))
             .add_systems(
                 FixedUpdate,
                 advance_session.run_if(in_state(AppState::InGame)),
@@ -555,7 +536,6 @@ fn handle_actions(
     mut status: ResMut<SessionStatus>,
     mut network: NonSendMut<Network>,
     mut next: ResMut<NextState<AppState>>,
-    mut io: NonSendMut<ReplayIo>,
     time: Res<Time>,
     state: Res<State<AppState>>,
 ) {
@@ -771,20 +751,6 @@ fn handle_actions(
             SessionAction::Delete { shelf, id } => {
                 library.delete(*shelf, id).map(|()| status.info("Deleted."))
             }
-            SessionAction::ImportReplay => {
-                if status.importing {
-                    Err("A replay import is already in progress.".into())
-                } else {
-                    io.load().map(|message| {
-                        status.importing = true;
-                        status.info(message);
-                    })
-                }
-            }
-            SessionAction::ExportReplay { id } => library
-                .load_text(Shelf::Replays, id)
-                .and_then(|text| ReplayIo::save(&text))
-                .map(|message| status.info(message)),
         };
         if let Err(error) = result {
             status.fail(error);
@@ -1230,28 +1196,6 @@ fn finish_playback(session: &mut Session, status: &mut SessionStatus, game: &Mat
         .outcome()
         .map(|result| MatchResult::for_player(result, game.local_player));
     status.info(message);
-}
-
-fn finish_replay_import(
-    mut io: NonSendMut<ReplayIo>,
-    mut library: ResMut<Library>,
-    mut status: ResMut<SessionStatus>,
-) {
-    let Some(result) = io.take_loaded() else {
-        return;
-    };
-    status.importing = false;
-    let result = result
-        .and_then(|text| {
-            Recording::from_ron(&text)
-                .map(|(recording, _)| recording)
-                .map_err(|error| format!("Cannot import replay: {error}"))
-        })
-        .and_then(|replay| library.add(Shelf::Replays, &replay, None));
-    match result {
-        Ok(record) => status.info(format!("Imported as {}.", record.meta.name)),
-        Err(error) => status.fail(error),
-    }
 }
 
 fn cleanup_match(mut commands: Commands, mut selection: ResMut<Selection>) {

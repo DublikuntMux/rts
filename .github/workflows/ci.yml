@@ -63,22 +63,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-  wasm:
-    name: WebAssembly check
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ci-wasm
-          save-if: ${{ github.ref == 'refs/heads/master' }}
-      - name: Check the workspace for wasm32
-        run: cargo check --locked --workspace --target wasm32-unknown-unknown
-
   docs:
     name: Handbook
     runs-on: ubuntu-latest
