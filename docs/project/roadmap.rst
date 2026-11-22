@@ -216,6 +216,21 @@ Fog of war
    matches keep full replays (version 9, fog-aware combat) and still load
    version 8. See :doc:`../architecture/visibility`.
 
+QUIC transport, compact wire protocol, localization, and asset sync
+   Removed browser (``wasm32``) support and WebSocket transport in favor of
+   pure-Rust QUIC with TLS 1.3 (``quinn``, ``rustls``, ``glomar-rustls``) and
+   optional certificate SHA-256 pinning. Replaced RON wire messages with
+   protocol v10 compact binary framing (varints, bitmasks, delta-encoded IDs
+   and coordinates, and automatic raw-deflate compression), skipped empty
+   upstream input batches, added RTT-adaptive input lead (2–16 ticks), and
+   smoothed online frame pacing on jittery links. Added multi-language
+   localization loaded from bundled ``assets/locales/*.lang.ron`` (English,
+   Deutsch, Español, Українська) and external ``<data_dir>/locales/*.lang.ron``
+   files with instant live switching in **Settings**. Added server-to-client
+   asset sync over a low-priority QUIC stream (``STREAM_ASSETS``) with
+   SHA-256 verification and disk caching so servers launched with
+   ``--assets DIR`` can supply custom textures and translations on connect.
+
 Upcoming
 --------
 

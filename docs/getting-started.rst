@@ -2,8 +2,8 @@ Build and play your first match
 ===============================
 
 This walkthrough starts in the RTS repository and ends with a solo match and a
-two-player online match on your machine. For browser and Android builds, see
-:doc:`guides/web` and :doc:`guides/android`.
+two-player online match on your machine. For Android builds, see
+:doc:`guides/android`.
 
 Install build prerequisites
 ---------------------------
@@ -63,10 +63,12 @@ Start the authoritative server in a second terminal:
 
    cargo run -p rts_server --bin rts-server
 
-It listens on ``ws://127.0.0.1:9001``. Then start two clients:
+It listens on ``quic://127.0.0.1:9001`` (UDP) and prints its self-signed
+Ed25519 certificate SHA-256 fingerprint. Then start two clients:
 
-1. In each client, open **Settings** and enter a player name. Then choose
-   **Multiplayer**, keep ``ws://127.0.0.1:9001``, and choose **Connect**.
+1. In each client, open **Settings** and enter a player name (and optionally
+   switch language). Then choose **Multiplayer**, keep
+   ``quic://127.0.0.1:9001``, and choose **Connect**.
 2. In the first client's room browser, choose **+ Create room**, choose
    **Public**, then **Create room**. The room page shows its invite code.
 3. In the second client, choose **Refresh**, select the public room, then
@@ -98,7 +100,6 @@ Before submitting a change, run:
 
    cargo test --workspace
    cargo clippy --workspace --all-targets
-   cargo check --target wasm32-unknown-unknown
 
 :doc:`guides/testing` describes what the test suites cover and the additional
 platform checks.

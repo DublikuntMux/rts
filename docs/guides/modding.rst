@@ -33,9 +33,12 @@ What you can change
    * - Player colors, selection and move markers, terrain detail thresholds
      - ``client.graphics.ron`` in the client's asset pack.
 
-Executable game code, textures, fonts, and the interface are part of the
-client and are not downloaded. Lua scripting for missions and triggers is
-planned; see :doc:`../project/scripting`.
+Executable game code, fonts, and the interface layout are part of the client
+and are not downloaded. Servers *can* distribute custom textures
+(``textures/**/*.png``) and translations (``locales/*.lang.ron``) via
+``--assets DIR``; connecting clients download only files missing from their
+SHA-256 disk cache and clear them upon disconnecting. Lua scripting for
+missions and triggers is planned; see :doc:`../project/scripting`.
 
 Create a mod
 ------------
@@ -77,13 +80,24 @@ Each option is independent; an omitted file uses the bundled default. The
 server validates both files at startup and exits with an error if they are
 invalid, before it opens the port. Restart the server after editing.
 
-Textures in mods
-----------------
+Textures and translations in mods
+---------------------------------
 
-Clients load textures from their own asset pack. A mod can reuse a bundled
-path such as ``Some("textures/terrain/grass.png")``, or use ``texture: None``
-to draw the terrain with its ``color``. A path that the client does not have
-fails to load and leaves every terrain drawn with flat colors.
+Pass ``--assets DIR`` to ``rts-server`` pointing at a directory containing
+``textures/**/*.png`` and/or ``locales/*.lang.ron`` files. When players connect:
+
+* Clients download only uncached files over the low-priority ``STREAM_ASSETS``
+  QUIC stream and verify every file's SHA-256 hash.
+* Synced textures override or add unit sprites, terrain tiles, deposit icons,
+  and HUD icons referenced by the server's rules.
+* Synced ``*.lang.ron`` files can add new languages or override specific keys
+  (for example ``unit.soldier``) for the duration of the connection.
+* Players can also drop custom ``*.lang.ron`` files into
+  ``<data_dir>/locales/`` for local multi-language support.
+
+A terrain type may also reuse a bundled texture path such as
+``Some("textures/terrain/grass.png")`` or use ``texture: None`` to draw flat
+colors.
 
 Change local graphics
 ---------------------

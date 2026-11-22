@@ -60,8 +60,8 @@ Constants are in ``crates/net/src/lib.rs`` unless noted.
      - Value
      - Meaning
    * - ``PROTOCOL_VERSION``
-     - 6
-     - Wire, setup, and replay version.
+     - 10
+     - Compact binary QUIC wire protocol version.
    * - ``MAX_NAME_CHARS``
      - 24
      - Display name characters; no controls or surrounding whitespace.
@@ -79,14 +79,20 @@ Constants are in ``crates/net/src/lib.rs`` unless noted.
      - One player's ``View`` frame: newly explored tiles and changed units
        in sight.
    * - ``MAX_SERVER_MESSAGE_BYTES``
-     - 16 MiB + 33 B
-     - Binary setup frame (``setup/wire.rs``).
+     - 4 MiB + 64 KiB
+     - Any server wire frame, including compressed lobby setup (``wire.rs``).
    * - ``MAX_SETUP_BYTES``
      - 4 MiB
      - Each rules or map document, original or minified (``setup/mod.rs``).
-   * - Compressed document
-     - 8 MiB
-     - Each zlib stream in the setup frame.
+   * - ``MAX_SYNC_ASSETS``
+     - 256
+     - Maximum client asset files advertised by a server (``assets.rs``).
+   * - ``MAX_ASSET_FILE_BYTES``
+     - 2 MiB
+     - Maximum size of one synced texture or translation file (``assets.rs``).
+   * - ``MAX_ASSET_PACK_BYTES``
+     - 32 MiB
+     - Maximum combined size of all synced assets from one server (``assets.rs``).
    * - ``MAX_COMMANDS_PER_TURN``
      - 64
      - Commands in one player's batch for a tick.
@@ -124,8 +130,8 @@ are listed in :doc:`server-cli`.
      - Value
      - Meaning
    * - ``MAX_FUTURE_TICKS``
-     - 8
-     - How far ahead of the server's tick input may be scheduled.
+     - 16
+     - How far ahead of the server's tick input may be scheduled (800 ms).
    * - ``MAX_CATCH_UP_TURNS``
      - 4
      - Turns produced per clock check after a stall, before the deadline
@@ -133,9 +139,9 @@ are listed in :doc:`server-cli`.
    * - Room code
      - 6 characters
      - ``A``–``Z`` and ``0``–``9``, chosen at random; unique among live rooms.
-   * - Inbound WebSocket frame
+   * - Inbound QUIC game frame
      - 64 KiB
-     - Larger client messages close the socket.
+     - Larger client messages close the connection.
 
 Client
 ------

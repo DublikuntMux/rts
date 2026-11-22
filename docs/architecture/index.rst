@@ -16,16 +16,18 @@ Hard requirements
    * - Requirement
      - Consequence
    * - Pure Rust
-     - No C or C++ dependencies. Scripting will use ``omnilua`` (pure-Rust
-       Lua), not ``mlua`` or Luau. Native TLS is not built in because standard
-       Rustls providers include C and assembly.
-   * - Desktop, web (``wasm32-unknown-unknown``), and Android
-     - Every dependency must build for all three. Networking must work in
-       browsers, so it uses WebSockets.
+     - No C or C++ dependencies. QUIC and TLS 1.3 run through ``quinn``,
+       ``rustls``, and the pure-Rust ``glomar``/``glomar-rustls`` crypto
+       provider. Scripting will use ``omnilua`` (pure-Rust Lua), not ``mlua``
+       or Luau.
+   * - Desktop and Android
+     - Every dependency must build for desktop (Linux, Windows) and Android
+       without a C toolchain.
    * - Multiplayer
-     - A server-authoritative simulation that sends each client only its
-       player's fog-of-war view (:doc:`visibility`). Local matches and replays
-       rely on a deterministic simulation; see :doc:`determinism`.
+     - A server-authoritative simulation over QUIC that sends each client only
+       its player's fog-of-war view (:doc:`visibility`), using compact binary
+       wire framing and optional server-to-client asset sync. Local matches and
+       replays rely on a deterministic simulation; see :doc:`determinism`.
    * - Mobile controls
      - Every action is reachable by touch; nothing depends on hover or on a
        hotkey alone.
@@ -44,19 +46,19 @@ Technology
    * - Simulation
      - ``rts_base``: plain Rust, integer math, ordered collections.
    * - Data
-     - RON files through ``serde`` and ``ron``.
+     - RON files through ``serde`` and ``ron`` (rules, maps, graphics, replays,
+       and ``*.lang.ron`` translation files).
    * - Networking
-     - Authoritative WebSocket server on Tokio and ``tokio-tungstenite``;
-       ``ewebsock`` clients; shared protocol in ``rts_net``; ``miniz_oxide``
-       for setup compression.
+     - Authoritative QUIC server and client on Tokio, ``quinn``, ``rustls``,
+       and ``glomar-rustls``; compact binary protocol with ``miniz_oxide``
+       raw-deflate compression in ``rts_net``.
    * - Assets
      - ``bevy_asset_packer`` bundles ``assets/`` into ``assets.pack`` at build
-       time.
+       time; servers can also stream custom textures and translations over a
+       dedicated low-priority QUIC stream.
    * - Scripting (M6)
      - ``omnilua`` with only the base, string, table, and math libraries, run
        through ``Lua::sandboxed`` with an instruction limit.
-   * - Web build
-     - Trunk, with ``index.html`` and ``Trunk.toml`` at the repository root.
    * - Android build
      - Gradle project in ``android/`` that builds ``crates/android`` with
        ``cargo ndk``.
@@ -87,11 +89,9 @@ Repository layout
            +++ assets/ | rts_assets: asset pack and data loaders
            +++ client/ | rts_client: the game, binary rts
            +++ android/ | rts_android: Android entry point
-           ++ assets/ | Game content: rules, maps, textures, font
+           ++ assets/ | Game content: rules, maps, locales, textures, font
            ++ android/ | Gradle app
            ++ docs/ | This handbook
-           ++ index.html | Web shell for Trunk
-           ++ Trunk.toml | Web build configuration
        }
    }
    @endsalt
@@ -111,23 +111,24 @@ Crates
        simulation, pathfinding, state hash. No Bevy.
      - —
    * - ``rts_net``
-     - Bounded RON protocol, binary lobby setup framing, setup checksums,
-       view frames, ordered turns, and verified full and player-perspective
-       replays. No renderer or sockets.
+     - Compact binary wire protocol, asset sync protocol, pure-Rust QUIC
+       transport (``quic`` feature), setup checksums, view frames, ordered
+       turns, and verified full and player-perspective replays. No renderer.
      - base
    * - ``rts_server``
-     - Socket-free room coordinator and native WebSocket runtime: lobbies,
-       private random layouts, fixed-rate simulation, input bound to each
-       player's knowledge, per-player view frames. Binary ``rts-server``.
+     - Socket-free room coordinator and QUIC runtime: lobbies, private random
+       layouts, fixed-rate simulation, input bound to each player's knowledge,
+       per-player view frames, and client asset serving. Binary ``rts-server``.
      - base, net
    * - ``rts_assets``
      - Builds ``assets.pack`` in ``build.rs``, opens it per platform, and
-       registers Bevy loaders for ``*.rules.ron``, ``*.map.ron``, and
-       ``*.graphics.ron``.
+       registers Bevy loaders for ``*.rules.ron``, ``*.map.ron``,
+       ``*.graphics.ron``, and ``*.lang.ron``.
      - base
    * - ``rts_client``
-     - The game: rendering, input, camera, scene-based menu, match sessions,
-       saved games, replay library, and settings. Binary ``rts``; ``cargo run`` starts it.
+     - The game: rendering, input, camera, scene-based menu, localization,
+       server asset sync, match sessions, saved games, replay library, and
+       settings. Binary ``rts``; ``cargo run`` starts it.
      - base, ai, assets, net
    * - ``rts_ai``
      - Skirmish opponent that reads its player's fog-of-war view and returns
@@ -153,8 +154,7 @@ Crates
    component rts_base
    component rts_ai
    component Bevy
-   component "Tokio\ntokio-tungstenite" as tokio
-   component ewebsock
+   component "Tokio / Quinn\nrustls + glomar" as quic
    rts_android --> rts_client
    rts_client --> rts_assets
    rts_client --> rts_net
@@ -162,13 +162,12 @@ Crates
    rts_client --> rts_ai
    rts_ai --> rts_base
    rts_client --> Bevy
-   rts_client --> ewebsock
    rts_assets --> rts_base
    rts_assets --> Bevy
    rts_server --> rts_net
    rts_server --> rts_base
-   rts_server --> tokio
    rts_net --> rts_base
+   rts_net --> quic
    note right of rts_base
      No Bevy, no floats in arithmetic,
      no hashed collections, no clocks.

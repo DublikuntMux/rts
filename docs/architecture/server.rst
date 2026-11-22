@@ -8,12 +8,12 @@ simulation of every match. It has two layers:
   sockets, no clock, and no OS randomness; callers pass the elapsed time and
   a seeded random generator for room codes and layout seeds. Tests drive it directly with
   exact timestamps and fixed seeds.
-* The runtime (``runtime.rs``, native only): a Tokio task that accepts
-  WebSocket connections and feeds the coordinator.
+* The runtime (``runtime.rs``): a Tokio task that accepts pure-Rust QUIC
+  connections and feeds the coordinator.
 
-The binary (``main.rs``) parses the command line, validates the setup, binds
-the port, and calls ``serve_with_config``. On ``wasm32`` the crate builds as a
-stub so ``cargo check --workspace`` works for the web target.
+The binary (``main.rs``) parses the command line, validates the setup and any
+``--assets`` directory, generates a self-signed Ed25519 certificate, binds the
+UDP port, and calls ``serve_with_config``.
 
 Runtime tasks
 -------------
@@ -27,33 +27,36 @@ Runtime tasks
    skinparam backgroundColor transparent
    skinparam componentStyle rectangle
    node "serve_with_config task" {
-     [TcpListener accept] as accept
+     [QUIC Endpoint accept] as accept
      [Coordinator] as coord
      [10 ms clock] as clock
      [dispatch] as dispatch
    }
-   node "connection task (one per socket)" as conn1 {
-     [WebSocket] as ws1
-     [heartbeat ping] as hb1
+   node "connection task (one per peer)" as conn1 {
+     [STREAM_GAME\npriority 10] as ws1
+     [STREAM_ASSETS\npriority -10] as assets1
+     [liveness tick] as hb1
    }
    queue "events\n(capacity 256, shared)" as events
-   queue "outbound\n(capacity 64, per socket)" as out1
+   queue "outbound\n(capacity 64, per peer)" as out1
    actor Client
    Client <--> ws1
+   Client <--> assets1
    accept --> conn1 : spawn
    ws1 --> events : Message / Invalid / Activity
    events --> coord : receive / touch
    clock --> coord : expire, advance
    coord --> dispatch : Deliveries
-   dispatch --> out1 : encoded frames
+   dispatch --> out1 : compact binary frames
    out1 --> ws1
    @enduml
 
 The main task runs a ``select!`` loop over four sources:
 
-1. **Accept.** Refuse the socket if there are already ``max_connections``
-   tasks. Otherwise allocate a ``ClientId``, register it with the
-   coordinator, create its outbound queue, and spawn its connection task.
+1. **Accept.** Refuse the incoming QUIC connection if there are already
+   ``max_connections`` tasks. Otherwise allocate a ``ClientId``, register it
+   with the coordinator, create its outbound queue, and spawn its connection
+   task.
 2. **Events.** Pass decoded messages to ``Coordinator::receive``; answer
    invalid frames with ``Error``; record activity with ``touch``.
 3. **Task completion.** A finished connection task disconnects its client.
@@ -61,12 +64,12 @@ The main task runs a ``select!`` loop over four sources:
    advance every match.
 
 Every coordinator call returns a list of ``Delivery { client, message }``.
-``dispatch`` reuses the binary setup frame prepared at startup and encodes
-other messages as text, then
-``try_send``\ s it to the client's outbound queue. A full queue or an encoding
-failure disconnects that client immediately, and the resulting deliveries
-(such as *a player disconnected*) are dispatched in the same pass. A slow
-client therefore cannot make the server buffer without limit or block others.
+``dispatch`` reuses the encoded compact binary setup frame prepared at startup
+and encodes other messages with ``encode_server``, then ``try_send``\ s them
+to the client's outbound queue. A full queue or an encoding failure
+disconnects that client immediately, and the resulting deliveries (such as
+*a player disconnected*) are dispatched in the same pass. A slow client
+therefore cannot make the server buffer without limit or block others.
 Connection tasks discard queued frames once their outbound sender closes.
 
 Connection tasks
@@ -74,16 +77,21 @@ Connection tasks
 
 Each connection task:
 
-* Completes the WebSocket handshake within ``handshake_timeout`` (5 s), with
-  a 64 KiB maximum incoming message and frame size.
-* Sends a ping every third of ``peer_timeout`` (every 5 s by default). Pongs
-  and pings count as activity, so idle but healthy sockets stay alive.
-  Browsers answer pings automatically.
-* Decodes text frames with ``decode_client``. Binary frames and decoding
-  failures become ``Invalid`` events.
+* Completes the QUIC/TLS 1.3 handshake and accepts the initial bidirectional
+  stream (``STREAM_GAME``, kind byte ``0``, priority ``10``) within
+  ``handshake_timeout`` (5 s).
+* Optionally accepts one low-priority bidirectional asset stream
+  (``STREAM_ASSETS``, kind byte ``1``, priority ``-10``) on the same QUIC
+  connection and serves manifest/file requests in a bounded task without
+  blocking gameplay or the coordinator.
+* Relies on QUIC transport keep-alives and notifies the coordinator every
+  third of ``peer_timeout`` while the connection remains open, so silent
+  players stay alive during gameplay without sending empty input frames.
+* Reads length-prefixed binary frames up to 64 KiB and decodes them with
+  ``decode_client``. Decoding failures become ``Invalid`` events.
 * Forwards events with ``try_send``. If the shared event queue is full, the
-  producing connection is closed rather than blocking every socket.
-* Writes outbound messages with a ``peer_timeout`` deadline.
+  producing connection is closed rather than blocking every peer.
+* Writes outbound binary frames with a ``peer_timeout`` deadline.
 
 The task ends on close, error, or timeout; the main loop then disconnects the
 client.
@@ -185,7 +193,7 @@ Input handling
      :Error: past, duplicate, or out of order;
      stop
    endif
-   if (tick ≤ sim tick + 8?) then (no)
+   if (tick ≤ sim tick + 16?) then (no)
      :Error: exceeds future lead;
      stop
    endif

@@ -27,8 +27,10 @@ Content
            +++ proving_grounds.map.ron | Two-player map, 48×32 tiles
            +++ crossroads.map.ron | Four-player map, 40×40 tiles
            +++ frontier.map.ron | Two-player skirmish, 34×24 tiles
+           ++ locales/ | Bundled translation files (en, de, es, uk)
            ++ textures/terrain/ | 128×128 PNG per terrain type, wood and gold deposit overlays
            ++ textures/units/ | Transparent PNG sprites for units and buildings
+           ++ textures/ui/commands/ | Transparent PNG command-card icons
            ++ fonts/ | .
            +++ Exo2.ttf | Interface font
            +++ Exo2-OFL.txt | Font license
@@ -37,17 +39,18 @@ Content
    @endsalt
 
 The rules and map are simulation data and also travel over the network.
-Graphics settings, textures, and the font are presentation assets: they stay local to each
-client and never affect simulation state.
+Graphics settings, textures, translations, and the font are presentation
+assets: they never affect simulation state. Servers can optionally distribute
+custom textures (``textures/**/*.png``) and translations
+(``locales/*.lang.ron``) to connecting clients over QUIC; see below.
 
 The asset pack
 --------------
 
 ``crates/assets/build.rs`` runs ``bevy_asset_packer``'s ``AssetBundler`` on
 ``assets/`` and writes ``assets.pack`` into the Cargo profile directory (for
-example ``target/debug/`` or ``target/wasm32-unknown-unknown/release/``). It
-reruns whenever ``assets/`` changes, so editing a map and running
-``cargo run`` picks up the change.
+example ``target/debug/``). It reruns whenever ``assets/`` changes, so editing
+a map, texture, or translation and running ``cargo run`` picks up the change.
 
 ``with_bundle`` opens the pack and then starts the app:
 
@@ -60,10 +63,6 @@ reruns whenever ``assets/`` changes, so editing a map and running
    * - Desktop
      - ``AssetBundle::from_file`` on ``assets.pack`` next to the running
        executable.
-   * - Web
-     - ``AssetBundle::from_url("assets.pack")``, awaited in
-       ``wasm_bindgen_futures::spawn_local`` before the Bevy app starts. Later
-       reads use HTTP range requests.
    * - Android
      - Opened through the ``AssetManager`` from the APK, where it is stored
        uncompressed, and read as one mapped buffer. The asset handle is leaked
@@ -96,7 +95,7 @@ A missing or corrupt pack panics at startup with the path and the error.
 Data loaders
 ------------
 
-``DataPlugin`` registers three asset types through one generic loader:
+``DataPlugin`` registers four asset types through one generic loader:
 
 .. list-table::
    :header-rows: 1
@@ -114,6 +113,9 @@ Data loaders
    * - ``Graphics``
      - ``graphics.ron``
      - Validated local presentation settings; also used as a resource.
+   * - ``LocaleData``
+     - ``lang.ron``
+     - Validated translation table (``code``, ``name``, ``strings`` map).
 
 Rules and map assets keep the original text because the match setup carries text, not parsed
 values. The client builds its solo ``MatchSetup`` from these strings, exactly
@@ -209,11 +211,33 @@ with nearest-neighbour scaling, so every art pixel is a crisp square block.
        - 64×64, ×4
        - 256×256
 
+Localization and server-synced assets
+-------------------------------------
+
+``LocalePlugin`` (``crates/client/src/locale.rs``) loads bundled translations
+from ``assets/locales/*.lang.ron`` and any user-placed files from
+``<data_dir>/locales/*.lang.ron``. ``Localization`` resolves keys through
+three layers (server overlay → external disk file → bundled asset), falling
+back to English (``en``) and finally the raw key. Switching language in
+**Settings** persists in ``settings.ron`` and rebuilds the menu immediately.
+
+When connecting to an ``rts-server`` launched with ``--assets DIR``, the client
+downloads any uncached ``textures/**/*.png`` and ``locales/*.lang.ron`` files
+over ``STREAM_ASSETS``, verifies each file's SHA-256 digest, caches it under
+``<data_dir>/asset_cache/<sha256>``, and installs textures into
+``ServerAssets`` and translations into ``Localization``. Renderers check
+``ServerAssets`` before falling back to ``AssetServer``. Disconnecting or
+starting a solo or replay match clears both server overlays cleanly.
+
 Adding an asset
 ---------------
 
-1. Put the file under ``assets/``.
-2. Load it through the ``AssetServer`` with a path relative to ``assets/``.
-3. Use only formats enabled in the workspace Bevy features (PNG for images).
+1. Put the file under ``assets/`` (or pass ``--assets DIR`` to ``rts-server``
+   for server-distributed textures and translations).
+2. Load textures through ``server_assets::load_image`` with a path relative to
+   ``assets/``.
+3. Use only formats enabled in the workspace Bevy features (PNG for images,
+   ``*.lang.ron`` for translations).
 
-Mods sent by a server cannot add textures; see :doc:`../guides/modding`.
+See :doc:`../guides/modding` for distributing custom textures and translations
+from a server.

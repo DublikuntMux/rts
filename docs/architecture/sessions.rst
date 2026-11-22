@@ -33,15 +33,17 @@ Components
        the local player's ``PlayerKnowledge``, and one ``Seat`` (knowledge,
        view, ``rts_ai::Opponent``) per computer opponent.
    * - ``SessionStatus``
-     - Interface view: ``message``, ``error``, ``server``, ``rooms``,
-       ``lobby``, ``joining``, ``running``, ``stopped``, ``kind``,
-       ``has_replay``, and ``importing``.
+     - Interface view: ``message``, ``error``, ``server``, ``asset_progress``,
+       ``rooms``, ``lobby``, ``joining``, ``running``, ``stopped``, ``kind``,
+       ``result``, and ``has_replay``.
    * - ``Network``
-     - Non-send resource holding the WebSocket ``Connection``, if any.
+     - Non-send resource holding the QUIC ``Connection`` handle and its
+       smoothed RTT tracker, if any.
+   * - ``ServerAssets``
+     - Resource holding server-synced textures (``server_assets.rs``), cleared
+       on disconnect or local play.
    * - ``Library``
      - Save and replay records, backed by ``Store`` in ``storage.rs``.
-   * - ``ReplayIo``
-     - Browser file picker and download bridge in ``replay_io.rs``.
 
 ``SessionStatus`` is a projection; ``Session::mode`` is the match state
 machine. Server state is separate: ``Offline``, ``Connecting { url }``,
@@ -75,11 +77,9 @@ Actions
        replay shelf.
    * - ``Delete { shelf, id }``
      - Remove a save or replay record.
-   * - ``ImportReplay``, ``ExportReplay { id }``
-     - Import into the browser library or download a stored replay.
 
-The ``SessionActions`` system set runs ``handle_actions`` followed by
-``finish_replay_import``. Menu action processing runs before this set.
+The ``SessionActions`` system set runs ``handle_actions``. Menu action
+processing runs before this set.
 
 Modes
 -----
@@ -205,19 +205,22 @@ solo matches feel the same as online ones:
   steps earlier, and translates it then. Translating on the executing tick
   applies the same current-sight rules as the server's revalidation.
 
-Online, the client sends its pending commands once per applied frame, for the
-latest *received* tick plus two. Using the received tick rather than the
-applied tick keeps input ahead of the server even when the client has a
-backlog. ``submitted_tick`` makes sure each tick is sent at most once.
+Online, the client sends pending commands only when ``Match::pending`` is
+non-empty, targeting the latest *received* tick plus an RTT-adaptive lead
+(``2..=16`` ticks). Using the received tick rather than the applied tick keeps
+input ahead of the server even when the client has a backlog. ``submitted_tick``
+makes sure each tick is sent at most once.
 
 Connection flow
 ---------------
 
-``Connection::connect`` validates the address (``ws://`` or ``wss://``, at most
-2048 bytes; native builds refuse ``wss://``) and opens an ``ewebsock``
-socket. Socket events enter a bounded channel of 128 events; if it fills,
-the socket stops reading. On open, the client sends
-``Rooms { version: 9 }``. The first ``Rooms`` reply marks the server
+``Connection::connect`` parses the server address (``quic://host[:port][#sha256]``
+or bare ``host[:port]``, defaulting to port ``9001``) and spawns a background
+Tokio QUIC client task. After completing the TLS 1.3 handshake and opening
+``STREAM_GAME``, the client runs asset sync on ``STREAM_ASSETS``, verifies
+hashes against ``<data_dir>/asset_cache/``, downloads only missing textures and
+translations, emits ``SyncedAssets`` to Bevy, and then sends
+``Rooms { version: 10 }``. The first ``Rooms`` reply marks the server
 ``Connected``. Create and join use this same connection.
 
 ``poll_network`` runs in ``PreUpdate`` and handles up to 128 events per frame:
@@ -280,21 +283,10 @@ Names use one more than the highest automatic number in use, such as
 **Save 01** or **Replay 03**. Data is written before metadata. Unreadable
 metadata is skipped; records sort newest first.
 
-``storage.rs`` bounds each document to 32 MiB. Native storage uses
+``storage.rs`` bounds each document to 32 MiB. Desktop storage uses
 ``$XDG_DATA_HOME/rts``, then ``%LOCALAPPDATA%/rts``, then
 ``~/.local/share/rts``. Android uses the app's internal data path. Writes
-use ``<file>.tmp`` followed by rename. Browsers use ``localStorage`` keys
-``rts/<path>``. Values use ``miniz_oxide`` deflate and encode each byte as
-one character in U+0100 through U+01FF.
-
-``ReplayIo`` handles browser import and export only. Import reads a chosen
-file asynchronously through a one-slot channel. ``finish_replay_import``
-validates it and adds it to the replay shelf. The session retains the file
-input and its callbacks until selection or cancellation, then releases both;
-canceling clears the import state so another file can be chosen. Duplicate
-import requests cannot replace an active picker. Export downloads a stored
-record as ``match.replay.ron``. Native builds expose neither button; their
-records live in the data folder. See :doc:`../guides/replays`.
+use ``<file>.tmp`` followed by rename. See :doc:`../guides/replays`.
 
 Leaving
 -------

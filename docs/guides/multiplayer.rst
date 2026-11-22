@@ -1,11 +1,12 @@
 Host a multiplayer match
 ========================
 
-Online matches run on ``rts-server``, an authoritative WebSocket server. It
-owns the map, rules, clock, and simulation. Clients send orders and draw the
-match from private view frames: each player receives only what its own units
-can see. This page covers running the server
-and playing through it; :doc:`../architecture/server` and
+Online matches run on ``rts-server``, an authoritative QUIC server with built-in
+TLS 1.3 encryption. It owns the map, rules, clock, and simulation, and can
+optionally send custom textures and translations to connecting clients. Clients
+send orders and draw the match from private view frames: each player receives
+only what its own units can see. This page covers running the server and
+playing through it; :doc:`../architecture/server` and
 :doc:`../architecture/networking` explain the design.
 
 Start the server
@@ -19,16 +20,19 @@ From the repository root:
 
 The bind address is optional. Without it the server uses the
 ``RTS_SERVER_ADDR`` environment variable, then ``127.0.0.1:9001``. The server
-validates its rules and map generator before it opens the port and prints:
+validates its rules, map generator, and optional ``--assets`` directory before
+opening the UDP port and prints:
 
 .. code-block:: text
 
-   RTS server listening on ws://127.0.0.1:9001 (use a reverse proxy for TLS)
+   RTS QUIC server listening on quic://127.0.0.1:9001
+   Certificate SHA-256: <64-hex-fingerprint>
 
 By default every match plays a fresh *Random frontier* layout that only the
 server knows, so fog of war hides the map too. ``--map`` plays a fixed map
-instead; anyone with that map file knows its layout. :doc:`../reference/server-cli`
-lists every option, including ``--rules``, ``--map``, and ``--seed``.
+instead; anyone with that map file knows its layout. ``--assets DIR`` serves
+custom ``textures/**/*.png`` and ``locales/*.lang.ron`` files to connecting
+clients. :doc:`../reference/server-cli` lists every option.
 
 Choose where to listen
 ----------------------
@@ -38,27 +42,22 @@ Choose where to listen
    :widths: 30 35 35
 
    * - Players
-     - Bind address
+     - Bind address (UDP)
      - Clients enter
    * - Same machine
      - ``127.0.0.1:9001``
-     - ``ws://127.0.0.1:9001``
+     - ``quic://127.0.0.1:9001``
    * - Local network
      - ``0.0.0.0:9001``
-     - ``ws://<server LAN IP>:9001``
-   * - Internet, native clients
-     - ``0.0.0.0:9001`` with the port forwarded
-     - ``ws://<public address>:9001``
-   * - Internet, HTTPS browser clients
-     - ``127.0.0.1:9001`` behind a TLS reverse proxy
-     - ``wss://<domain>/<path>``
+     - ``quic://<server LAN IP>:9001``
+   * - Internet
+     - ``0.0.0.0:9001`` with UDP port 9001 forwarded
+     - ``quic://<public address>:9001#<sha256>``
 
-Native clients support ``ws://`` only. Browser clients support ``ws://`` and
-``wss://`` through the browser's WebSocket, but a page served over HTTPS may
-only open ``wss://``. The server speaks plain WebSockets, so terminate TLS in a
-reverse proxy such as Caddy or nginx and forward the upgraded connection to the
-server. Native TLS is not built in because the standard Rustls crypto providers
-contain C and assembly, which the pure-Rust requirement excludes.
+Connections are always encrypted with TLS 1.3 using pure-Rust cryptography
+(``quinn``, ``rustls``, and ``glomar-rustls``). Appending ``#<sha256>`` pins
+the server's certificate fingerprint printed at startup so clients reject
+mismatched certificates.
 
 Play through a room
 -------------------
@@ -118,8 +117,9 @@ Unexplored terrain is black, explored terrain out of sight is dimmed, and
 enemy units disappear when they leave sight.
 
 Clients can have different bundled content from the server. The server sends
-its own rules, and clients use them for the match. Clients only need
-compatible game code and the same protocol version (currently 9).
+its own rules (plus any custom textures and translations configured with
+``--assets``), and clients use them for the match. Clients only need
+compatible game code and the same protocol version (currently 10).
 
 Each client records the match as it saw it. **Watch replay** and **Save to
 library** on the last match keep that private replay; it never contains the
@@ -158,12 +158,10 @@ Messages you may see
 
    * - Message
      - Meaning
-   * - *Enter a server address beginning with ws:// or wss://.*
-     - The address has no WebSocket scheme.
-   * - *This native build uses ws:// servers.*
-     - Native clients cannot open ``wss://``. Use ``ws://`` or the browser.
+   * - *Invalid server address* / *Certificate fingerprint must be 64 hex characters*
+     - Check the ``quic://host:port`` address and optional ``#<sha256>`` pin.
    * - *Server connection timed out.*
-     - The socket did not open within 10 seconds.
+     - The QUIC handshake did not complete within 10 seconds (check UDP port).
    * - *room does not exist*, *room is full*, *match has already started*
      - The join was refused. Check the code or create a new room.
    * - *protocol version does not match*

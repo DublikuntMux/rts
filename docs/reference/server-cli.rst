@@ -3,13 +3,13 @@
 
 .. code-block:: text
 
-   rts-server [bind-address] [--rules PATH] [--map PATH] [--seed u64]
+   rts-server [bind-address] [--rules PATH] [--map PATH] [--seed u64] [--assets DIR]
 
 Run it from the repository with Cargo:
 
 .. code-block:: sh
 
-   cargo run --release -p rts_server --bin rts-server -- 0.0.0.0:9001 --map mods/battle.map.ron
+   cargo run --release -p rts_server --bin rts-server -- 0.0.0.0:9001 --map mods/battle.map.ron --assets mods/my-mod
 
 Arguments
 ---------
@@ -21,7 +21,7 @@ Arguments
    * - Argument
      - Meaning
    * - ``bind-address``
-     - TCP address to listen on, such as ``0.0.0.0:9001``. Defaults to the
+     - UDP address to listen on, such as ``0.0.0.0:9001``. Defaults to the
        ``RTS_SERVER_ADDR`` environment variable, then ``127.0.0.1:9001``.
    * - ``--rules PATH``
      - Rules file sent to every client. Defaults to the bundled
@@ -33,6 +33,10 @@ Arguments
    * - ``--seed N``
      - Unsigned 64-bit match seed for a fixed map. Defaults to 0. It stays on
        the server and is reserved for simulation randomness.
+   * - ``--assets DIR``
+     - Directory containing optional ``textures/**/*.png`` and
+       ``locales/*.lang.ron`` client assets served to connecting clients over
+       ``STREAM_ASSETS``.
 
 Without ``--map``, every match plays a fresh two-player *Random frontier*
 layout generated from a seed drawn from OS entropy at the start of that
@@ -99,7 +103,7 @@ command-line options yet; programs that embed the server pass their own
      - Silence before a socket waiting in a room is dropped.
    * - ``handshake_timeout``
      - 5 s
-     - Time to complete the WebSocket handshake.
+     - Time to complete the QUIC/TLS 1.3 handshake and open ``STREAM_GAME``.
    * - ``poll_interval``
      - 10 ms
      - Coordinator clock interval; values above 10 ms are capped at 10 ms.
@@ -107,8 +111,10 @@ command-line options yet; programs that embed the server pass their own
 All limits and timeouts must be positive. :doc:`../architecture/server`
 describes how they are enforced.
 
-TLS
----
+TLS and certificate pinning
+---------------------------
 
-The server accepts plain WebSockets only. For ``wss://`` clients, run it
-behind a TLS reverse proxy that forwards WebSocket upgrades.
+The server always encrypts traffic with TLS 1.3 over QUIC using a pure-Rust
+Ed25519 self-signed certificate generated at startup. Its 64-hex SHA-256
+fingerprint is printed on startup; clients can pin it by appending
+``#<sha256>`` to the ``quic://host:port`` address.

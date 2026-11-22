@@ -30,17 +30,24 @@ Why this model
        again when the command executes, and it owns the clock.
    * - Slow players cannot stall others
      - The server advances at 20 Hz whether or not input arrives.
-   * - Browsers can play
-     - WebSockets work everywhere; the protocol has no UDP or WebRTC
-       dependency.
+   * - Built-in encryption & low-bandwidth framing
+     - Connections run over pure-Rust QUIC (TLS 1.3 via ``quinn``, ``rustls``,
+       and ``glomar-rustls``) with a compact binary wire protocol, delta
+       encoding, automatic raw-deflate compression, and RTT-adaptive input lead.
+   * - Server-provided client assets
+     - Connecting clients sync custom textures and translations over a
+       separate low-priority QUIC stream (``STREAM_ASSETS``), cached by SHA-256
+       on disk so reconnects skip unchanged files.
    * - Replays are possible
      - Each client records the frames it received as a player-perspective
        replay. Local matches record full deterministic turns.
 
-The cost is bandwidth. A frame lists every visible unit that changed, so it
-grows with the number of moving units in sight. Quiet frames are only a few
-bytes. Commands still take effect two ticks after the client schedules them,
-plus network delay.
+The compact binary encoding keeps bandwidth tiny even over poor connections:
+a quiet ``ViewFrame`` is 3 bytes on the wire, idle clients omit empty
+``Input`` frames completely, and larger discovery or battle frames deflate
+automatically whenever compression shrinks them. Commands take effect after
+an RTT-adaptive lead (2 to 16 ticks, defaulting to 2 ticks on low-latency
+links).
 
 A command's journey
 -------------------
@@ -115,37 +122,50 @@ Input delay timeline
    I is 44
    @enduml
 
-Input sent after receiving frame *N* targets tick *N + 2*, which the server
-simulates 100 ms after tick *N*. If input arrives after its tick has been
-simulated, the server rejects it with ``Error`` and the client keeps playing;
-the command is lost. Inputs more than eight ticks ahead are also rejected.
-Adaptive input delay is not implemented.
+Input sent after receiving frame *N* targets tick *N + lead*, where ``lead``
+adapts to the QUIC connection's smoothed RTT (`ceil(rtt / 2 / 50 ms) + 1`,
+clamped to ``2..=16`` ticks). On low-latency connections ``lead`` stays at 2
+ticks (100 ms); on high-latency links it expands up to 16 ticks (800 ms) so
+orders still land before the server simulates their tick. Clients skip sending
+empty ``Input`` batches when no commands are queued. If input arrives after
+its tick has been simulated, or more than 16 ticks ahead, the server rejects
+it with ``Error`` and the client keeps playing; the command is lost.
 
 Shared clock, separate pacing
 -----------------------------
 
 The server is the only clock. Clients run ``FixedUpdate`` at 20 Hz too, but a
-client's fixed step only *consumes* frames:
+client's fixed step only *consumes* frames with jitter-tolerant pacing:
 
 * If the next frame has not arrived, the client waits without advancing,
   letting visuals settle, and shows *Waiting for the server…* after 0.25 s.
-* If several frames are buffered after a slow frame, it applies up to eight
-  per fixed step to catch up.
+* When 1–2 ticks are buffered during play, it consumes 1 per fixed step so
+  small arrival bursts smooth out instead of rubber-banding.
+* When 3–6 frames are buffered, it consumes 2 per step to catch up smoothly;
+  when more than 6 are queued after a stall, it applies up to 8 per step.
 * After 15 seconds without progress it stops.
 
 The server bounds its own catch-up after stalls to four ticks per clock
 check, so a suspended server cannot flood clients with a burst.
 
-Setup delivery
---------------
+Setup and asset delivery
+------------------------
+
+When a client connects over QUIC, it opens the ordered gameplay stream
+(``STREAM_GAME``, priority ``10``) and a separate low-priority asset stream
+(``STREAM_ASSETS``, priority ``-10``). The client requests the server's asset
+manifest, checks each file's SHA-256 against its local disk cache
+(``<data_dir>/asset_cache/``), downloads only missing textures
+(``textures/**/*.png``) and translations (``locales/*.lang.ron``), verifies
+every hash, and installs them for the duration of the connection.
 
 When a player creates or joins a room, the server sends a ``LobbySetup``: the
-exact rules text, the room's map name, and the player count. It is sent as a
-compressed binary frame (:doc:`../reference/setup-frame`). The client parses
-the rules and acknowledges with ``Loaded { checksum }``. The setup never
-includes the map's terrain, units, deposits, starts, or the seed. A server
-can run rules mods without client rebuilds. The protocol version and the
-simulation code must still match.
+exact rules text, the room's map name, and the player count, encoded in the
+compact binary wire format (:doc:`../reference/setup-frame`). The client
+parses the rules and acknowledges with ``Loaded { checksum }``. The setup
+never includes the map's terrain, units, deposits, starts, or the seed. A
+server can run rules, texture, and translation mods without client rebuilds.
+The protocol version and the simulation code must still match.
 
 When the match starts, each player receives
 ``Started { players, input_delay, view }``. ``view`` is that player's
@@ -163,8 +183,8 @@ When the match starts, each player receives
    participant Client as C
    participant Server as S
    S -> S : startup: validate rules and map\n(or the random layout generator),\ncompute LobbySetup checksum K
-   C -> S : Join { version: 9, code, name }
-   S --> C : Setup (rules + map name, zlib)
+   C -> S : Join { version: 10, code, name }
+   S --> C : Setup (rules + map name, compact binary + deflate)
    C -> C : inflate with bounds, parse rules
    C -> S : Loaded { checksum: k }
    alt k == K
@@ -181,7 +201,7 @@ When the match starts, each player receives
 Room browsing and readiness
 ---------------------------
 
-A connection can request ``Rooms { version: 9 }`` before creating or joining
+A connection can request ``Rooms { version: 10 }`` before creating or joining
 a room. The response lists at most 64 public rooms with space that have not
 started, sorted by code. Private rooms require their code. Creating or
 joining supplies a display name. Lobby updates carry room visibility and
@@ -208,10 +228,6 @@ What is not implemented
 
 * **Recovery.** A client that falls behind or loses its connection stops;
   reconnecting and joining a running match are not supported.
-* **Encryption.** The server speaks plain WebSockets; use a TLS reverse proxy.
-* **Adaptive delay.** The input delay is fixed at two ticks.
-* **Compact frames.** Frames are RON text. Binary or compressed frames would
-  cut bandwidth for large battles.
 
 A modified client can change its own display, but it cannot change the server's
 simulation or see what its player has not seen.

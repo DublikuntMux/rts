@@ -63,16 +63,15 @@ Menu layout
    @endsalt
 
 The title bar shows **RTS** and a breadcrumb. The sidebar selects
-**Singleplayer**, **Multiplayer**, **Replays**, or **Settings**. **Quit** is
-hidden in browsers. A scrollable host holds one page. A message line below
-it shows session results and errors; navigation clears the message. The
-message line takes no space while empty.
-A separate layer holds dialogs.
+**Singleplayer**, **Multiplayer**, **Replays**, **Settings**, or **Quit**. A
+scrollable host holds one page. A message line below it shows session results
+and errors; navigation clears the message. The message line takes no space
+while empty. A separate layer holds dialogs.
 
 Compact mode starts below 760 logical pixels of available width, calculated
 as window width divided by ``UiScale``. The 216-pixel sidebar becomes a
 horizontal navigation row with **Solo**, **Online**, **Replays**, **Settings**,
-and native-only **Quit** labels. The navigation row wraps when needed to keep
+and **Quit** labels. The navigation row wraps when needed to keep
 48-pixel targets. Content uses the full screen width below navigation;
 list/detail columns wrap without a fixed minimum width. Page padding changes
 from 40 to 16 pixels, and the title bar minimum from 72 to 56 pixels.
@@ -137,7 +136,8 @@ Pages and actions
      - Server address, address hint, **Recent: <url>**, and **Connect**.
        Failure shows a reason and **Retry**. The typed address is kept.
    * - Multiplayer: Connecting
-     - Server URL, spinner, and **Cancel**.
+     - Server URL, live asset sync progress when downloading server textures or
+       translations, spinner, and **Cancel**.
    * - Multiplayer: Rooms
      - Server host, **Connected** badge, **Refresh**, **Disconnect**, and
        public rooms. Each row shows the host's name, occupied/capacity counts,
@@ -150,10 +150,10 @@ Pages and actions
      - Replay browser with the same filters and ordering as saves. A
        **Last match** row appears when a recording exists and no map filter
        is set. It offers **Watch replay** and **Save to library**. Stored
-       records offer **Watch replay**, **Delete…**, and browser-only
-       **Export**. Browsers also offer **Import replay file**.
+       records offer **Watch replay** and **Delete…**.
    * - Settings
-     - **Player name**, **Interface scale** (75, 100, 125, or 150 percent),
+     - **Player name**, **Language** (bundled, external, and server-provided
+       locales), **Interface scale** (75, 100, 125, or 150 percent),
        **Edge scrolling**, and desktop-only **Fullscreen**.
 
 The room page marks slots with **(host)** and **(you)** and badges for
@@ -164,8 +164,8 @@ all slots are filled and ready. Guests see a disabled **Start (host only)**
 button. A hint explains whether players, readiness, or the host are awaited.
 
 The server address accepts at most 256 characters, without whitespace or
-control characters. **Connect** requires a ``ws://`` or ``wss://`` prefix
-and a nonempty remainder. Invite codes contain six ASCII letters or digits
+control characters. **Connect** validates ``quic://host[:port][#sha256]`` or
+bare ``host[:port]``. Invite codes contain six ASCII letters or digits
 and normalize to uppercase. Join and create actions wait for a connection;
 repeated join requests are disabled while one is pending.
 
@@ -206,10 +206,7 @@ Touch text input
 
 Text fields always use the platform keyboard. Tapping or clicking a field
 focuses it, and Bevy enables the window's input method while a field has
-focus; on Android and iOS that shows the system on-screen keyboard. Browsers
-use HTML inputs positioned over the canvas fields because winit's web backend
-cannot open an input method. The HTML input receives the tap directly, preserving
-the browser's user gesture requirement. Edits
+focus; on Android that shows the system on-screen keyboard. Edits
 apply directly to the field and the menu model, so there is no Done step.
 Pressing Enter in the address field connects, and Enter in the invite field
 joins. The code field accepts letters and digits and uppercases them as they

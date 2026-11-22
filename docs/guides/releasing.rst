@@ -8,7 +8,7 @@ Continuous integration
 ----------------------
 
 ``ci.yml`` runs on every branch push, every pull request, and on demand. It
-has four independent jobs:
+has three independent jobs:
 
 .. list-table::
    :header-rows: 1
@@ -23,8 +23,6 @@ has four independent jobs:
        ``cargo clippy --locked --workspace --all-targets -- -D warnings`` on
        Linux. The job installs the X11, Wayland, ALSA, and udev development
        packages needed to link Bevy.
-   * - WebAssembly check
-     - ``cargo check --locked --workspace --target wasm32-unknown-unknown``.
    * - Handbook
      - The strict Sphinx build from :doc:`../documentation`, with warnings
        treated as errors.
@@ -40,7 +38,7 @@ Release
 -------
 
 ``release.yml`` is started manually from **Actions → Release → Run workflow**.
-It takes three inputs:
+It takes two inputs:
 
 .. list-table::
    :header-rows: 1
@@ -52,8 +50,6 @@ It takes three inputs:
      - Required. ``0.2.0`` or ``0.2.0-rc.1``; a leading ``v`` is accepted.
    * - ``prerelease``
      - Marks the GitHub release as a pre-release.
-   * - ``deploy_web``
-     - Deploy the browser build to GitHub Pages. Enabled by default.
 
 The workflow builds and publishes:
 
@@ -70,8 +66,6 @@ The workflow builds and publishes:
      - ``rts.exe``, ``rts-server.exe``, and ``assets.pack``.
    * - ``rts-android-<tag>.apk``
      - Release APK, signed with the debug key.
-   * - ``rts-web-<tag>.zip``
-     - Trunk output for any static host.
    * - ``CHANGELOG.md`` and ``SHA256SUMS``
      - Generated release notes and checksums for every other asset.
 
@@ -97,33 +91,15 @@ If the tag already points at the current commit, re-running the workflow
 refreshes the release's assets and notes. A tag that points at a different
 commit is rejected before any build starts.
 
-GitHub Pages
-------------
-
-Enable Pages once under **Settings → Pages → Build and deployment**, with
-**Source: GitHub Actions**. The ``deploy-web`` job publishes the ``dist``
-output through ``actions/deploy-pages``. For a project repository the site is
-``https://<owner>.github.io/<repo>/``. The web job derives that base path from
-the repository name and passes it to ``trunk build --public-url``, so the
-hashed JavaScript, WebAssembly, and ``assets.pack`` URLs resolve under the
-subdirectory.
-
-A custom domain or a ``<owner>.github.io`` repository needs its own base path.
-Adjust the *Choose the GitHub Pages base path* step in
-``.github/workflows/release.yml`` when the default project-site layout no
-longer applies. Pages serves WebAssembly with the required content type and
-supports byte-range requests, which the asset pack loader needs.
-
 Caching
 -------
 
 Every Rust job restores Cargo's registry and target directory with
-``Swatinem/rust-cache``. Cache keys are shared per workload (native CI, wasm
-CI, and one key per release platform) rather than per run, and nightly Rust
-versions are part of the key, so a toolchain update starts a fresh cache.
-Release jobs also cache Trunk's downloaded ``wasm-bindgen`` and ``wasm-opt``
-tools, ``gradle/actions/setup-gradle`` caches the Gradle user home, and the
-Android job caches the SDK platform, build tools, and NDK.
+``Swatinem/rust-cache``. Cache keys are shared per workload (native CI and one
+key per release platform) rather than per run, and nightly Rust versions are
+part of the key, so a toolchain update starts a fresh cache.
+``gradle/actions/setup-gradle`` caches the Gradle user home, and the Android
+job caches the SDK platform, build tools, and NDK.
 
 GitHub limits each repository to 10 GB of caches and evicts least recently
 used entries. The caches are an acceleration layer: a missing or evicted cache

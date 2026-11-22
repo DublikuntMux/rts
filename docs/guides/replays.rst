@@ -64,26 +64,15 @@ save creates a record; it does not replace the previous save.
    * - Other native platforms
      - ``$XDG_DATA_HOME``, then ``LOCALAPPDATA``, then ``~/.local/share``,
        followed by ``rts/``.
-   * - Browser
-     - This site's ``localStorage``, with keys prefixed by ``rts/``.
 
-Native writes use a temporary ``<file>.tmp`` and rename it to finish.
-Browser documents use deflate compression. Storage refuses documents over
-32 MiB and reports unavailable or full storage. Browser storage belongs to
-the site and browser profile; clearing site data removes saves, replays,
-and settings.
+Writes use a temporary ``<file>.tmp`` and rename it to finish. Storage refuses
+documents over 32 MiB and reports unavailable or full storage.
 
-Import and export
-------------------
+Files on disk
+-------------
 
-In browsers, **Import replay file** opens a picker and adds a verified RON
-recording to the library. Select a stored replay and choose **Export** to
-download ``match.replay.ron``. **Save replay** stores locally; use **Export**
-to keep a separate file.
-
-Native and Android builds have no import or export buttons. Native records
-are in the storage folder above. Keep both metadata and data documents when
-copying a library record. The data document is plain replay RON.
+Records live directly in the storage folder above. Keep both metadata and data
+documents when copying a library record. The data document is plain replay RON.
 
 Errors
 -------

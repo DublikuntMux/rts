@@ -1,25 +1,34 @@
 Multiplayer protocol
 ====================
 
-Clients and the server exchange WebSocket messages defined in ``rts_net``
-(``crates/net/src/lib.rs``). The crate has no renderer or socket dependency;
-the server runtime and the client session supply the transport. The current
-protocol version is **9**. Older clients are incompatible. Version 8 full
-replays still load; see :doc:`replay-format`.
+Clients and the server exchange compact binary messages over QUIC, defined in
+``rts_net`` (``crates/net/src/lib.rs``, ``wire.rs``, ``assets.rs``, and
+``quic.rs``). The current protocol version is **10**. Older clients are
+incompatible. Version 8 and 9 replays still load; see :doc:`replay-format`.
 
-Encoding
---------
+Encoding and streams
+--------------------
 
-* Lobby and gameplay messages are RON text in WebSocket *text* frames. RON
-  nesting is limited to 64 levels.
-* The lobby setup is a binary frame, described in :doc:`setup-frame`.
-* The server treats any binary frame from a client as invalid. Clients
-  reject a text-encoded setup and unknown binary tags.
-* Every message is validated when encoded and when decoded. Structures deny
-  unknown fields.
+* Connections use pure-Rust QUIC + TLS 1.3 (``quinn``, ``rustls``, and
+  ``glomar-rustls``) with two bidirectional stream kinds:
 
-Text encoding stops at the applicable byte limit while serializing, so an
-oversized message or replay is rejected before building its complete output.
+  * ``STREAM_GAME = 0`` (priority ``10``): ordered lobby, setup, input, and
+    view-frame messages.
+  * ``STREAM_ASSETS = 1`` (priority ``-10``): optional manifest and file
+    download for server-provided textures (``textures/**/*.png``) and
+    translations (``locales/*.lang.ron``), verified by SHA-256.
+
+* Every frame on both streams is length-prefixed with an unsigned LEB128
+  varint, followed by a single header byte (bits ``0..7`` = message tag,
+  bit ``7`` = raw-deflate compressed whenever compression shrinks payloads
+  of 64 bytes or more).
+* Quiet ``View`` frames are 3 bytes on the wire; ``Start`` and ``Leave`` are
+  1 byte. Clients skip sending empty ``Input`` batches when no commands are
+  queued.
+* ``Setup(LobbySetup)`` uses the same compact binary envelope with minified
+  rules; see :doc:`setup-frame`.
+* Every message is validated when encoded and when decoded, with strict
+  length bounds checked before allocating buffers.
 
 Shared types
 ------------
@@ -153,10 +162,10 @@ Message sequence
    hide footbox
    participant Client as C
    participant Server as S
-   C -> S : Rooms { version: 9 }
+   C -> S : Rooms { version: 10 }
    S --> C : Rooms { rooms }
-   C -> S : Create { version: 9, name, public }\nor Join { version: 9, code, name }
-   S --> C : Setup (binary)
+   C -> S : Create { version: 10, name, public }\nor Join { version: 10, code, name }
+   S --> C : Setup (compact binary + deflate)
    S --> C : Lobby { code, player, public, slots }
    C -> C : parse rules,\ncompute checksum
    C -> S : Loaded { checksum }
@@ -170,7 +179,9 @@ Message sequence
    loop every tick (50 ms)
      S --> C : View { frame }
      C -> C : validate and apply frame
-     C -> S : Input { tick: received + 2, commands }
+     opt pending commands non-empty
+       C -> S : Input { tick: received + lead, commands }
+     end
    end
    alt a player leaves or disconnects
      S --> C : Ended { reason }
@@ -209,7 +220,7 @@ Room membership:
 Input:
 
 * ``tick`` must be after the server's current tick, after this player's
-  previous ``Input``, and at most 8 ticks ahead. Gaps are allowed.
+  previous ``Input``, and at most 16 ticks ahead. Gaps are allowed.
 * The batch must fit the command limits and the per-message limit.
 * The server translates each command with the sender's knowledge. View IDs
   that do not resolve, or name units the player does not own, are removed.

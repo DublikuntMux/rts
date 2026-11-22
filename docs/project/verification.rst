@@ -6,6 +6,32 @@ first within each milestone. Add an entry when you finish one. State plainly
 what was *not* run, such as rendered browser sessions or a physical Android
 device.
 
+QUIC, localization, and server asset sync
+-----------------------------------------
+
+**QUIC transport, compact binary protocol, localization, and asset sync (2026-11-22).**
+Web (``wasm32``) support and WebSocket transport were removed and replaced with
+pure-Rust QUIC + TLS 1.3 (``quinn``, ``rustls``, ``glomar``, ``glomar-rustls``),
+verified via ``cargo tree`` to introduce zero ``ring``, ``aws-lc-rs``, or C
+dependencies. Wire framing moved to compact binary protocol v10 (3-byte quiet
+``ViewFrame``\ s, 1-byte ``Start``/``Leave``, delta-encoded IDs/tiles/positions,
+automatic raw-deflate compression, omitted empty upstream inputs, RTT-adaptive
+input lead up to 16 ticks, and jitter-tolerant frame pacing). Multi-language
+localization loads bundled ``assets/locales/{en,de,es,uk}.lang.ron`` and
+external ``<data_dir>/locales/*.lang.ron`` files with instant switching in
+**Settings**. Server-to-client asset sync over ``STREAM_ASSETS`` delivers
+custom ``textures/**/*.png`` and ``locales/*.lang.ron`` on connect with
+SHA-256 verification and disk caching, and clears overlays on disconnect or
+local play.
+
+Checks passed: ``cargo fmt --all --check``,
+``cargo clippy --workspace --all-targets -- -D warnings``,
+``cargo test --workspace`` (including pure-Rust QUIC handshake/framing,
+12 server QUIC integration tests, client-server modded asset sync and
+disconnect cleanup, locale key/placeholder completeness, and live menu
+language switching), and the strict Sphinx handbook build. A rendered desktop
+window and a physical Android device session were not run.
+
 Art direction
 -------------
 

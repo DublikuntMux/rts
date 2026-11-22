@@ -17,14 +17,12 @@ the repository root:
    cargo fmt --all --check
    cargo test --workspace
    cargo clippy --workspace --all-targets -- -D warnings
-   cargo check --target wasm32-unknown-unknown
 
 For changes that touch platform code, dependencies, or Bevy features, also
-check the whole workspace for the web and Android:
+check the whole workspace for Android:
 
 .. code-block:: sh
 
-   cargo check --workspace --target wasm32-unknown-unknown
    cargo ndk -t arm64-v8a check --workspace
 
 The workspace enables Clippy's ``pedantic`` and ``nursery`` groups as warnings.
@@ -75,9 +73,9 @@ What the tests cover
    * - ``crates/server/tests/coordinator.rs``
      - Rooms, readiness, the 20 Hz clock, input authentication and bounds,
        forged ownership, bounded catch-up, connection limits.
-   * - ``crates/server/tests/websocket.rs``
-     - The real socket runtime: handshake timeouts, heartbeats, large setup
-       transfer, oversized input, disconnects.
+   * - ``crates/server/tests/quic.rs``
+     - The real QUIC runtime: handshake timeouts, keep-alives, large setup
+       transfer, asset sync stream, oversized input, disconnects.
    * - ``crates/client/src/*`` unit tests
      - Camera math, touch gestures, selection and order input, terrain
        texture arrays, menu pages, dialogs, and text fields, and unit scene
@@ -123,8 +121,6 @@ Automated tests use headless Bevy apps and do not open windows. Before
 closing a milestone, also run the game:
 
 * Natively, at a small window width (320 logical pixels) with touch input.
-* In a browser with ``trunk serve``, ideally with a native client in the same
-  online match.
 * On an Android device when Android-specific code changes.
 
 Record what you ran in :doc:`../project/verification`.

@@ -2,10 +2,10 @@ RTS documentation
 =================
 
 RTS is a top-down 2D real-time strategy game in the classic style: gather,
-build, and fight. One pure-Rust codebase runs on desktop, in the browser, and
-on Android, with first-class touch controls and online multiplayer. A
-server-authoritative deterministic simulation keeps every client in step;
-Lua mission scripting and a built-in map editor are planned.
+build, and fight. One pure-Rust codebase runs on desktop and on Android, with
+first-class touch controls, multi-language localization, and online multiplayer
+over encrypted QUIC. A server-authoritative deterministic simulation keeps every
+client in step; Lua mission scripting and a built-in map editor are planned.
 
 Start with :doc:`getting-started` to build the game, play a solo match, and
 host a multiplayer room.
@@ -17,7 +17,7 @@ Find what you need
   :doc:`guides/replays`.
 * **Change game content:** :doc:`guides/modding`,
   :doc:`reference/rules-format`, and :doc:`reference/map-format`.
-* **Build for other platforms:** :doc:`guides/web` and :doc:`guides/android`.
+* **Build for Android:** :doc:`guides/android`.
 * **Look up a format or limit:** :doc:`reference/protocol`,
   :doc:`reference/setup-frame`, :doc:`reference/replay-format`, and
   :doc:`reference/limits`.
@@ -45,7 +45,6 @@ Find what you need
    :maxdepth: 1
    :caption: Build and test
 
-   guides/web
    guides/android
    guides/testing
    guides/releasing

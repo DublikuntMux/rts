@@ -96,7 +96,8 @@ and newer, allow *Nearby devices* access when asked to connect to servers on
 your LAN. If you deny it, solo play and Internet servers still work; grant the
 permission in the system app settings before retrying a LAN server.
 
-Like other native clients, Android supports ``ws://`` servers only.
+Android connects to ``quic://`` servers over UDP with built-in TLS 1.3
+encryption, identical to desktop clients.
 
 Storage
 -------
@@ -111,10 +112,9 @@ Menu controls
 
 The menu shares the desktop pages and uses a compact rail on narrow screens.
 Tapping the server address, invite code, or player name focuses the field and
-opens the system keyboard. **Settings**
-offers interface scale and edge scrolling; fullscreen is controlled by the
-activity. **Copy code** is hidden because Android has no system clipboard
-backend. Replay import and export buttons are browser-only.
+opens the system keyboard. **Settings** offers player name, language, interface scale, and edge scrolling;
+fullscreen is controlled by the activity. **Copy code** is hidden because
+Android has no system clipboard backend.
 
 Check without a device
 ----------------------
