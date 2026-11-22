@@ -6,6 +6,28 @@ first within each milestone. Add an entry when you finish one. State plainly
 what was *not* run, such as rendered browser sessions or a physical Android
 device.
 
+CLI server, GUI server hosting, and tactical RTS UI
+---------------------------------------------------
+
+**Clap CLI, embedded GUI server hosting, and beveled RTS UI (2026-11-22).**
+Replaced manual server argument parsing with ``clap`` derive types shared by
+``rts-server`` and the new ``rts server`` subcommand on ``rts``. Added
+``HostedServer`` in ``rts_client`` to start, serve QUIC clients, copy the
+pinned shareable URL, connect locally, and cleanly release UDP ports directly
+from the Multiplayer menu. Redesigned the menu shell, widgets, dialogs, pause
+menu, resource bar, minimap bezel, and in-game command console with a top
+armored command deck, 3D metallic bevels with press inversion, recessed wells,
+and a dynamic green/amber/crimson health bar.
+
+Checks passed: ``cargo fmt --all --check``,
+``cargo clippy --workspace --all-targets -- -D warnings``,
+``cargo test --workspace`` (including ``clap`` CLI parsing tests for
+``rts-server`` and ``rts server``, real-QUIC embedded ``HostedServer``
+start/connect/port-release test, GUI hosting workflow test, metallic bevel
+inversion test, and all 146 client menu/HUD/session tests across desktop and
+compact/phone viewports), and the strict Sphinx handbook build. A rendered
+desktop window and a physical Android device session were not run.
+
 QUIC, localization, and server asset sync
 -----------------------------------------
 

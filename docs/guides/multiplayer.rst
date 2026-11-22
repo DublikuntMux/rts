@@ -12,13 +12,27 @@ playing through it; :doc:`../architecture/server` and
 Start the server
 ----------------
 
-From the repository root:
+You can run an authoritative QUIC server in three ways:
 
-.. code-block:: sh
+1. **From the game GUI.** Open **Multiplayer** → **Host server**, choose a UDP
+   bind address (default ``0.0.0.0:9001``), pick **Random frontier (fogged)** or
+   any catalog map, optionally specify a custom assets folder, and choose
+   **Host & connect** (or **Start server** to host in the background). The
+   active status panel displays the shareable ``quic://...#<sha256>`` address,
+   a **Copy address** button on desktop, and a **Stop server** control.
+2. **From the game CLI** (``clap`` subcommand):
 
-   cargo run --release -p rts_server --bin rts-server -- 127.0.0.1:9001
+   .. code-block:: sh
 
-The bind address is optional. Without it the server uses the
+      cargo run --release -p rts_client --bin rts -- server 127.0.0.1:9001
+
+3. **From the standalone server binary:**
+
+   .. code-block:: sh
+
+      cargo run --release -p rts_server --bin rts-server -- 127.0.0.1:9001
+
+The bind address is optional on the CLI. Without it the server uses the
 ``RTS_SERVER_ADDR`` environment variable, then ``127.0.0.1:9001``. The server
 validates its rules, map generator, and optional ``--assets`` directory before
 opening the UDP port and prints:

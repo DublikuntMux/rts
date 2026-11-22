@@ -11,9 +11,14 @@ simulation of every match. It has two layers:
 * The runtime (``runtime.rs``): a Tokio task that accepts pure-Rust QUIC
   connections and feeds the coordinator.
 
-The binary (``main.rs``) parses the command line, validates the setup and any
-``--assets`` directory, generates a self-signed Ed25519 certificate, binds the
-UDP port, and calls ``serve_with_config``.
+The CLI module (``cli.rs``) defines ``ServerArgs`` and ``ServerCli`` with
+``clap``, validates the setup and any ``--assets`` directory, generates a
+self-signed Ed25519 certificate, binds the UDP port, and calls
+``serve_with_config``. Both the standalone ``rts-server`` binary (``main.rs``)
+and the game binary's ``rts server`` subcommand call ``rts_server::run_blocking``;
+the game UI embeds the same ``serve_with_config`` runtime in
+``HostedServer`` (``crates/client/src/hosted_server.rs``) with clean ``oneshot``
+shutdown.
 
 Runtime tasks
 -------------

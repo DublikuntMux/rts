@@ -126,10 +126,11 @@ Crates
        ``*.graphics.ron``, and ``*.lang.ron``.
      - base
    * - ``rts_client``
-     - The game: rendering, input, camera, scene-based menu, localization,
-       server asset sync, match sessions, saved games, replay library, and
-       settings. Binary ``rts``; ``cargo run`` starts it.
-     - base, ai, assets, net
+     - The game: rendering, input, camera, beveled tactical RTS menu and HUD,
+       localization, server asset sync, built-in GUI server hosting,
+       ``rts server`` ``clap`` subcommand, match sessions, saved games, replay
+       library, and settings. Binary ``rts``; ``cargo run`` starts it.
+     - base, ai, assets, net, server
    * - ``rts_ai``
      - Skirmish opponent that reads its player's fog-of-war view and returns
        player commands, at Easy, Normal, or Hard difficulty.
@@ -158,6 +159,7 @@ Crates
    rts_android --> rts_client
    rts_client --> rts_assets
    rts_client --> rts_net
+   rts_client --> rts_server
    rts_client --> rts_base
    rts_client --> rts_ai
    rts_ai --> rts_base

@@ -11,16 +11,21 @@ Design rules
 -------------
 
 * Buttons and text fields have a minimum target size of 48 logical pixels.
-* The plotting-table palette uses graphite and slate surfaces, chalk text,
-  and ocher for primary actions, invite codes, selection stripes, map-preview
-  corners, and keyboard focus. Exo 2 uses semibold page headings and normal
-  body text. Errors use red; status tags pair a square lamp with a word.
-* Selection uses a left stripe; keyboard focus uses a full outline. Terrain
-  previews supply the main color and visual emphasis. Menu and command-bar
-  buttons share the same palette and interaction-state function.
-* Primary actions are filled, secondary actions are outlined, and destructive
-  actions use red outlines. Disabled controls carry ``InteractionDisabled``
-  and ignore activation.
+* The armored command-deck palette uses deep gunmetal steel surfaces, riveted
+  dark panel headers, chalk text, and brushed tactical brass for primary
+  actions, invite codes, active navigation tabs, map-preview brackets, and
+  keyboard focus. Exo 2 uses semibold headings and normal body text. Status
+  readouts pair a recessed dark lamp well with phosphor green, amber, or
+  crimson indicators and plain text labels.
+* Interactive plates use asymmetric 2-pixel 3D metallic bevels
+  (``bevel_raised`` / ``bevel_brass`` / ``bevel_danger``) that physically
+  invert to recessed bevels when pressed. Text inputs, list containers,
+  telemetry readouts, and the minimap viewport use recessed dark display wells
+  (``bevel_recessed``).
+* Selected top navigation tabs carry a 3-pixel brass bottom bar; selected list
+  rows and options carry a 3-pixel brass left bar; keyboard focus uses a full
+  brass outline. Disabled controls carry ``InteractionDisabled`` and ignore
+  activation.
 * Content scrolls vertically. Button rows wrap, and list/detail splits put
   the detail below the list when space is narrow.
 
@@ -29,54 +34,46 @@ Menu layout
 
 .. kroki::
    :type: plantuml
-   :caption: Main menu with the New game page selected.
+   :caption: Main menu command deck with the New game page selected.
    :align: center
 
    @startsalt
    skinparam backgroundColor transparent
    scale 1.1
    {+
-     { <b>RTS | . | Menu / Singleplayer / New game }
+     { <b>RTS | [Singleplayer] | [Multiplayer] | [Replays] | [Settings] | . | [Quit] }
      ==
      {
+       <b>Select map
        {
-         [Singleplayer]
-         [Multiplayer]
-         [Replays]
-         [Settings]
-         [Quit]
-       } |
-       {
-         <b>Select map
-         {
-           { [Crossroads] | Four players, 40x40 tiles
-             [Proving Grounds] | Two players, 48x32 tiles } |
-           { Map preview
-             Selected: Crossroads
-             [Start game] }
-         }
-         ==
-         Latest session message
+         { [Crossroads] | Four players, 40x40 tiles
+           [Proving Grounds] | Two players, 48x32 tiles } |
+         { Map preview
+           Selected: Crossroads
+           [Start game] }
        }
      }
+     ==
+     { Singleplayer / New game | . | Latest session message }
    }
    @endsalt
 
-The title bar shows **RTS** and a breadcrumb. The sidebar selects
-**Singleplayer**, **Multiplayer**, **Replays**, **Settings**, or **Quit**. A
-scrollable host holds one page. A message line below it shows session results
-and errors; navigation clears the message. The message line takes no space
-while empty. A separate layer holds dialogs.
+The top armored command bar holds the **RTS** crest, horizontal beveled
+navigation tabs (**Singleplayer**, **Multiplayer**, **Replays**, **Settings**),
+a live telemetry badge when connected or hosting an embedded server, and a
+**Quit** button, underscored by a brass horizon stripe. A scrollable host holds
+one page. A bottom armored telemetry strip shows the current breadcrumb and any
+active session notice or error; navigation clears notices. A separate layer
+holds riveted modal dialogs.
 
 Compact mode starts below 760 logical pixels of available width, calculated
-as window width divided by ``UiScale``. The 216-pixel sidebar becomes a
-horizontal navigation row with **Solo**, **Online**, **Replays**, **Settings**,
-and **Quit** labels. The navigation row wraps when needed to keep
-48-pixel targets. Content uses the full screen width below navigation;
-list/detail columns wrap without a fixed minimum width. Page padding changes
-from 40 to 16 pixels, and the title bar minimum from 72 to 56 pixels.
-A **Back** button appears in the compact title bar when there is somewhere
-to go. Changing interface scale can change the layout mode.
+as window width divided by ``UiScale``. The navigation tabs move into a wrapped
+horizontal strip directly under the top bar with **Solo**, **Online**,
+**Replays**, **Settings**, and **Quit** labels, keeping 48-pixel targets.
+Content uses the full screen width below navigation; list/detail columns wrap
+without a fixed minimum width. Page padding narrows, and a **Back** button
+appears in the compact top bar when there is somewhere to go. Changing
+interface scale can change the layout mode.
 
 Scenes and widgets
 -------------------
@@ -98,9 +95,10 @@ Menu roots use ``DespawnOnExit(AppState::Menu)``.
 
 ``widgets.rs`` supplies reusable scenes:
 
-* ``text``, ``heading``, ``hint``, and ``bound_text``.
+* ``text``, ``heading``, ``hint``, ``bound_text``, and ``section_bar``.
 * ``plain_button``, ``button``, ``wide_button``, and ``list_item``.
-* ``row``, ``column``, ``panel``, and ``split``.
+* ``row``, ``column``, ``panel``, ``armored_panel``, ``well``, ``readout_box``,
+  ``rivet``, and ``split``.
 * ``map_image``, ``empty_preview``, ``badge``, ``text_field``, ``spinner``,
   and ``dialog``.
 
@@ -132,9 +130,15 @@ Pages and actions
    * - Load game
      - Save browser with **All maps** or a map filter, **Most recent** or
        **Oldest first** order, a preview, **Load save**, and **Delete…**.
-   * - Multiplayer: Connect
-     - Server address, address hint, **Recent: <url>**, and **Connect**.
-       Failure shows a reason and **Retry**. The typed address is kept.
+   * - Multiplayer: Join / Host
+     - Two mode tabs (**Join server** and **Host server**). **Join server**
+       holds the server address, address hint, **Recent: <url>**, a quick
+       **Connect to my server** banner when hosting locally, and **Connect**
+       (failure shows a reason and **Retry**). **Host server** configures a
+       UDP bind address, server map (**Random frontier (fogged)** or any
+       catalog map), optional custom assets folder, **Host & connect**,
+       **Start server**, and a live status panel with the shareable
+       TLS-pinned ``quic://`` readout, **Copy address**, and **Stop server**.
    * - Multiplayer: Connecting
      - Server URL, live asset sync progress when downloading server textures or
        translations, spinner, and **Cancel**.
@@ -216,9 +220,12 @@ RTS console
 -----------
 
 The HUD (``hud.rs``) spawns on ``OnEnter(AppState::InGame)``. Its three
-sections follow the conventional RTS layout: minimap left, selected units
-center, command card right. The graphite and slate console has a thin top
-border; ocher marks selected minimap units and an armed Move command.
+sections follow the classic armored RTS layout: recessed radar minimap left,
+selected units center, beveled 3×3 command card right. The gunmetal console has
+a 2-pixel brass top rim; brass marks selected minimap units, hotkey badges, and
+armed commands, while the recessed health bar shifts dynamically from phosphor
+green (≥ 60%) to amber (30–60%) to crimson (< 30%). The top resource bar frames
+Wood and Gold inside recessed LCD counters beside the beveled pause button.
 
 * The terrain minimap (``hud/minimap.rs``) builds one nearest-sampled image
   from the current match, including server-provided maps. Live player-colored

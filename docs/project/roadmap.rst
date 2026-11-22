@@ -231,6 +231,18 @@ QUIC transport, compact wire protocol, localization, and asset sync
    SHA-256 verification and disk caching so servers launched with
    ``--assets DIR`` can supply custom textures and translations on connect.
 
+CLI server subcommand, GUI server hosting, and tactical RTS UI redesign
+   Added ``clap``-based CLI parsing shared by ``rts-server`` and a new
+   ``rts server`` subcommand on the game binary. Added built-in multiplayer
+   server hosting directly inside the game UI (**Multiplayer** → **Host server**)
+   with bind address, map selection, optional custom assets folder,
+   **Host & connect**, shareable TLS-pinned address readout, and clean
+   shutdown. Redesigned the entire menu, dialog, pause menu, and in-game HUD
+   from flat rounded panels into a beveled gunmetal-and-brass tactical RTS
+   interface with a top command deck, horizontal navigation tabs, bottom
+   telemetry strip, riveted headers, physical press bevel inversion, recessed
+   display wells, and a dynamic color-coded health bar.
+
 Upcoming
 --------
 

@@ -1,15 +1,23 @@
-``rts-server`` command line
-===========================
+``rts-server`` and ``rts server`` command line
+==============================================
+
+Both the standalone ``rts-server`` binary and the ``server`` subcommand of the
+game binary ``rts`` share the same ``clap`` CLI definition:
 
 .. code-block:: text
 
-   rts-server [bind-address] [--rules PATH] [--map PATH] [--seed u64] [--assets DIR]
+   rts-server [BIND_ADDRESS] [--rules PATH] [--map PATH] [--seed N] [--assets DIR]
+   rts server [BIND_ADDRESS] [--rules PATH] [--map PATH] [--seed N] [--assets DIR]
 
-Run it from the repository with Cargo:
+Run either from the repository with Cargo:
 
 .. code-block:: sh
 
    cargo run --release -p rts_server --bin rts-server -- 0.0.0.0:9001 --map mods/battle.map.ron --assets mods/my-mod
+   cargo run --release -p rts_client --bin rts -- server 0.0.0.0:9001 --assets mods/my-mod
+
+Pass ``--help`` to either binary to print the generated usage summary. Running
+``rts`` with no subcommand starts the graphical game client.
 
 Arguments
 ---------
