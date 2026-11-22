@@ -7,8 +7,9 @@ use rts_ai::Difficulty;
 use rts_net::RoomInfo;
 
 use super::{
-    Action, Browse, Confirm, Dialog, DialogHost, Dropdown, MAX_URL_LEN, MenuRoot, NoticeText,
-    OnlinePage, PageHost, ROOM_CODE_LEN, ReplayPick, Section, SoloPage, View, name_hint,
+    Action, Browse, Confirm, Dialog, DialogHost, Dropdown, MAX_BIND_LEN, MAX_PATH_LEN, MAX_URL_LEN,
+    MenuRoot, NoticeText, OnlinePage, OnlineTab, PageHost, ROOM_CODE_LEN, ReplayPick, Section,
+    SoloPage, View, name_hint,
     previews::preview_for,
     scroll_focus_into_view, scroll_on_touch_drag,
     widgets::{
@@ -20,6 +21,7 @@ use super::{
 };
 use crate::{
     game::AppState,
+    hosted_server::HostedServerInfo,
     library::{Record, Shelf, duration},
     locale::Localization,
     session::{Lobby, Server},
@@ -61,6 +63,9 @@ pub enum PageKey {
     Connect {
         revision: u32,
         recent: Option<String>,
+        tab: OnlineTab,
+        host_map: Option<usize>,
+        hosted: Option<HostedServerInfo>,
     },
     Connecting {
         url: String,
@@ -69,6 +74,7 @@ pub enum PageKey {
         url: String,
         rooms: Vec<RoomInfo>,
         selected: Option<String>,
+        hosted: Option<HostedServerInfo>,
     },
     Lobby(Lobby),
     Settings {
@@ -102,6 +108,9 @@ impl PageKey {
                 OnlinePage::Connect => Self::Connect {
                     revision: menu.form_revision,
                     recent: view.settings.recent_server.clone(),
+                    tab: menu.online_tab,
+                    host_map: menu.host_map,
+                    hosted: view.hosted.info().cloned(),
                 },
                 OnlinePage::Connecting => Self::Connecting {
                     url: view.server_url().into(),
@@ -110,6 +119,7 @@ impl PageKey {
                     url: view.server_url().into(),
                     rooms: view.status.rooms.clone(),
                     selected: menu.room.clone(),
+                    hosted: view.hosted.info().cloned(),
                 },
                 OnlinePage::Lobby => {
                     Self::Lobby(view.status.lobby.clone().expect("lobby page has a lobby"))
@@ -685,6 +695,30 @@ fn browser_detail(view: &View, shelf: Shelf) -> Scenes {
 
 fn connect(view: &View) -> impl SceneList {
     let loc = view.loc;
+    let tabs = row(bsn_list! {
+        @button({loc.t("online.tab_join").to_owned()}, Action::OnlineTab(OnlineTab::Join), Tone::Item)
+        --
+        @button({loc.t("online.tab_host").to_owned()}, Action::OnlineTab(OnlineTab::Host), Tone::Item)
+    });
+    let body: Scenes = match view.menu.online_tab {
+        OnlineTab::Join => join_server_body(view),
+        OnlineTab::Host => host_server_body(view),
+    };
+    let heading_key = match view.menu.online_tab {
+        OnlineTab::Join => "online.connect_heading",
+        OnlineTab::Host => "host.heading",
+    };
+    bsn_list! {
+        @heading({loc.t(heading_key).to_owned()})
+        --
+        @{tabs}
+        --
+        {body}
+    }
+}
+
+fn join_server_body(view: &View) -> Scenes {
+    let loc = view.loc;
     let recent: Scenes = view
         .settings
         .recent_server
@@ -696,12 +730,26 @@ fn connect(view: &View) -> impl SceneList {
                 Tone::Secondary,
             ))]
         });
+    let local_hosted: Scenes = view.hosted.info().map_or_else(Vec::new, |info| {
+        let addr = info.bind_addr.to_string();
+        vec![boxed(panel(bsn_list! {
+            @row(bsn_list! {
+                @badge({loc.t("host.running_badge").to_owned()}, GOOD)
+                --
+                @hint({loc.fmt("host.listening_on", &[("addr", &addr)])})
+            })
+            --
+            @row(bsn_list! {
+                @wide_button({loc.t("host.connect_local").to_owned()}, Action::ConnectHostedServer, Tone::Primary)
+                --
+                @button({loc.t("host.stop").to_owned()}, Action::StopHostedServer, Tone::Danger)
+            })
+        }))]
+    });
     let field = text_field(Field::Url, &view.form.url, MAX_URL_LEN);
     let failed = ShowIf(|view| matches!(view.status.server, Server::Failed { .. }));
-    bsn_list! {
-        @heading({loc.t("online.connect_heading").to_owned()})
-        --
-        @panel(bsn_list! {
+    vec![
+        boxed(panel(bsn_list! {
             @hint({loc.t("online.server_address").to_owned()})
             --
             Node { column_gap: px(8) } Children [ @{field} ]
@@ -713,29 +761,124 @@ fn connect(view: &View) -> impl SceneList {
                 --
                 @wide_button({loc.t("online.connect").to_owned()}, Action::Connect, Tone::Primary)
             })
+        })),
+        boxed(bsn! {
+            Node { flex_direction: FlexDirection::Column, row_gap: px(12) }
+            Children [ {local_hosted} ]
+        }),
+        boxed(bsn! {
+            Node {
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(px(14)),
+                row_gap: px(10),
+                border: UiRect::left(px(3)),
+            }
+            BackgroundColor(PANEL)
+            BorderColor::all(DANGER)
+            failed
+            Children [
+                @bound_text(connect_failure, 15.0, INK)
+                --
+                @row(bsn_list! { @button({loc.t("online.retry").to_owned()}, Action::Connect, Tone::Secondary) })
+                --
+                @hint({loc.t("online.retry_hint").to_owned()})
+            ]
+        }),
+        boxed(hint(loc.t("online.join_code_hint").to_owned())),
+        boxed(hint(loc.t("online.self_host_hint").to_owned())),
+    ]
+}
+
+fn host_server_body(view: &View) -> Scenes {
+    let loc = view.loc;
+    let bind_field = text_field(Field::HostBind, &view.form.host_bind, MAX_BIND_LEN);
+    let assets_field = text_field(Field::HostAssets, &view.form.host_assets, MAX_PATH_LEN);
+    let mut map_choices: Vec<_> = vec![button(
+        loc.t("host.random_map").to_owned(),
+        Action::SelectHostMap(None),
+        Tone::Item,
+    )];
+    map_choices.extend(view.catalog.0.iter().enumerate().map(|(index, map)| {
+        button(
+            map.name.clone(),
+            Action::SelectHostMap(Some(index)),
+            Tone::Item,
+        )
+    }));
+    let mut sections: Scenes = vec![boxed(panel(bsn_list! {
+        @hint({loc.t("host.bind_label").to_owned()})
+        --
+        Node { column_gap: px(8) } Children [ @{bind_field} ]
+        --
+        @hint({loc.t("host.bind_hint").to_owned()})
+        --
+        @text({loc.t("host.map_label").to_owned()}, 14.0, INK)
+        --
+        @row(map_choices)
+        --
+        @hint({loc.t("host.assets_label").to_owned()})
+        --
+        Node { column_gap: px(8) } Children [ @{assets_field} ]
+        --
+        @hint({loc.t("host.assets_hint").to_owned()})
+        --
+        @row(bsn_list! {
+            @wide_button({loc.t("host.start_and_connect").to_owned()}, Action::HostAndConnect, Tone::Primary)
+            --
+            @button({loc.t("host.start_only").to_owned()}, Action::StartHostedServer, Tone::Secondary)
+        })
+    }))];
+    if let Some(info) = view.hosted.info() {
+        sections.push(boxed(hosted_status_panel(loc, info)));
+    }
+    sections
+}
+
+fn hosted_status_panel(loc: &Localization, info: &HostedServerInfo) -> impl Scene {
+    let addr = info.bind_addr.to_string();
+    let count = info.asset_count.to_string();
+    let assets_note: Scenes = when(
+        info.asset_count > 0,
+        hint(loc.fmt("host.assets_served", &[("count", &count)])),
+    );
+    let copy_btn: Scenes = when(
+        !cfg!(target_os = "android"),
+        button(
+            loc.t("host.copy_address").to_owned(),
+            Action::CopyHostedUrl,
+            Tone::Secondary,
+        ),
+    );
+    panel(bsn_list! {
+        @row(bsn_list! {
+            @badge({loc.t("host.running_badge").to_owned()}, GOOD)
+            --
+            @text({loc.fmt("host.listening_on", &[("addr", &addr)])}, 15.0, INK)
+            --
+            @hint({info.map_name.clone()})
         })
         --
+        {assets_note}
+        --
+        @hint({loc.t("host.share_label").to_owned()})
+        --
         Node {
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(px(14)),
-            row_gap: px(10),
-            border: UiRect::left(px(3)),
+            padding: UiRect::axes(px(12), px(8)),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(2)),
         }
-        BackgroundColor(PANEL)
-        BorderColor::all(DANGER)
-        failed
-        Children [
-            @bound_text(connect_failure, 15.0, INK)
-            --
-            @row(bsn_list! { @button({loc.t("online.retry").to_owned()}, Action::Connect, Tone::Secondary) })
-            --
-            @hint({loc.t("online.retry_hint").to_owned()})
-        ]
+        BackgroundColor(FIELD)
+        BorderColor::all(EDGE)
+        Children [ @text({info.share_url.clone()}, 13.0, SIGNAL) ]
         --
-        @hint({loc.t("online.join_code_hint").to_owned()})
-        --
-        @hint({loc.t("online.self_host_hint").to_owned()})
-    }
+        @row(bsn_list! {
+            @wide_button({loc.t("host.connect_local").to_owned()}, Action::ConnectHostedServer, Tone::Primary)
+            --
+            {copy_btn}
+            --
+            @button({loc.t("host.stop").to_owned()}, Action::StopHostedServer, Tone::Danger)
+        })
+    })
 }
 
 fn connect_failure(view: &View) -> String {
@@ -843,6 +986,25 @@ fn rooms(view: &View, url: String) -> impl SceneList {
             ]
         },
     );
+    let hosted_controls: Scenes = view.hosted.info().map_or_else(Vec::new, |info| {
+        let mut items = vec![boxed(badge(
+            format!("{} · {}", loc.t("host.running_badge"), info.bind_addr),
+            SIGNAL,
+        ))];
+        if !cfg!(target_os = "android") {
+            items.push(boxed(button(
+                loc.t("host.copy_address").to_owned(),
+                Action::CopyHostedUrl,
+                Tone::Secondary,
+            )));
+        }
+        items.push(boxed(button(
+            loc.t("host.stop").to_owned(),
+            Action::StopHostedServer,
+            Tone::Danger,
+        )));
+        items
+    });
     bsn_list! {
         @heading({loc.fmt("online.server_heading", &[("host", &host)])})
         --
@@ -852,6 +1014,8 @@ fn rooms(view: &View, url: String) -> impl SceneList {
             @button({loc.t("online.refresh").to_owned()}, Action::RefreshRooms, Tone::Secondary)
             --
             @button({loc.t("online.disconnect").to_owned()}, Action::Disconnect, Tone::Secondary)
+            --
+            {hosted_controls}
         })
         --
         @split(items, detail)

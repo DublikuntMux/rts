@@ -31,6 +31,7 @@ use self::widgets::Field;
 use crate::{
     crash::CrashReport,
     game::{AppState, MapCatalog},
+    hosted_server::{DEFAULT_HOST_BIND, HostedServer, HostedServerInfo},
     hud::Targeting,
     library::{Library, Record, Shelf},
     locale::Localization,
@@ -43,6 +44,8 @@ use crate::{
 const DEFAULT_SERVER_URL: &str = "quic://127.0.0.1:9001";
 pub const ROOM_CODE_LEN: usize = 6;
 pub const MAX_URL_LEN: usize = 256;
+pub const MAX_BIND_LEN: usize = 64;
+pub const MAX_PATH_LEN: usize = 256;
 /// Below this logical width navigation moves into a row above the page.
 const COMPACT_WIDTH: f32 = 760.0;
 
@@ -59,6 +62,7 @@ impl Plugin for MenuPlugin {
         }
         app.init_resource::<Menu>()
             .init_resource::<MenuForm>()
+            .init_resource::<HostedServer>()
             .init_resource::<PauseMenu>()
             .init_resource::<Localization>()
             .init_resource::<Rendered>()
@@ -129,6 +133,13 @@ pub enum SoloPage {
     Home,
     NewGame,
     LoadGame,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnlineTab {
+    #[default]
+    Join,
+    Host,
 }
 
 /// What the multiplayer section shows, derived from the session.
@@ -220,6 +231,10 @@ pub enum Dialog {
 pub struct Menu {
     pub section: Section,
     pub solo: SoloPage,
+    /// Active tab on the offline Multiplayer screen (Join vs Host).
+    pub online_tab: OnlineTab,
+    /// Map hosted by the embedded server (`None` = random fogged frontier).
+    pub host_map: Option<usize>,
     /// Index into the [`MapCatalog`].
     pub map: usize,
     /// The opponent's difficulty for a new skirmish.
@@ -243,6 +258,8 @@ impl Default for Menu {
         Self {
             section: Section::default(),
             solo: SoloPage::default(),
+            online_tab: OnlineTab::default(),
+            host_map: None,
             map: 0,
             difficulty: Difficulty::default(),
             saves: Browse::default(),
@@ -287,6 +304,10 @@ pub struct MenuForm {
     pub code: String,
     /// The name as typed; [`Settings::name`] keeps the last valid one.
     pub name: Option<String>,
+    /// UDP bind address for the embedded server.
+    pub host_bind: String,
+    /// Optional custom assets directory for the embedded server.
+    pub host_assets: String,
 }
 
 impl Default for MenuForm {
@@ -295,6 +316,8 @@ impl Default for MenuForm {
             url: DEFAULT_SERVER_URL.into(),
             code: String::new(),
             name: None,
+            host_bind: DEFAULT_HOST_BIND.into(),
+            host_assets: String::new(),
         }
     }
 }
@@ -306,6 +329,10 @@ impl MenuForm {
 
     pub fn url_valid(&self) -> bool {
         rts_net::quic::parse_server_url(self.url()).is_ok()
+    }
+
+    pub fn host_bind_valid(&self) -> bool {
+        !self.host_bind.trim().is_empty()
     }
 
     pub fn code_valid(&self) -> bool {
@@ -327,6 +354,7 @@ pub struct View<'a> {
     pub catalog: &'a MapCatalog,
     pub crash: &'a CrashReport,
     pub loc: &'a Localization,
+    pub hosted: &'a HostedServer,
 }
 
 impl View<'_> {
@@ -375,6 +403,7 @@ pub struct ViewParam<'w> {
     catalog: Res<'w, MapCatalog>,
     crash: Res<'w, CrashReport>,
     loc: Res<'w, Localization>,
+    hosted: Res<'w, HostedServer>,
 }
 
 impl ViewParam<'_> {
@@ -388,6 +417,7 @@ impl ViewParam<'_> {
             catalog: &self.catalog,
             crash: &self.crash,
             loc: &self.loc,
+            hosted: &self.hosted,
         }
     }
 
@@ -398,6 +428,7 @@ impl ViewParam<'_> {
             || self.settings.is_changed()
             || self.library.is_changed()
             || self.loc.is_changed()
+            || self.hosted.is_changed()
     }
 }
 
@@ -424,6 +455,13 @@ pub enum Action {
     WatchReplay,
     SaveLastReplay,
     UseRecentServer,
+    OnlineTab(OnlineTab),
+    SelectHostMap(Option<usize>),
+    StartHostedServer,
+    HostAndConnect,
+    ConnectHostedServer,
+    StopHostedServer,
+    CopyHostedUrl,
     Connect,
     Disconnect,
     RefreshRooms,
@@ -472,6 +510,10 @@ impl Action {
             },
             Self::SaveLastReplay | Self::Game(SessionAction::SaveReplay) => status.has_replay,
             Self::UseRecentServer => view.settings.recent_server.is_some(),
+            Self::StartHostedServer | Self::HostAndConnect => view.form.host_bind_valid(),
+            Self::ConnectHostedServer | Self::StopHostedServer | Self::CopyHostedUrl => {
+                view.hosted.is_running()
+            }
             Self::Connect => view.form.url_valid() && !status.connecting(),
             Self::Disconnect => status.connected() || status.connecting(),
             Self::RefreshRooms | Self::OpenJoinByCode | Self::OpenCreateRoom => {
@@ -495,6 +537,8 @@ impl Action {
         let menu = view.menu;
         match self {
             Self::Section(section) => menu.section == *section,
+            Self::OnlineTab(tab) => menu.online_tab == *tab,
+            Self::SelectHostMap(map) => menu.host_map == *map,
             Self::SelectMap(map) => menu.map == *map,
             Self::SelectDifficulty(difficulty) => menu.difficulty == *difficulty,
             Self::Select(kind, pick) => menu.browse(*kind).selected.as_ref() == Some(pick),
@@ -534,6 +578,7 @@ fn perform(
     mut form: ResMut<MenuForm>,
     mut settings: ResMut<Settings>,
     mut loc: ResMut<Localization>,
+    mut hosted: ResMut<HostedServer>,
     status: Res<SessionStatus>,
     library: Res<Library>,
     catalog: Res<MapCatalog>,
@@ -555,6 +600,7 @@ fn perform(
             catalog: &catalog,
             crash: &crash,
             loc: &loc,
+            hosted: &hosted,
         };
         if !action.enabled(&view) {
             continue;
@@ -632,6 +678,50 @@ fn perform(
                 if let Some(url) = &settings.recent_server {
                     form.url.clone_from(url);
                     menu.form_revision += 1;
+                }
+            }
+            Action::OnlineTab(tab) => {
+                menu.online_tab = tab;
+                menu.navigate();
+            }
+            Action::SelectHostMap(map) => {
+                menu.host_map = map;
+            }
+            Action::StartHostedServer => {
+                let _ = start_hosted_server(&mut hosted, &mut menu, &form, &catalog, &loc);
+            }
+            Action::HostAndConnect => {
+                if let Some(info) =
+                    start_hosted_server(&mut hosted, &mut menu, &form, &catalog, &loc)
+                {
+                    form.url.clone_from(&info.local_url);
+                    menu.form_revision += 1;
+                    menu.online_tab = OnlineTab::Join;
+                    session.write(SessionAction::Connect {
+                        url: info.local_url,
+                    });
+                }
+            }
+            Action::ConnectHostedServer => {
+                if let Some(info) = hosted.info().cloned() {
+                    form.url.clone_from(&info.local_url);
+                    menu.form_revision += 1;
+                    menu.navigate();
+                    session.write(SessionAction::Connect {
+                        url: info.local_url,
+                    });
+                }
+            }
+            Action::StopHostedServer => {
+                hosted.stop();
+                menu.notice = Some((loc.t("host.stopped_notice").to_owned(), false));
+            }
+            Action::CopyHostedUrl => {
+                if let Some(info) = hosted.info() {
+                    menu.notice = Some(match clipboard.set_text(info.share_url.clone()) {
+                        Ok(()) => (loc.t("host.address_copied").to_owned(), false),
+                        Err(_) => (loc.t("lobby.clipboard_unavailable").to_owned(), true),
+                    });
                 }
             }
             Action::Connect => {
@@ -713,7 +803,7 @@ fn perform(
                 menu.notice = Some((loc.t("dialog.crash_discarded").to_owned(), false));
             }
             Action::Quit => {
-                if status.connected() || status.connecting() {
+                if status.connected() || status.connecting() || hosted.is_running() {
                     menu.dialog = Some(Dialog::Confirm(Confirm::Quit));
                 } else {
                     exit.write(AppExit::Success);
@@ -746,6 +836,7 @@ fn perform(
                             session.write(SessionAction::Leave);
                         }
                         Confirm::Quit => {
+                            hosted.stop();
                             session.write(SessionAction::Disconnect);
                             exit.write(AppExit::Success);
                         }
@@ -764,6 +855,31 @@ fn perform(
             Action::Game(action) => {
                 session.write(action);
             }
+        }
+    }
+}
+
+/// Starts the embedded server using the current form fields and updates `menu.notice`.
+fn start_hosted_server(
+    hosted: &mut HostedServer,
+    menu: &mut Menu,
+    form: &MenuForm,
+    catalog: &MapCatalog,
+    loc: &Localization,
+) -> Option<HostedServerInfo> {
+    let setup = menu
+        .host_map
+        .and_then(|idx| catalog.0.get(idx))
+        .map(|map| (map.name.clone(), map.setup.clone()));
+    match hosted.start(&form.host_bind, setup, Some(&form.host_assets)) {
+        Ok(info) => {
+            let addr = info.bind_addr.to_string();
+            menu.notice = Some((loc.fmt("host.started_notice", &[("addr", &addr)]), false));
+            Some(info)
+        }
+        Err(error) => {
+            menu.notice = Some((error, true));
+            None
         }
     }
 }
@@ -929,13 +1045,15 @@ fn on_field_edit(
     store_field_value(*field, value, &mut form, &mut settings);
 }
 
-/// Shared by Bevy's native editor and the browser's HTML input.
+/// Shared by Bevy's native editor and menu form tests.
 fn store_field_value(field: Field, value: String, form: &mut MenuForm, settings: &mut Settings) {
     match field {
         Field::Url if form.url != value => form.url = value,
         Field::Code if form.code != value => form.code = value,
         Field::Name => store_name(value, form, settings),
-        Field::Url | Field::Code => {}
+        Field::HostBind if form.host_bind != value => form.host_bind = value,
+        Field::HostAssets if form.host_assets != value => form.host_assets = value,
+        Field::Url | Field::Code | Field::HostBind | Field::HostAssets => {}
     }
 }
 
@@ -984,6 +1102,9 @@ fn submit_on_enter(
         }
         Field::Code => {
             actions.write(Action::JoinByCode);
+        }
+        Field::HostBind | Field::HostAssets => {
+            actions.write(Action::HostAndConnect);
         }
         Field::Name => {}
     }

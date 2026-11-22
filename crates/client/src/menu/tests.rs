@@ -686,3 +686,60 @@ fn switching_language_rebuilds_menu_immediately() {
     act(&mut app, Action::Section(Section::Singleplayer));
     assert_shows(&mut app, &["Твій наступний хід", "Нова гра"]);
 }
+
+#[test]
+fn gui_can_host_server_connect_and_stop() {
+    let mut app = app(1280);
+    act(&mut app, Action::Section(Section::Multiplayer));
+    assert_shows(&mut app, &["Join server", "Host server"]);
+
+    act(&mut app, Action::OnlineTab(OnlineTab::Host));
+    assert_shows(
+        &mut app,
+        &[
+            "Host a server",
+            "Bind address (UDP)",
+            "Random frontier (fogged)",
+            "Host & connect",
+            "Start server",
+        ],
+    );
+
+    app.world_mut().resource_mut::<MenuForm>().host_bind = "127.0.0.1:0".into();
+    act(&mut app, Action::SelectHostMap(Some(0)));
+    act(&mut app, Action::StartHostedServer);
+
+    let info = app
+        .world()
+        .resource::<crate::hosted_server::HostedServer>()
+        .info()
+        .cloned()
+        .expect("embedded server should be running");
+    assert_eq!(info.map_name, "Crossroads");
+    assert_shows(
+        &mut app,
+        &[
+            "Hosting",
+            &info.share_url,
+            "Connect to my server",
+            "Stop server",
+        ],
+    );
+
+    let _ = sent(&mut app);
+    app.world_mut().write_message(Action::ConnectHostedServer);
+    app.update();
+    assert_eq!(
+        sent(&mut app),
+        [SessionAction::Connect {
+            url: info.local_url.clone(),
+        }]
+    );
+
+    act(&mut app, Action::StopHostedServer);
+    assert!(
+        !app.world()
+            .resource::<crate::hosted_server::HostedServer>()
+            .is_running()
+    );
+}

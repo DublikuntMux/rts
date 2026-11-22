@@ -3,6 +3,7 @@ mod crash;
 mod effects;
 mod font;
 mod game;
+mod hosted_server;
 mod hud;
 mod input;
 mod library;
@@ -83,5 +84,6 @@ fn build_app(app: &mut App, bundle: AssetBundle) {
         ))
         .init_resource::<Library>()
         .init_resource::<GameFont>()
+        .init_resource::<hosted_server::HostedServer>()
         .init_resource::<server_assets::ServerAssets>();
 }

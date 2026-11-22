@@ -78,15 +78,17 @@ pub enum Field {
     Url,
     Code,
     Name,
+    HostBind,
+    HostAssets,
 }
 
 impl Field {
     /// Whether this field accepts `c` from the platform keyboard.
     pub const fn accepts(self, c: char) -> bool {
         match self {
-            Self::Url => !c.is_whitespace() && !c.is_control(),
+            Self::Url | Self::HostBind => !c.is_whitespace() && !c.is_control(),
             Self::Code => c.is_ascii_alphanumeric(),
-            Self::Name => !c.is_control(),
+            Self::Name | Self::HostAssets => !c.is_control(),
         }
     }
 
@@ -740,5 +742,13 @@ mod tests {
         assert!(Field::Name.accepts(' '));
         assert!(Field::Name.accepts('\''));
         assert!(!Field::Name.accepts('\t'));
+
+        assert!(Field::HostBind.accepts('0'));
+        assert!(Field::HostBind.accepts(':'));
+        assert!(!Field::HostBind.accepts(' '));
+
+        assert!(Field::HostAssets.accepts('/'));
+        assert!(Field::HostAssets.accepts(' '));
+        assert!(!Field::HostAssets.accepts('\n'));
     }
 }
