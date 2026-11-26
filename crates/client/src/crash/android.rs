@@ -6,16 +6,15 @@ pub(super) fn save_to_downloads(name: &str, report: &[u8]) -> Result<(), String>
     let app = bevy::android::ANDROID_APP
         .get()
         .ok_or("Android app storage is unavailable.")?;
-    JavaVM::singleton()
-        .and_then(|vm| {
-            vm.attach_current_thread_for_scope(|env| {
-                let activity = app.activity_as_ptr().cast();
-                // SAFETY: AndroidApp owns this global reference and keeps it valid during the export.
-                let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
-                write_download(env, &activity, name, report)
-            })
-        })
-        .map_err(|error| format!("Cannot save crash report in Downloads: {error}"))
+    // SAFETY: AndroidApp supplies the running process's JVM.
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread_for_scope(|env| {
+        let activity = app.activity_as_ptr().cast();
+        // SAFETY: AndroidApp owns this global reference and keeps it valid during the export.
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        write_download(env, &activity, name, report)
+    })
+    .map_err(|error| format!("Cannot save crash report in Downloads: {error}"))
 }
 
 fn write_download(
@@ -106,6 +105,9 @@ fn write_entry(
             &[JValue::Object(uri)],
         )?
         .l()?;
+    if stream.is_null() {
+        return Err(Error::NullPtr("Downloads output stream"));
+    }
     let write = env.call_method(
         &stream,
         jni_str!("write"),
