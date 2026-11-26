@@ -229,8 +229,10 @@ Wood and Gold inside recessed LCD counters beside the beveled pause button.
 
 * The terrain minimap (``hud/minimap.rs``) builds one nearest-sampled image
   from the current match, including server-provided maps. Live player-colored
-  unit dots and a camera outline update as UI nodes. Click, tap, or drag it
-  to center the camera without issuing orders.
+  unit dots and a camera outline update as UI nodes. A click or tap that
+  starts and ends inside the image moves selected units or sets a selected
+  producer's rally point. Without an eligible selection, it centers the
+  camera. Dragging pans the camera.
 * The center shows unit names, living soldiers out of the squad size (for
   squads), health totals, order status, and the current
   mouse or touch hint. A single unit has a sprite portrait; a group shows
@@ -251,8 +253,9 @@ Desktop windows use a 184-logical-pixel console. Phone mode applies when
 logical width is below 620 **or logical height is below 520**, including
 landscape phones. The phone canvas reserves no bottom strip:
 
-* A small terrain thumbnail sits in the top-right corner. Tap it to open a
-  larger map with camera navigation and a **Close** button.
+* A small terrain thumbnail sits in the top-right corner. Tap its bezel to
+  open a larger map with camera navigation and a **Close** button. With no
+  eligible selection, tapping the image opens the larger map too.
 * Orders appear only while units are selected. Portrait uses a floating
   102×102-pixel, two-by-two dock; landscape uses a 210×48-pixel row. Only the
   actual **Move**, **Stop**, **Clear**, and selection buttons are shown.

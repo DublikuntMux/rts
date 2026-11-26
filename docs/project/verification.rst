@@ -9,7 +9,7 @@ device.
 CLI server, GUI server hosting, and tactical RTS UI
 ---------------------------------------------------
 
-**Playtest follow-up checks (2026-11-26).** All 390 workspace tests passed,
+**Playtest follow-up checks (2026-11-26).** All 391 workspace tests passed,
 along with formatting, strict all-target workspace Clippy, ARM64 Android
 Clippy, and the strict Sphinx build.
 
@@ -40,7 +40,8 @@ orders at the map boundary, owner-only rally state, recruit movement and
 producer removal, and binary and replay round-trips. The menu regression
 checks that a button disabled during a press comes back unpressed. Phone
 layout tests cover wrapped economy buttons and the playable area beside the
-short final row. Minimap tests cover taps and drags relative to the map image.
+short final row. Minimap tests cover drag clamping and touch gestures that
+cross the bezel before release.
 
 **Full replay fog control (2026-11-26).** Client tests exercise the right-side
 switch, show and hide terrain and units, and verify that the view switch

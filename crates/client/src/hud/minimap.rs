@@ -9,7 +9,7 @@ use bevy::{
         events::{PointerCancel, PointerClick, PointerDrag, PointerDragEnd, PointerPress},
         pointer::{PointerButton, PointerId},
     },
-    platform::collections::{HashMap, HashSet},
+    platform::collections::HashMap,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     ui_widgets::observe,
@@ -34,7 +34,14 @@ const MAP_BORDER: f32 = 2.0;
 
 #[derive(Component, Default)]
 pub(super) struct Minimap {
-    dragging: HashSet<PointerId>,
+    presses: HashMap<PointerId, MapPress>,
+}
+
+#[derive(PartialEq, Eq)]
+enum MapPress {
+    Bezel,
+    Image,
+    Drag,
 }
 #[derive(Component)]
 pub(super) struct MapImage((u32, bool));
@@ -67,7 +74,7 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
             observe(click_map),
             observe(drag_map),
             observe(end_map_drag),
-            observe(cancel_map_drag),
+            observe(cancel_map_press),
         ))
         .id();
     commands.entity(root).with_children(|well| {
@@ -324,20 +331,39 @@ fn footprint(center: Vec2, screen: Vec2, zoom: f32, bounds: Rect) -> Rect {
     )
 }
 
-fn press_map(event: On<PointerPress>, mut map: Single<&mut Minimap>) {
+fn press_map(
+    event: On<PointerPress>,
+    node: Single<(&ComputedNode, &UiGlobalTransform), With<MapImage>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    bounds: Res<MapBounds>,
+    mut map: Single<&mut Minimap>,
+) {
     if event.button == PointerButton::Primary {
-        map.dragging.remove(&event.pointer.id);
+        let press = if map_point(
+            node.into_inner(),
+            event.pointer.position,
+            &window,
+            bounds.0,
+            false,
+        )
+        .is_some()
+        {
+            MapPress::Image
+        } else {
+            MapPress::Bezel
+        };
+        map.presses.insert(event.pointer.id, press);
     }
 }
 
 fn end_map_drag(event: On<PointerDragEnd>, mut map: Single<&mut Minimap>) {
     if event.button == PointerButton::Primary {
-        map.dragging.remove(&event.pointer.id);
+        map.presses.remove(&event.pointer.id);
     }
 }
 
-fn cancel_map_drag(event: On<PointerCancel>, mut map: Single<&mut Minimap>) {
-    map.dragging.remove(&event.pointer.id);
+fn cancel_map_press(event: On<PointerCancel>, mut map: Single<&mut Minimap>) {
+    map.presses.remove(&event.pointer.id);
 }
 
 fn click_map(
@@ -349,7 +375,7 @@ fn click_map(
     menu: Option<Res<Menu>>,
     scale: Res<UiScale>,
     mut phone: ResMut<PhoneHud>,
-    map: Single<&Minimap>,
+    mut map: Single<&mut Minimap>,
     camera: Single<(&mut Transform, &Projection), With<RtsCamera>>,
     mut game: ResMut<Match>,
     selection: Res<Selection>,
@@ -357,20 +383,29 @@ fn click_map(
     time: Res<Time>,
     mut targeting: ResMut<Targeting>,
 ) {
-    if event.button != PointerButton::Primary
-        || map.dragging.contains(&event.pointer.id)
+    if event.button != PointerButton::Primary {
+        return;
+    }
+    let Some(press) = map.presses.remove(&event.pointer.id) else {
+        return;
+    };
+    if press == MapPress::Drag
         || world_input_blocked(Some(&pause), menu.as_deref())
         || phone.panel == Some(PhonePanel::Selection)
     {
         return;
     }
-    let target = map_point(
-        node.into_inner(),
-        event.pointer.position,
-        &window,
-        bounds.0,
-        false,
-    );
+    let target = if press == MapPress::Image {
+        map_point(
+            node.into_inner(),
+            event.pointer.position,
+            &window,
+            bounds.0,
+            false,
+        )
+    } else {
+        None
+    };
     if let Some(target) = target
         && order_from_minimap(
             target,
@@ -410,10 +445,13 @@ fn drag_map(
     {
         return;
     }
+    let Some(press) = map.presses.get_mut(&event.pointer.id) else {
+        return;
+    };
     if event.distance.length_squared() >= 64.0 {
-        map.dragging.insert(event.pointer.id);
+        *press = MapPress::Drag;
     }
-    if map.dragging.contains(&event.pointer.id)
+    if *press == MapPress::Drag
         && let Some(target) = map_point(
             node.into_inner(),
             event.pointer.position,
@@ -473,19 +511,137 @@ fn recenter(
 
 #[cfg(test)]
 mod tests {
+    use bevy::{
+        camera::NormalizedRenderTarget,
+        picking::{backend::HitData, events::Pointer, pointer::Location},
+        window::{WindowRef, WindowResolution},
+    };
+    use rts_base::PlayerId;
+
     use super::*;
+
+    fn bordered_map_node() -> (ComputedNode, UiGlobalTransform) {
+        (
+            ComputedNode {
+                size: Vec2::new(100.0, 80.0),
+                border: BorderRect {
+                    min_inset: Vec2::splat(2.0),
+                    max_inset: Vec2::splat(2.0),
+                },
+                ..default()
+            },
+            UiGlobalTransform::from_xy(100.0, 100.0),
+        )
+    }
+
+    #[test]
+    fn minimap_orders_require_both_ends_of_the_tap_inside_the_image() {
+        let mut world = World::new();
+        let game = Match::new(
+            crate::skirmish::test_setup().simulation().unwrap(),
+            PlayerId(0),
+            true,
+        );
+        let mobile = game
+            .view
+            .units()
+            .find_map(|(id, unit)| {
+                (unit.owner == PlayerId(0) && !game.view.rules().unit(unit.kind).building)
+                    .then_some(id)
+            })
+            .unwrap();
+        let bounds = Rect::from_corners(Vec2::ZERO, to_world(game.view.world_size()));
+        let minimap = spawn(&mut world.commands(), &game, &mut Assets::default());
+        world.flush();
+        let image = world
+            .query_filtered::<Entity, With<MapImage>>()
+            .single(&world)
+            .unwrap();
+        world.entity_mut(image).insert(bordered_map_node());
+        let camera = world.spawn(RtsCamera::default()).id();
+        let window = world
+            .spawn((
+                Window {
+                    resolution: WindowResolution::new(400, 640),
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        world.insert_resource(game);
+        world.insert_resource(MapBounds(bounds));
+        world.insert_resource(Selection {
+            units: [mobile].into(),
+            touch_mode: true,
+        });
+        world.init_resource::<PauseMenu>();
+        world.init_resource::<PhoneHud>();
+        world.init_resource::<UiScale>();
+        world.init_resource::<OrderFeedback>();
+        world.init_resource::<Targeting>();
+        world.init_resource::<Time>();
+
+        let pointer = |x| {
+            Pointer::new(
+                PointerId::Touch(1),
+                Location {
+                    target: NormalizedRenderTarget::Window(
+                        WindowRef::Entity(window).normalize(None).unwrap(),
+                    ),
+                    position: Vec2::new(x, 100.0),
+                },
+            )
+        };
+        let hit = HitData::new(Entity::PLACEHOLDER, 0.0, None, None);
+        for (start, end, panel, issues_order, pans_camera) in [
+            (149.0, 148.0, Some(PhonePanel::Map), false, false),
+            (148.0, 149.0, Some(PhonePanel::Map), false, false),
+            (149.0, 135.0, None, false, true),
+            (148.0, 147.0, None, true, false),
+        ] {
+            world.resource_mut::<PhoneHud>().panel = None;
+            let camera_start = world.get::<Transform>(camera).unwrap().translation;
+            let distance = Vec2::new(end - start, 0.0);
+            world.trigger(PointerPress {
+                entity: minimap,
+                pointer: pointer(start),
+                button: PointerButton::Primary,
+                hit: hit.clone(),
+                count: 1,
+            });
+            world.trigger(PointerDrag {
+                entity: minimap,
+                pointer: pointer(end),
+                button: PointerButton::Primary,
+                delta: distance,
+                distance,
+            });
+            world.trigger(PointerClick {
+                entity: minimap,
+                pointer: pointer(end),
+                button: PointerButton::Primary,
+                hit: hit.clone(),
+                duration: std::time::Duration::ZERO,
+                count: 1,
+            });
+            world.trigger(PointerDragEnd {
+                entity: minimap,
+                pointer: pointer(end),
+                button: PointerButton::Primary,
+                distance,
+            });
+            assert_eq!(!world.resource::<Match>().pending.is_empty(), issues_order);
+            assert_eq!(world.resource::<PhoneHud>().panel, panel);
+            assert_eq!(
+                world.get::<Transform>(camera).unwrap().translation != camera_start,
+                pans_camera,
+            );
+        }
+    }
 
     #[test]
     fn map_padding_is_excluded_from_taps_but_drags_clamp_to_the_edge() {
-        let node = ComputedNode {
-            size: Vec2::new(100.0, 80.0),
-            border: BorderRect {
-                min_inset: Vec2::splat(2.0),
-                max_inset: Vec2::splat(2.0),
-            },
-            ..default()
-        };
-        let transform = UiGlobalTransform::from_xy(100.0, 100.0);
+        let (node, transform) = bordered_map_node();
         let window = Window::default();
         let bounds = Rect::new(0.0, -800.0, 1000.0, 0.0);
         let padding = Vec2::new(154.0, 100.0);

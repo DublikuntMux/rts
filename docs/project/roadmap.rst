@@ -258,8 +258,9 @@ Android crash report export
 
 Rally points and minimap orders
    Headquarters and barracks can send new units to an owner-set rally
-   point. A minimap tap moves selected units or sets the selected building's
-   rally point. Protocol 12 carries the new command and private rally state.
+   point. A tap that begins and ends inside the minimap image moves selected
+   units or sets the selected building's rally point. Protocol 12 carries the
+   new command and private rally state.
 
 Fog controls for full replays
    Full replays can switch between the recorded player's perspective and
