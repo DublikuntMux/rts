@@ -298,5 +298,5 @@ after a solo result restarts immediately. **Leave** asks for confirmation
 during live solo and online matches. Stopped matches and replays leave at
 once. The confirmation host shares the main menu's dialog scenes and renders
 above the pause menu. Dialog content scrolls when a short window cannot fit
-all actions. Pause and command
-buttons stay outside the tab order; menu actions use a modal tab group.
+all actions. Pause and command buttons stay outside the tab order. Menu
+actions use a modal tab group.

@@ -105,6 +105,7 @@ in the bottom-right corner: two rows in portrait, one row in landscape. Tap
 its unit portrait to see selection details. With no selection, the command
 dock disappears. On Frontier, phone economy actions appear in a separate
 panel at the lower left when the selected worker or building can use them.
+On narrow screens, the economy controls wrap into multiple rows.
 The wood and gold counter is near the pause button or below the minimap
 on narrow screens. The rest of the battlefield stays playable. This layout
 also applies to short landscape windows and accounts for interface scale.

@@ -9,6 +9,11 @@ device.
 CLI server, GUI server hosting, and tactical RTS UI
 ---------------------------------------------------
 
+**Playtest follow-up checks (2026-11-26).** All 384 workspace tests passed,
+along with formatting, strict all-target workspace Clippy, ARM64 Android
+Clippy, and the strict Sphinx build. The Android Downloads export was
+compiled without an on-device run.
+
 **Server fog setting (2026-11-26).** Tests cover the CLI default and
 ``--no-fog``, the embedded host control, and the terrain, units, and view flags
 both players receive from the coordinator with each fog setting. Regressions
@@ -21,13 +26,16 @@ across tile boundaries. A scene test verifies that a moving group reaches its
 exact simulation target and packs its sprites inside the destination tile.
 
 **Android crash report export (2026-11-26).** Android writes the report to
-Downloads and keeps its pending copy when publication fails. No Android
-device or emulator was available to exercise the Downloads provider.
+Downloads and keeps its pending copy when publication fails. Strict Clippy
+passed for the ARM64 Android target. No device or emulator was available to
+exercise the Downloads provider.
 
 **Rally points and minimap orders (2026-11-26).** Tests cover queued minimap
 orders at the map boundary, owner-only rally state, recruit movement and
 producer removal, and binary and replay round-trips. The menu regression
-checks that a button disabled during a press comes back unpressed.
+checks that a button disabled during a press comes back unpressed. The phone
+layout test checks touch-sized economy buttons after wrapping at a narrow
+interface width.
 
 **Full replay fog control (2026-11-26).** Client tests exercise the right-side
 switch, show and hide terrain and units, and verify that the view switch

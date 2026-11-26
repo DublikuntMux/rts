@@ -305,6 +305,9 @@ fn spawn_economy_card(
             card.spawn((
                 Node {
                     column_gap: px(ACTION_GAP),
+                    row_gap: px(ACTION_GAP),
+                    max_width: percent(100),
+                    flex_wrap: FlexWrap::Wrap,
                     ..default()
                 },
                 Pickable::IGNORE,
@@ -508,6 +511,7 @@ fn update_skirmish(
     let size = size.size() / scale.0;
     let hud = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
     let count = visible_actions(&game, &selection);
+    let button_width = action_width(size.x, action_columns(size.x, count));
     for mut bar in &mut resource_bars {
         let position = resource_bar_position(&hud);
         bar.top = px(position.y);
@@ -548,7 +552,7 @@ fn update_skirmish(
         let visible = (*layout == ActionLayout::Phone) == hud.phone
             && action.units(&game, &selection).next().is_some();
         if *layout == ActionLayout::Phone {
-            node.width = px(action_width(size.x, count));
+            node.width = px(button_width);
         }
         node.display = if visible {
             Display::Flex
@@ -897,6 +901,13 @@ fn action_width(screen_width: f32, count: usize) -> f32 {
     (ACTION_GAP.mul_add(-gaps, screen_width - 16.0) / count).clamp(0.0, ACTION_WIDTH)
 }
 
+fn action_columns(screen_width: f32, count: usize) -> usize {
+    (1..=count)
+        .rev()
+        .find(|&columns| action_width(screen_width, columns) >= 48.0)
+        .unwrap_or(1)
+}
+
 pub fn actions_bounds(
     game: &Match,
     selection: &Selection,
@@ -910,11 +921,16 @@ pub fn actions_bounds(
     if count == 0 {
         return None;
     }
+    let columns = action_columns(size.x, count);
+    let button_width = action_width(size.x, columns);
+    // Match the row's flex wrapping, including the gaps between rows.
     #[expect(clippy::cast_precision_loss, reason = "only five actions")]
-    let width = (action_width(size.x, count) + ACTION_GAP).mul_add(count as f32, -ACTION_GAP);
+    let width = (button_width + ACTION_GAP).mul_add(columns as f32, -ACTION_GAP);
+    #[expect(clippy::cast_precision_loss, reason = "only five actions")]
+    let height = (ACTION_HEIGHT + ACTION_GAP).mul_add(count.div_ceil(columns) as f32, -ACTION_GAP);
     let y = size.y - actions_bottom(hud);
     Some(Rect::from_corners(
-        Vec2::new(8.0, y - ACTION_HEIGHT),
+        Vec2::new(8.0, y - height),
         Vec2::new(8.0 + width, y),
     ))
 }
@@ -1023,8 +1039,12 @@ mod tests {
 
         assert_eq!(
             visible_actions(app.world().resource(), app.world().resource()),
-            3
+            4
         );
+        activate(&mut app, EconomyAction::Rally);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::Rally);
+        activate(&mut app, EconomyAction::Rally);
+        assert_eq!(*app.world().resource::<Targeting>(), Targeting::None);
         activate(&mut app, EconomyAction::Worker);
         activate(&mut app, EconomyAction::RifleSquad);
         activate(&mut app, EconomyAction::Scout);
@@ -1082,6 +1102,28 @@ mod tests {
     }
 
     #[test]
+    fn phone_economy_controls_wrap_into_touch_sized_rows() {
+        let game = Match::new(
+            test_setup().simulation().unwrap(),
+            rts_base::PlayerId(0),
+            true,
+        );
+        let selection = Selection {
+            units: [UnitId(0), UnitId(3), UnitId(4)].into(),
+            ..default()
+        };
+        let size = Vec2::new(240.0, 360.0);
+        let hud = HudLayout::new(size, true, None);
+        let count = visible_actions(&game, &selection);
+        assert_eq!(count, 5);
+        let columns = action_columns(size.x, count);
+        assert_eq!(columns, 4);
+        assert!(action_width(size.x, columns) >= 48.0);
+        let bounds = actions_bounds(&game, &selection, size, &hud).unwrap();
+        assert_eq!(bounds.size(), Vec2::new(224.0, 106.0));
+    }
+
+    #[test]
     fn scout_action_follows_the_rules() {
         let sim = test_setup().simulation().unwrap();
         let mut selection = Selection::default();
@@ -1105,7 +1147,7 @@ mod tests {
             .replace("scout: Some((cost: (wood: 3, gold: 2), ticks: 4)),", "");
         let game = Match::new(setup.simulation().unwrap(), rts_base::PlayerId(0), true);
         assert_eq!(EconomyAction::Scout.units(&game, &selection).next(), None);
-        assert_eq!(visible_actions(&game, &selection), 1);
+        assert_eq!(visible_actions(&game, &selection), 2);
         assert_eq!(
             economy_hint(&game, &selection, Targeting::None, &loc).as_deref(),
             Some("Train rifle squads at the barracks.")
