@@ -525,6 +525,24 @@ fn restarting_an_active_solo_match_requires_confirmation() {
 }
 
 #[test]
+fn disabling_a_pressed_button_clears_its_press_before_reenabling() {
+    let mut app = app(1280);
+    let button = app
+        .world_mut()
+        .spawn((bevy::ui_widgets::Button, bevy::ui::Pressed))
+        .id();
+    app.world_mut()
+        .entity_mut(button)
+        .insert(InteractionDisabled);
+    app.world_mut().flush();
+    assert!(app.world().get::<bevy::ui::Pressed>(button).is_none());
+    app.world_mut()
+        .entity_mut(button)
+        .remove::<InteractionDisabled>();
+    assert!(app.world().get::<bevy::ui::Pressed>(button).is_none());
+}
+
+#[test]
 fn browse_filters_orders_and_keeps_a_valid_selection() {
     let record = |id: &str, map: &str, saved_at| Record {
         id: id.into(),

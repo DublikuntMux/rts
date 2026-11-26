@@ -957,6 +957,17 @@ pub fn update_bindings(
 }
 
 /// Keeps keyboard activation consistent with disabled looks.
+/// Bevy ignores releases while a button is disabled, so settle its press when disabling it.
+pub fn clear_disabled_button_press(
+    event: On<Add<InteractionDisabled>>,
+    pressed: Query<(), (With<Button>, With<Pressed>)>,
+    mut commands: Commands,
+) {
+    if pressed.contains(event.entity) {
+        commands.entity(event.entity).remove::<Pressed>();
+    }
+}
+
 pub fn update_availability(
     mut commands: Commands,
     view: super::ViewParam,

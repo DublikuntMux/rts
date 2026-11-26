@@ -70,6 +70,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<CrashReport>()
             .init_resource::<previews::PreviewCache>()
             .add_message::<Action>()
+            .add_observer(widgets::clear_disabled_button_press)
             .add_systems(
                 OnEnter(AppState::Menu),
                 (close_dialogs, open_crash_dialog).chain(),
