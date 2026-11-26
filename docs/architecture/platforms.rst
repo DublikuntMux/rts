@@ -59,8 +59,10 @@ Where platform code lives
      - Desktop data paths (``XDG_DATA_HOME`` / ``LOCALAPPDATA``) and Android
        internal app storage.
    * - ``crash.rs``
-     - Panic hook, rotating ``game.log``, stored crash reports, and manual
+     - Panic hook, rotating ``game.log``, stored crash reports, and desktop
        export to ``~/Downloads`` or app-private ``exports/``.
+   * - ``crash/android.rs``
+     - Android crash report export to shared Downloads through MediaStore.
    * - ``menu/pages.rs`` and ``settings.rs``
      - Platform visibility for clipboard and fullscreen.
    * - ``crates/android``

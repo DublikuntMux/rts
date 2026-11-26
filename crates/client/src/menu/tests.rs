@@ -247,7 +247,6 @@ fn every_page_and_dialog_spawns_on_wide_and_compact_screens() {
         act(&mut app, Action::SelectMap(1));
         assert_shows(&mut app, &["Selected: Proving Grounds"]);
         act(&mut app, Action::StartGame);
-        // Sent messages are drained by the next frame's message update, so check right away.
 
         let replay = rts_net::Recording::Match(Replay::new(setup("crossroads")).unwrap());
         app.world_mut()
@@ -729,7 +728,6 @@ fn pause_menu_escape_resume_and_leave_confirmation_preserve_selection() {
     ] {
         assert!(visible.iter().any(|text| text == label), "missing {label}");
     }
-    // Read in the producing frame: messages can expire while later scenes settle.
     for action in [SessionAction::SaveGame, SessionAction::SaveReplay] {
         app.world_mut().write_message(Action::Game(action.clone()));
         app.update();
