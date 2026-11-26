@@ -97,8 +97,8 @@ by platform:
      - A copy in the downloads folder, or ``exports/`` in the data folder when
        there is none. The menu names the path.
    * - Android
-     - A copy in app-private ``exports/`` storage; the menu names the path.
-       A share sheet needs a platform channel and is not implemented.
+     - A text file in the device's shared Downloads collection. The log and
+       pending report stay in app-private storage until export succeeds.
 
 A panic hook sees only Rust panics. Segfaults, out-of-memory kills, and Android
 ANRs leave no report; the log still shows what the game was doing. Release

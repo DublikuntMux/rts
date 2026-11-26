@@ -4351,6 +4351,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "clap",
+ "jni",
  "miniz_oxide 0.9.1",
  "ron",
  "rts_ai",

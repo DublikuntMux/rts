@@ -81,7 +81,7 @@ pub fn data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "android")]
     return bevy::android::ANDROID_APP
         .get()
-        .and_then(|app| app.internal_data_path());
+        .and_then(bevy::android::android_activity::AndroidApp::internal_data_path);
     #[cfg(not(target_os = "android"))]
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)

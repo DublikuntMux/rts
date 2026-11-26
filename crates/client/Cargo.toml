@@ -27,3 +27,6 @@ tokio.workspace = true
 # The system clipboard backend has no Android implementation; Android keeps an in-app buffer.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 bevy = { workspace = true, features = ["system_clipboard"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true

@@ -18,6 +18,10 @@ two squads sharing a tile, mixed bounds at tile edges, and fixed slot spacing
 across tile boundaries. A scene test verifies that a moving group reaches its
 exact simulation target and packs its sprites inside the destination tile.
 
+**Android crash report export (2026-11-26).** Android writes the report to
+Downloads and keeps its pending copy when publication fails. No Android
+device or emulator was available to exercise the Downloads provider.
+
 **Solo match restart (2026-11-26).** Client tests exercise canceling and
 confirming the pause-menu action, reloading the opening simulation state,
 preserving the difficulty and legacy replay rules, and clearing selection.

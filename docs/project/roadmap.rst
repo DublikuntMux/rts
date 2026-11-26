@@ -252,6 +252,10 @@ Server fog setting
    setting under **Multiplayer** → **Host server**. Protocol 11 carries
    the server's setting in the view intro.
 
+Android crash report export
+   **Export report** writes a text file to Android's Downloads collection.
+   The live log and pending report use app-private storage.
+
 Upcoming
 --------
 

@@ -21,6 +21,9 @@ use bevy::{
     prelude::Resource,
 };
 
+#[cfg(target_os = "android")]
+mod android;
+
 /// Report file name, in the data folder.
 const REPORT_NAME: &str = "crash-report.txt";
 /// Log file name, in the data folder.
@@ -35,11 +38,14 @@ const REPORT_LOG_BYTES: usize = 48 * 1024;
 const LINE_LIMIT: usize = 1000;
 
 /// The data folder, resolved once.
-static DATA_DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+static DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 /// The application data folder.
 fn data_dir() -> Option<&'static std::path::Path> {
-    DATA_DIR.get_or_init(crate::storage::data_dir).as_deref()
+    DATA_DIR
+        .get()
+        .or_else(|| crate::storage::data_dir().map(|path| DATA_DIR.get_or_init(|| path)))
+        .map(std::path::PathBuf::as_path)
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +89,7 @@ impl CrashReport {
 
     /// Offers the report to the player and forgets the stored copy.
     ///
-    /// Browsers download a text file; native builds copy it to a folder the player can reach.
+    /// Copies the report to a folder the player can reach.
     ///
     /// # Errors
     /// Returns a message for the player when the report cannot be delivered.
@@ -279,11 +285,20 @@ fn discard_stored() {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn export_text(text: &str) -> Result<String, String> {
     let root = data_dir().ok_or("Cannot locate the app data folder.")?;
     let folder = native::export_folder(root);
     let path = native::export(root, &folder, text)?;
     Ok(format!("Crash report saved to {}.", path.display()))
+}
+
+#[cfg(target_os = "android")]
+fn export_text(text: &str) -> Result<String, String> {
+    let name = format!("rts-crash-{}.txt", crate::storage::now_millis());
+    android::save_to_downloads(&name, text.as_bytes())?;
+    discard_stored();
+    Ok("Crash report saved in Downloads.".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +381,7 @@ mod native {
     }
 
     /// Copies `text` into `folder`, settles the pending report, and returns the written path.
+    #[cfg(any(test, not(target_os = "android")))]
     pub fn export(root: &Path, folder: &Path, text: &str) -> Result<PathBuf, String> {
         fs::create_dir_all(folder)
             .map_err(|error| format!("Cannot create {}: {error}", folder.display()))?;
@@ -378,6 +394,7 @@ mod native {
 
     /// The player's downloads folder when it exists, an exports folder in app storage otherwise.
     /// Keep exports separate from the pending report so settling it survives a restart.
+    #[cfg(not(target_os = "android"))]
     pub fn export_folder(root: &Path) -> PathBuf {
         ["HOME", "USERPROFILE"]
             .iter()

@@ -111,6 +111,10 @@ Menu controls
 -------------
 
 The menu shares the desktop pages and uses a compact rail on narrow screens.
+
+After a Rust panic, the next launch offers **Export report**. The exported
+file appears in Downloads with a name starting with ``rts-crash-``. The live
+log and the pending report are stored privately by the app.
 Tapping the server address, invite code, or player name focuses the field and
 opens the system keyboard. **Settings** offers player name, language, interface scale, and edge scrolling;
 fullscreen is controlled by the activity. **Copy code** is hidden because
