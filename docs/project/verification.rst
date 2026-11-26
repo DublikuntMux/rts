@@ -42,7 +42,7 @@ short final row. Minimap tests cover taps and drags relative to the map image.
 switch, show and hide terrain and units, and verify that the view switch
 preserves selection, replay timing, and the deterministic simulation hash.
 Restoring fog hides undiscovered deposits. Narrow replay layouts put the
-switch below the resource bar.
+switch below the resource bar. The pause modal hides and disables the switch.
 
 **Solo match restart (2026-11-26).** Client tests exercise canceling and
 confirming the pause-menu action, reloading the opening simulation state,

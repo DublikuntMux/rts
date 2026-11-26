@@ -581,6 +581,15 @@ fn only_full_replays_spawn_a_fog_switch() {
     settle(&mut app);
     assert!(app.world().resource::<Match>().view.intro().fog_disabled);
     assert!(texts(&mut app).contains(&"Show fog of war".to_owned()));
+
+    app.world_mut().resource_mut::<PauseMenu>().open = true;
+    settle(&mut app);
+    assert_eq!(
+        app.world().get::<Node>(toggle).unwrap().display,
+        Display::None
+    );
+    app.world_mut().trigger(Activate { entity: toggle });
+    assert!(app.world().resource::<Match>().view.intro().fog_disabled);
 }
 
 #[test]

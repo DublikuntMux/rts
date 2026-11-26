@@ -81,7 +81,7 @@ fn spawn_replay_fog(mut commands: Commands, game: Option<Res<Match>>, font: Opti
         ReplayFogButton,
         Button,
         Hovered::default(),
-        GlobalZIndex(11),
+        GlobalZIndex(2),
         Node {
             position_type: PositionType::Absolute,
             top: px(12),
@@ -111,11 +111,12 @@ fn toggle_replay_fog(
     mut commands: Commands,
     mut game: ResMut<Match>,
     menu: Res<Menu>,
+    pause: Res<PauseMenu>,
     phone: Option<Res<PhoneHud>>,
     shots: Query<Entity, With<ShotEffect>>,
 ) {
     if game.can_toggle_replay_fog()
-        && menu.dialog.is_none()
+        && !world_input_blocked(Some(&pause), Some(&menu))
         && phone.as_deref().is_none_or(|phone| phone.panel.is_none())
     {
         game.toggle_replay_fog();
@@ -138,6 +139,7 @@ fn update_replay_fog(
     window: Query<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
     menu: Res<Menu>,
+    pause: Res<PauseMenu>,
     phone: Option<Res<PhoneHud>>,
     loc: Res<Localization>,
     mut buttons: Query<FogButtonStyle, With<ReplayFogButton>>,
@@ -149,8 +151,8 @@ fn update_replay_fog(
     let size = window.size() / scale.0;
     let bounds =
         HudLayout::new(size, false, None).replay_toggle_bounds(size, game.view.is_skirmish());
-    let visible =
-        menu.dialog.is_none() && phone.as_deref().is_none_or(|phone| phone.panel.is_none());
+    let visible = !world_input_blocked(Some(&pause), Some(&menu))
+        && phone.as_deref().is_none_or(|phone| phone.panel.is_none());
     let key = if game.view.intro().fog_disabled {
         "replay.show_fog"
     } else {
