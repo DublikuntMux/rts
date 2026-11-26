@@ -96,8 +96,8 @@ M2 — Commands, selection, movement
    Click, tap, and box selection, two-finger pan, selection rings, the touch
    command bar, and smooth rendered movement between ticks. Units sharing a tile
    use configurable rectangular visual bounds (or radius-derived defaults)
-   and stable grid slots, keeping crowded groups large by letting them spill
-   past the tile while keeping movement smooth and simulation state unchanged.
+   and stable grid slots. Crowded groups fit within the tile while movement
+   eases between layouts and simulation positions stay unchanged.
 
 M3 — Multiplayer
    The authoritative WebSocket server with create/join by code, server-owned

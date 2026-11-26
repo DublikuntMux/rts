@@ -1,15 +1,12 @@
 //! Tile-local presentation bounds; never part of simulation occupancy.
 
 use bevy::{platform::collections::HashMap, prelude::*};
-use rts_base::{IVec2 as SimPos, UnitDef, UnitId, tile_of};
+use rts_base::{IVec2 as SimPos, TILE, UnitDef, UnitId, tile_of};
 
 use crate::map::{TILE_PX, to_world, to_world_distance};
 
 const TILE_PADDING: f32 = 4.0;
 const UNIT_GAP: f32 = 4.0;
-/// Crowded groups may fill this multiple of a tile's width. Stacked units stay large
-/// and spill past the tile edge instead of shrinking into it.
-const GROUP_AREA: f32 = 1.5;
 // Ease only packing changes; simulation travel is interpolated separately.
 const MOTION_RESPONSE_SECONDS: f32 = 0.1;
 const POSITION_SETTLE_DISTANCE: f32 = 0.01;
@@ -105,13 +102,13 @@ impl PlacementMotion {
     }
 }
 
-/// Width of the area a packed tile group may fill, in world pixels.
+/// Width of a tile's interior in world pixels.
 #[expect(
     clippy::cast_precision_loss,
     reason = "the tile size is a small power of two"
 )]
 pub(super) fn group_area() -> f32 {
-    (TILE_PX as f32).mul_add(GROUP_AREA, -2.0 * TILE_PADDING)
+    2.0_f32.mul_add(-TILE_PADDING, TILE_PX as f32)
 }
 
 /// Reusable storage for packing units. Sorting a flat buffer avoids rebuilding a tree
@@ -123,7 +120,7 @@ pub(super) struct UnitLayout {
 }
 
 struct LayoutUnit {
-    group: (bool, i32, i32),
+    tile: (i32, i32),
     id: UnitId,
     position: Vec2,
     bounds: UnitBounds,
@@ -134,27 +131,25 @@ impl UnitLayout {
         self.placements[&id]
     }
 
-    /// Moving and stopped units pack separately, in stable ID order within each tile.
+    /// All occupants pack in stable ID order within each tile.
     #[expect(
         clippy::cast_precision_loss,
         reason = "tile capacity bounds each group to at most u16::MAX units"
     )]
-    pub fn update(&mut self, units: impl Iterator<Item = (UnitId, SimPos, UnitBounds, bool)>) {
+    pub fn update(&mut self, units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>) {
         self.units.clear();
-        self.units
-            .extend(units.map(|(id, position, bounds, moving)| {
-                let tile = tile_of(position);
-                LayoutUnit {
-                    group: (moving, tile.x, tile.y),
-                    id,
-                    position: to_world(position),
-                    bounds,
-                }
-            }));
-        self.units
-            .sort_unstable_by_key(|unit| (unit.group, unit.id));
+        self.units.extend(units.map(|(id, position, bounds)| {
+            let tile = tile_of(position);
+            LayoutUnit {
+                tile: (tile.x, tile.y),
+                id,
+                position: to_world(position),
+                bounds,
+            }
+        }));
+        self.units.sort_unstable_by_key(|unit| (unit.tile, unit.id));
         self.placements.clear();
-        for group in self.units.chunk_by(|a, b| a.group == b.group) {
+        for group in self.units.chunk_by(|a, b| a.tile == b.tile) {
             // The group occupies a contiguous portion of the retained scratch buffer.
             let count = group.len();
             let mut columns = count.isqrt() + usize::from(count.isqrt().pow(2) < count);
@@ -176,17 +171,29 @@ impl UnitLayout {
                 }
             }
             let rows = count.div_ceil(columns);
-            let available = group_area();
+            let available = if count == 1 {
+                TILE_PX as f32
+            } else {
+                group_area()
+            };
             let scale = (available / bounds.max_element()).min(1.0);
             // Sum local offsets so large world coordinates do not accumulate rounding
             // error and pull a crowded group away from its ordered point.
             let origin = group[0].position;
-            let center = origin
+            let preferred = origin
                 + group
                     .iter()
                     .map(|unit| unit.position - origin + unit.bounds.offset * scale)
                     .sum::<Vec2>()
                     / count as f32;
+            let center = if count == 1 {
+                preferred
+            } else {
+                let (x, y) = group[0].tile;
+                let tile_center = to_world(SimPos::new(x * TILE + TILE / 2, y * TILE + TILE / 2));
+                let travel = ((Vec2::splat(available) - bounds * scale) / 2.0).max(Vec2::ZERO);
+                preferred.clamp(tile_center - travel, tile_center + travel)
+            };
             let stride = (cell + Vec2::splat(UNIT_GAP)) * scale;
             for (index, unit) in group.iter().enumerate() {
                 let row = index / columns;
@@ -214,14 +221,12 @@ fn layout_units(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
 ) -> HashMap<UnitId, Placement> {
     let mut layout = UnitLayout::default();
-    layout.update(units.map(|(id, pos, bounds)| (id, pos, bounds, false)));
+    layout.update(units);
     layout.placements
 }
 
 #[cfg(test)]
 mod tests {
-    use rts_base::TILE;
-
     use super::*;
 
     fn circle(radius: f32) -> UnitBounds {
@@ -248,53 +253,35 @@ mod tests {
                 );
             }
         }
-        let min = units
-            .iter()
-            .fold(Vec2::splat(f32::INFINITY), |min, &(id, _, bounds)| {
-                min.min(
-                    bounds
-                        .world_rect(&crate::units::placement_transform(layout[&id]))
-                        .min,
-                )
-            });
-        let max = units
-            .iter()
-            .fold(Vec2::splat(f32::NEG_INFINITY), |max, &(id, _, bounds)| {
-                max.max(
-                    bounds
-                        .world_rect(&crate::units::placement_transform(layout[&id]))
-                        .max,
-                )
-            });
-        assert!((max - min).max_element() <= group_area() + 0.01);
+        if units.len() > 1 {
+            let tile = tile_of(units[0].1);
+            let center = to_world(tile * TILE + SimPos::splat(TILE / 2));
+            let inset = Rect::from_center_size(center, Vec2::splat(group_area() + 0.01));
+            for &(id, _, footprint) in units {
+                let bounds = footprint.world_rect(&crate::units::placement_transform(layout[&id]));
+                assert!(
+                    inset.contains(bounds.min) && inset.contains(bounds.max),
+                    "{bounds:?} outside {inset:?}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn retained_layout_reuses_storage_and_keeps_moving_groups_separate() {
+    fn retained_layout_reuses_storage_and_packs_occupants_together() {
         let position = SimPos::splat(TILE / 2);
         let bounds = circle(38.375);
         let units = [
-            (UnitId(0), position, bounds, false),
-            (UnitId(1), position, bounds, false),
-            (UnitId(2), position, bounds, true),
-            (UnitId(3), position, bounds, true),
-            (UnitId(4), position + SimPos::X * TILE, bounds, false),
+            (UnitId(0), position, bounds),
+            (UnitId(1), position, bounds),
+            (UnitId(2), position, bounds),
+            (UnitId(3), position, bounds),
+            (UnitId(4), position + SimPos::X * TILE, bounds),
         ];
         let mut layout = UnitLayout::default();
         layout.update(units.into_iter());
         let expected = layout.placements.clone();
-        assert_eq!(
-            layout.placement(UnitId(0)).position,
-            layout.placement(UnitId(2)).position
-        );
-        assert_eq!(
-            layout.placement(UnitId(1)).position,
-            layout.placement(UnitId(3)).position
-        );
-        assert_ne!(
-            layout.placement(UnitId(0)).position,
-            layout.placement(UnitId(1)).position
-        );
+        assert_packed(&units[..4]);
         assert_eq!(layout.placement(UnitId(4)).position, to_world(units[4].1));
         let scratch = layout.units.as_ptr();
         let capacity = layout.placements.capacity();
@@ -336,44 +323,16 @@ mod tests {
     }
 
     #[test]
-    fn crowded_groups_keep_unshared_size_and_spill_past_the_tile() {
+    fn full_tiles_pack_four_workers_or_two_squads() {
         let pos = SimPos::splat(TILE / 2);
-        let workers: Vec<_> = (0..4).map(|id| (UnitId(id), pos, circle(38.375))).collect();
-        let layout = layout_units(workers.iter().copied());
-        let tile = Rect::from_center_size(to_world(pos), Vec2::splat(to_world(SimPos::X * TILE).x));
-        let rects: Vec<_> = workers
-            .iter()
-            .map(|&(id, _, footprint)| {
-                let placement = layout[&id];
-                assert_eq!(
-                    placement.scale, 1.0,
-                    "a full tile of workers stays full size"
-                );
-                footprint.world_rect(&crate::units::placement_transform(placement))
-            })
-            .collect();
-        let left = rects
-            .iter()
-            .fold(f32::INFINITY, |left, rect| left.min(rect.min.x));
-        let right = rects
-            .iter()
-            .fold(f32::NEG_INFINITY, |right, rect| right.max(rect.max.x));
-        assert!(
-            right - left > tile.width(),
-            "crowded sprites overlap tile edges"
-        );
-        assert_packed(&workers);
-
-        // Two soldiers at full size would cover more than the tile, so they shrink
-        // only slightly instead of down to the old packed size.
-        let soldiers: Vec<_> = (0..2).map(|id| (UnitId(id), pos, circle(51.125))).collect();
-        assert_packed(&soldiers);
-        for placement in layout_units(soldiers.iter().copied()).values() {
-            assert!(
-                placement.scale > 0.85,
-                "two soldiers shrink to {}",
-                placement.scale
-            );
+        for (count, radius) in [(4, 38.375), (2, 57.625)] {
+            let units: Vec<_> = (0..count)
+                .map(|id| (UnitId(id), pos, circle(radius)))
+                .collect();
+            assert_packed(&units);
+            for placement in layout_units(units.iter().copied()).values() {
+                assert!(placement.scale < 1.0);
+            }
         }
     }
 
@@ -411,19 +370,21 @@ mod tests {
     }
 
     #[test]
-    fn group_offsets_stay_constant_across_centers_and_boundaries() {
+    fn groups_retain_spacing_when_they_cross_tile_boundaries() {
         let group = |position| (0..4).map(move |id| (UnitId(id), position, circle(38.375)));
         let start = SimPos::splat(TILE / 2);
         let reference = layout_units(group(start));
         for step in 0..=80 {
-            let position = SimPos::new(step * TILE / 20, TILE / 2);
-            let placements = layout_units(group(position));
+            let units: Vec<_> = group(SimPos::new(step * TILE / 20, TILE / 2)).collect();
+            let placements = layout_units(units.iter().copied());
+            let anchor = UnitId(0);
             for id in reference.keys() {
-                let expected_offset = reference[id].position - to_world(start);
-                let actual_offset = placements[id].position - to_world(position);
+                let expected_offset = reference[id].position - reference[&anchor].position;
+                let actual_offset = placements[id].position - placements[&anchor].position;
                 assert!(actual_offset.abs_diff_eq(expected_offset, 0.0001));
                 assert_eq!(placements[id].scale, reference[id].scale);
             }
+            assert_packed(&units);
         }
     }
 
@@ -444,29 +405,22 @@ mod tests {
     }
 
     #[test]
-    fn stopped_groups_stay_on_the_ordered_point_near_tile_edges() {
-        // Four workers ordered to a point near the right edge of their tile.
-        let target = SimPos::new(TILE - 1, TILE / 2);
-        let units: Vec<_> = (0..4)
-            .map(|id| (UnitId(id), target, circle(38.375)))
-            .collect();
-        let layout = layout_units(units.iter().copied());
-        let center = layout
-            .values()
-            .map(|placement| placement.position)
-            .sum::<Vec2>()
-            / 4.0;
-        assert_eq!(center, to_world(target));
-        assert!(
-            center.distance(to_world(SimPos::splat(TILE / 2))) > 60.0,
-            "the group slid toward the tile center"
-        );
+    fn crowded_group_stays_as_close_to_the_order_as_its_footprint_allows() {
+        let pos = SimPos::new(TILE - 1, TILE / 2);
+        let units = [
+            (UnitId(0), pos, circle(10.0)),
+            (UnitId(1), pos, circle(10.0)),
+        ];
+        let layout = layout_units(units.into_iter());
+        let center = (layout[&UnitId(0)].position + layout[&UnitId(1)].position) / 2.0;
+        assert_eq!(center.x, 128.0 - TILE_PADDING - 22.0);
+        assert_eq!(center.y, to_world(pos).y);
         assert_packed(&units);
     }
 
     #[test]
     fn crowded_group_anchor_does_not_drift_at_large_world_coordinates() {
-        let target = SimPos::new(rts_base::MAX_MAP_SIDE * TILE - 575, TILE / 2);
+        let target = SimPos::new(rts_base::MAX_MAP_SIDE * TILE - TILE / 2, TILE / 2);
         let footprint = circle(38.375);
         // Custom rules may allow up to u16::MAX size-one units in a tile.
         for count in [1024, u32::from(u16::MAX)] {

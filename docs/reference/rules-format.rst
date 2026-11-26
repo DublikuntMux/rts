@@ -131,8 +131,8 @@ Unit types
      - Positive starting health of each soldier.
    * - ``radius``
      - decimal tiles
-     - Positive nominal drawing radius. Crowded visual groups stay near this
-       size and may spill past their tile; see :doc:`../architecture/rendering`.
+     - Positive nominal drawing radius. Crowded visual groups scale to fit
+       inside their tile. See :doc:`../architecture/rendering`.
    * - ``visual_bounds``
      - optional bounds
      - ``Some((offset: (x, y), size: (width, height)))`` in tiles. Used for
@@ -164,9 +164,8 @@ The client draws ``sprite`` inside the size and offset given by
 ``visual_bounds``. When bounds are absent or ``None``, the bounds are a
 centered square with width and height ``2 × radius``. Images may have any
 width and height: they keep their aspect ratio, so the longer side fills the
-bounds and the image is centered on them. Crowded visual groups scale the sprite and
-its bounds together, but only as far as a group area of one and a half tiles
-requires, so stacked units keep most of their unshared size. The simulation
+bounds and the image is centered on them. Crowded visual groups scale the
+sprite and its bounds together to fit within the tile. The simulation
 never reads ``sprite``; changing only its path does not affect movement or
 state hashes.
 

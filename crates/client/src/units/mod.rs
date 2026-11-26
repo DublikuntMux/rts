@@ -127,7 +127,6 @@ fn sync_units(
             id,
             unit.pos,
             UnitBounds::from_definition(game.view.rules().unit(unit.kind)),
-            game.view.move_target(id).is_some(),
         )
     }));
     for (id, unit) in game.view.units() {
@@ -916,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_group_settles_on_the_ordered_point_without_a_layout_shift() {
+    fn a_moved_group_keeps_its_exact_order_and_settles_inside_the_destination_tile() {
         let rules =
             Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
         let map = MapData::from_ron(
@@ -931,6 +930,7 @@ mod tests {
         let mut sim = Sim::new(rules, &map).unwrap();
         // Near the right edge of the second tile, far from its center.
         let target = SimPos::new(2 * TILE - 1, TILE / 2);
+        let tile_center = to_world(SimPos::new(TILE + TILE / 2, TILE / 2));
         sim.queue_command(
             PlayerId(0),
             Command::Move {
@@ -955,10 +955,8 @@ mod tests {
             }) {
                 let now = world.resource::<Time>().elapsed_secs_f64();
                 let arrival = *arrived_at.get_or_insert(now);
-                // Allow the final simulation segment to finish interpolating, then
-                // check every frame so a transient slide on arrival cannot hide
-                // behind the eventual settled position.
-                if now - arrival > 1.0 / f64::from(rts_base::TICK_RATE) {
+                // Allow the final travel sample and the layout easing to settle.
+                if now - arrival > 0.6 {
                     let visuals = world.resource::<UnitVisuals>();
                     let center = visuals
                         .entities
@@ -972,7 +970,7 @@ mod tests {
                         })
                         .sum::<Vec2>()
                         / 4.0;
-                    assert!(center.abs_diff_eq(to_world(target), 0.001));
+                    assert!(center.abs_diff_eq(tile_center, 0.1));
                     arrival_checks += 1;
                 }
             }
@@ -1001,10 +999,7 @@ mod tests {
             })
             .sum::<Vec2>()
             / 4.0;
-        // The group stays on the point it was sent to instead of sliding to the
-        // middle of its tile when the move orders finish.
-        assert_eq!(center, to_world(target));
-        assert!(center.distance(to_world(SimPos::splat(TILE + TILE / 2))) > 60.0);
+        assert_eq!(center, tile_center);
     }
 
     #[test]

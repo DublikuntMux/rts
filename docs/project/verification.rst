@@ -13,6 +13,11 @@ CLI server, GUI server hosting, and tactical RTS UI
 ``--no-fog``, the embedded host control, and the terrain, units, and view flags
 both players receive from the coordinator with each fog setting.
 
+**Tile formation packing (2026-11-26).** Client tests cover four workers or
+two squads sharing a tile, mixed bounds at tile edges, and fixed slot spacing
+across tile boundaries. A scene test verifies that a moving group reaches its
+exact simulation target and packs its sprites inside the destination tile.
+
 **Solo match restart (2026-11-26).** Client tests exercise canceling and
 confirming the pause-menu action, reloading the opening simulation state,
 preserving the difficulty and legacy replay rules, and clearing selection.
