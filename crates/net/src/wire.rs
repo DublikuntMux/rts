@@ -524,7 +524,7 @@ fn read_unit_ids(r: &mut Reader<'_>, max: usize) -> Result<Vec<UnitId>, NetError
 fn write_view_intro(w: &mut Writer, intro: ViewIntro) -> Result<(), NetError> {
     w.write_u8(intro.player.0)?;
     w.write_u8(intro.players)?;
-    w.write_bool(intro.skirmish)?;
+    w.write_u8(u8::from(intro.skirmish) | (u8::from(intro.fog_disabled) << 1))?;
     w.write_ivec2(intro.size)?;
     w.write_ivec2(intro.start)?;
     Ok(())
@@ -533,7 +533,10 @@ fn write_view_intro(w: &mut Writer, intro: ViewIntro) -> Result<(), NetError> {
 fn read_view_intro(r: &mut Reader<'_>) -> Result<ViewIntro, NetError> {
     let player = PlayerId(r.read_u8()?);
     let players = r.read_u8()?;
-    let skirmish = r.read_bool()?;
+    let flags = r.read_u8()?;
+    if flags & !0b11 != 0 {
+        return Err(NetError::invalid("unknown view intro flags"));
+    }
     let size = r.read_ivec2()?;
     let start = r.read_ivec2()?;
     Ok(ViewIntro {
@@ -541,7 +544,8 @@ fn read_view_intro(r: &mut Reader<'_>) -> Result<ViewIntro, NetError> {
         players,
         size,
         start,
-        skirmish,
+        skirmish: flags & 1 != 0,
+        fog_disabled: flags & 2 != 0,
     })
 }
 

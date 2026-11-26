@@ -135,8 +135,8 @@ Pages and actions
        holds the server address, address hint, **Recent: <url>**, a quick
        **Connect to my server** banner when hosting locally, and **Connect**
        (failure shows a reason and **Retry**). **Host server** configures a
-       UDP bind address, server map (**Random frontier (fogged)** or any
-       catalog map), optional custom assets folder, **Host & connect**,
+       UDP bind address, server map (**Random frontier** or any catalog map),
+       fog of war, optional custom assets folder, **Host & connect**,
        **Start server**, and a live status panel with the shareable
        TLS-pinned ``quic://`` readout, **Copy address**, and **Stop server**.
    * - Multiplayer: Connecting

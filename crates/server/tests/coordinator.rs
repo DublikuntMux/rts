@@ -174,6 +174,50 @@ fn view_of(started: &[Delivery], client: u64) -> PlayerView {
     view.unwrap()
 }
 
+#[test]
+fn server_can_disable_fog_for_every_player() {
+    let mut setup = setup();
+    setup.map = r#"(name: "server", players: [(start: (0.5, 0.5)), (start: (11.5, 0.5))],
+            tiles: ["............"], units: [
+                (kind: "soldier", owner: 0, pos: (0.5, 0.5)),
+                (kind: "worker", owner: 1, pos: (11.5, 0.5)),
+            ])"#
+    .to_owned();
+
+    for fog_of_war in [true, false] {
+        let mut config = fixed(setup.clone());
+        config.fog_of_war = fog_of_war;
+        let mut server = coordinator(config);
+        assert!(server.connect(1, NOW));
+        assert!(server.connect(2, NOW));
+        let code = create(&mut server, 1, &setup);
+        join(&mut server, 2, &code);
+        ready(&mut server, 1);
+        ready(&mut server, 2);
+        let started = receive(&mut server, 1, ClientMessage::Start);
+
+        for (client, far_tile) in [(1, 11), (2, 0)] {
+            let view = view_of(&started, client);
+            assert_eq!(view.intro().fog_disabled, !fog_of_war);
+            assert_eq!(view.units().count(), if fog_of_war { 1 } else { 2 });
+            assert_eq!(
+                view.visibility(IVec2::new(far_tile, 0)),
+                if fog_of_war {
+                    rts_base::TileVisibility::Unexplored
+                } else {
+                    rts_base::TileVisibility::Visible
+                }
+            );
+            assert_eq!(view.terrain(IVec2::new(far_tile, 0)).is_none(), fog_of_war);
+            let own_count = view
+                .units()
+                .filter(|(id, _)| view.own(*id).is_some())
+                .count();
+            assert_eq!(own_count, 1);
+        }
+    }
+}
+
 fn assert_error(messages: &[Delivery], client: u64) {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].client, client);

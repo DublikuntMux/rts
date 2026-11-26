@@ -61,6 +61,11 @@ impl FogVisibility {
         self.size
     }
 
+    fn reveal_all(&mut self) {
+        self.explored.fill(true);
+        self.visible.fill(true);
+    }
+
     /// Replaces the current sight with the discs around `sources` (world position, sight radius
     /// in tiles) and returns the tile indices explored for the first time, in ascending order.
     ///
@@ -150,6 +155,9 @@ pub struct ViewIntro {
     /// The player's own start, in world units.
     pub start: IVec2,
     pub skirmish: bool,
+    /// The server supplies the entire map and all units in this view.
+    #[serde(default)]
+    pub fog_disabled: bool,
 }
 
 /// One tick of a player's knowledge, relative to the previous frame.
@@ -269,6 +277,7 @@ impl<Id: Copy + Ord> Aliases<Id> {
 #[derive(Debug, Clone)]
 pub struct PlayerKnowledge {
     player: PlayerId,
+    fog_disabled: bool,
     fog: FogVisibility,
     units: Aliases<UnitId>,
     deposits: Aliases<DepositId>,
@@ -286,9 +295,20 @@ impl PlayerKnowledge {
     /// Panics if the player is not in this match.
     #[must_use]
     pub fn new(sim: &Sim, player: PlayerId) -> Self {
+        Self::with_fog(sim, player, true)
+    }
+
+    /// Creates a view observer with fog enabled or disabled. With fog disabled,
+    /// all terrain and units are visible, while private player state stays private.
+    ///
+    /// # Panics
+    /// Panics if the player is not in this match.
+    #[must_use]
+    pub fn with_fog(sim: &Sim, player: PlayerId, fog_enabled: bool) -> Self {
         assert!(usize::from(player.0) < sim.players().len());
         Self {
             player,
+            fog_disabled: !fog_enabled,
             fog: FogVisibility::new(sim.terrain().size()),
             units: Aliases::new(),
             deposits: Aliases::new(),
@@ -323,6 +343,7 @@ impl PlayerKnowledge {
             size: sim.terrain().size(),
             start: sim.players()[usize::from(self.player.0)].start,
             skirmish: sim.is_skirmish(),
+            fog_disabled: self.fog_disabled,
         }
     }
 
@@ -339,13 +360,21 @@ impl PlayerKnowledge {
     /// Panics if `sim` is not the match this knowledge was created for.
     pub fn observe(&mut self, sim: &Sim) -> ViewFrame {
         assert_eq!(sim.terrain().size(), self.fog.size(), "same match");
-        let explored = self
-            .fog
-            .update(sight_sources(
+        let discovered = if self.fog_disabled {
+            if self.fog.explored[0] {
+                Vec::new()
+            } else {
+                self.fog.reveal_all();
+                (0..u32::try_from(self.fog.explored.len()).expect("bounded map size")).collect()
+            }
+        } else {
+            self.fog.update(sight_sources(
                 sim.rules(),
                 sim.units().map(|(_, u)| u),
                 self.player,
             ))
+        };
+        let explored = discovered
             .into_iter()
             .map(|index| (index, sim.terrain().tiles()[index as usize]))
             .collect();
@@ -631,7 +660,10 @@ impl PlayerView {
     pub fn apply(&mut self, frame: ViewFrame) -> Result<(), LoadError> {
         self.validate(&frame)?;
         let discovery = !frame.explored.is_empty();
-        let sources_changed = self.sight_sources_changed(&frame);
+        let sources_changed = !self.intro.fog_disabled && self.sight_sources_changed(&frame);
+        if self.intro.fog_disabled && self.tick.is_none() {
+            self.fog.reveal_all();
+        }
         self.tick = Some(frame.tick);
         for (index, terrain) in frame.explored {
             self.terrain[index as usize] = Some(terrain);
@@ -701,6 +733,17 @@ impl PlayerView {
             && Some(frame.tick) != tick.checked_add(1)
         {
             return invalid("tick out of sequence");
+        }
+        if self.intro.fog_disabled
+            && self.tick.is_none()
+            && (frame.explored.len() != self.terrain.len()
+                || frame
+                    .explored
+                    .iter()
+                    .zip(0_u32..)
+                    .any(|(&(index, _), expected)| index != expected))
+        {
+            return invalid("a view without fog must start with the entire map");
         }
         if frame.explored.iter().any(|&(index, terrain)| {
             self.terrain.get(index as usize).is_none_or(Option::is_some)

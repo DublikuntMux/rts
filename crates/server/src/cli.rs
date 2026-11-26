@@ -32,6 +32,10 @@ pub struct ServerArgs {
     #[arg(long, value_name = "U64")]
     pub seed: Option<u64>,
 
+    /// Reveal the map and its units to every player.
+    #[arg(long)]
+    pub no_fog: bool,
+
     /// Directory containing optional `textures/**/*.png` and `locales/*.lang.ron` files
     /// synced to connecting clients.
     #[arg(long, value_name = "DIR")]
@@ -56,7 +60,10 @@ pub struct ServerCli {
 /// Returns an error if any file cannot be read, exceeds size bounds, or fails simulation/asset
 /// validation.
 pub fn build_config(args: &ServerArgs) -> io::Result<(String, Config)> {
-    let mut config = Config::default();
+    let mut config = Config {
+        fog_of_war: !args.no_fog,
+        ..Config::default()
+    };
     if let Some(path) = &args.rules {
         config.setup.rules = read_document(path)?;
     }
@@ -145,6 +152,8 @@ mod tests {
         assert_eq!(address, "127.0.0.1:1234");
         assert_eq!(default.setup.players, 2);
         assert!(default.random_layout);
+        assert!(default.fog_of_war);
+        assert!(!parse_and_build(&["--no-fog"]).unwrap().1.fog_of_war);
         let (_, rules) = parse_and_build(&[
             "--rules",
             "../../assets/data/core.rules.ron",

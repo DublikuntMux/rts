@@ -940,6 +940,12 @@ fn host_server_body(view: &View) -> Scenes {
             --
             @row(map_choices)
             --
+            @row(bsn_list! {
+                @button({loc.t("host.fog_enabled").to_owned()}, Action::SetHostFog(true), Tone::Item)
+                --
+                @button({loc.t("host.fog_disabled").to_owned()}, Action::SetHostFog(false), Tone::Item)
+            })
+            --
             @hint({loc.t("host.assets_label").to_owned()})
             --
             Node { column_gap: px(8) } Children [ @{assets_field} ]
@@ -981,6 +987,8 @@ fn hosted_status_panel(loc: &Localization, info: &HostedServerInfo) -> impl Scen
                 @badge({loc.t("host.running_badge").to_owned()}, GOOD)
                 --
                 @text({info.map_name.clone()}, 15.0, INK)
+                --
+                @text({loc.t(if info.fog_of_war { "host.fog_enabled" } else { "host.fog_disabled" }).to_owned()}, 14.0, INK_MUTED)
             })
             --
             {assets_note}

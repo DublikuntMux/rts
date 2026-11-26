@@ -757,7 +757,9 @@ fn gui_can_host_server_connect_and_stop() {
         &[
             "Host a server",
             "Bind address (UDP)",
-            "Random frontier (fogged)",
+            "Random frontier",
+            "Fog of war on",
+            "Fog of war off",
             "Host & connect",
             "Start server",
         ],
@@ -765,6 +767,7 @@ fn gui_can_host_server_connect_and_stop() {
 
     app.world_mut().resource_mut::<MenuForm>().host_bind = "127.0.0.1:0".into();
     act(&mut app, Action::SelectHostMap(Some(0)));
+    act(&mut app, Action::SetHostFog(false));
     act(&mut app, Action::StartHostedServer);
 
     let info = app
@@ -774,6 +777,7 @@ fn gui_can_host_server_connect_and_stop() {
         .cloned()
         .expect("embedded server should be running");
     assert_eq!(info.map_name, "Crossroads");
+    assert!(!info.fog_of_war);
     assert_shows(
         &mut app,
         &[

@@ -1,17 +1,22 @@
 Fog of war and player views
 ===========================
 
-Every player sees the match through fog of war:
+By default, every player sees the match through fog of war:
 
 * Terrain a player has never seen is black.
 * Terrain the player has explored stays drawn, but dimmed while it is out of sight.
 * Enemy units are visible only while they stand on a tile one of the player's
   units can see. They vanish when they leave sight.
 
-The server enforces this. A client never receives terrain, units, economy,
+With fog enabled, the server enforces this. A client never receives terrain, units, economy,
 orders, or combat that its player cannot see, so a modified client cannot
 reveal them. ``rts_base`` (``crates/base/src/visibility.rs``) implements fog
 once for the server, the client, the solo session, and the AI.
+
+Servers can disable fog for all rooms. Every player then observes all terrain,
+terrain occupants, deposits, and combat, and the simulation accepts orders
+without sight restrictions. Each player still receives only their own
+stockpile, orders, and production queues.
 
 Pieces
 ------
@@ -34,7 +39,8 @@ Pieces
        player's commands to authoritative IDs.
    * - ``ViewIntro``
      - What a player knows before the first frame: its slot, the player
-       count, the map size, its own start, and whether the map is a skirmish.
+       count, the map size, its own start, whether the map is a skirmish, and
+       whether the server disabled fog.
    * - ``ViewFrame``
      - One tick of knowledge, relative to the previous frame. This is the
        wire format online and the record format of player-perspective replays.

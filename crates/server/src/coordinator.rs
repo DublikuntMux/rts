@@ -27,6 +27,8 @@ pub struct Config {
     /// Generates a private layout for each match from a server-only seed. A fixed map is
     /// public knowledge to anyone who has the map file.
     pub random_layout: bool,
+    /// Limits terrain, units and orders to each player's sight by default.
+    pub fog_of_war: bool,
     /// Optional client assets (`textures/**/*.png`, `locales/*.lang.ron`) served on connect.
     pub assets: BTreeMap<String, ServerAsset>,
     pub max_connections: usize,
@@ -49,6 +51,7 @@ impl Default for Config {
                 players: 2,
             },
             random_layout: true,
+            fog_of_war: true,
             assets: BTreeMap::new(),
             max_connections: 1024,
             max_rooms: 256,
@@ -567,10 +570,12 @@ impl Coordinator {
             return Err("invalid server setup");
         }
         let mut sim = sim;
-        sim.enforce_fog();
+        if self.config.fog_of_war {
+            sim.enforce_fog();
+        }
         let players = u8::try_from(room.slots.len()).expect("bounded player count");
         let mut knowledge: Vec<_> = (0..players)
-            .map(|player| PlayerKnowledge::new(&sim, PlayerId(player)))
+            .map(|player| PlayerKnowledge::with_fog(&sim, PlayerId(player), self.config.fog_of_war))
             .collect();
         let mut messages = Vec::new();
         for (slot, knowledge) in knowledge.iter_mut().enumerate() {

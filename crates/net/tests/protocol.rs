@@ -35,12 +35,31 @@ const fn intro() -> rts_base::ViewIntro {
         size: IVec2::new(4, 2),
         start: IVec2::new(TILE / 2, TILE / 2),
         skirmish: false,
+        fog_disabled: false,
     }
 }
 
 fn frame() -> rts_base::ViewFrame {
     let sim = setup().simulation().unwrap();
     rts_base::PlayerKnowledge::new(&sim, PlayerId(1)).observe(&sim)
+}
+
+#[test]
+fn start_frame_roundtrips_server_fog_setting() {
+    for fog_disabled in [false, true] {
+        let message = ServerMessage::Started {
+            players: 2,
+            input_delay: INPUT_DELAY_TICKS,
+            view: rts_base::ViewIntro {
+                fog_disabled,
+                ..intro()
+            },
+        };
+        assert_eq!(
+            decode_server(&encode_server(&message).unwrap()).unwrap(),
+            message
+        );
+    }
 }
 
 fn turn(tick: u32, commands: Vec<Command>) -> Turn {
@@ -866,7 +885,7 @@ fn lobby_validates_host_receiver_slot_count_and_names() {
 
 #[test]
 fn older_protocol_versions_are_rejected_on_live_wire() {
-    for old_version in [7_u8, 8, 9] {
+    for old_version in [7_u8, 8, 9, 10] {
         assert!(decode_client(&[0, old_version]).is_err());
     }
 }

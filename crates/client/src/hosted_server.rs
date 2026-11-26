@@ -28,6 +28,7 @@ pub struct HostedServerInfo {
     pub share_url: String,
     pub fingerprint: String,
     pub map_name: String,
+    pub fog_of_war: bool,
     pub asset_count: usize,
 }
 
@@ -81,12 +82,13 @@ impl HostedServer {
         bind_addr: &str,
         setup: Option<(String, MatchSetup)>,
         assets_dir: Option<&str>,
+        fog_of_war: bool,
     ) -> Result<HostedServerInfo, String> {
         let bind_addr = bind_addr.trim();
         if bind_addr.is_empty() {
             return Err("Enter a UDP bind address such as 0.0.0.0:9001.".into());
         }
-        let (config, map_name) = build_hosted_config(setup, assets_dir)?;
+        let (config, map_name) = build_hosted_config(setup, assets_dir, fog_of_war)?;
         let asset_count = config.assets.len();
 
         // Stop any previous embedded server before binding so reusing the same port works.
@@ -167,6 +169,7 @@ impl HostedServer {
             share_url,
             fingerprint,
             map_name,
+            fog_of_war,
             asset_count,
         };
         self.running = Some(RunningServer {
@@ -186,8 +189,12 @@ impl HostedServer {
 fn build_hosted_config(
     setup: Option<(String, MatchSetup)>,
     assets_dir: Option<&str>,
+    fog_of_war: bool,
 ) -> Result<(Config, String), String> {
-    let mut config = Config::default();
+    let mut config = Config {
+        fog_of_war,
+        ..Config::default()
+    };
     let map_name = match setup {
         Some((name, custom)) => {
             config.setup = custom;
@@ -228,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn embedded_server_starts_serves_quic_clients_and_stops_cleanly() {
         let mut hosted = HostedServer::default();
-        let info = hosted.start("127.0.0.1:0", None, None).unwrap();
+        let info = hosted.start("127.0.0.1:0", None, None, true).unwrap();
         assert!(hosted.is_running());
         assert_eq!(info.map_name, RANDOM_MAP_NAME);
         assert_eq!(info.fingerprint.len(), 64);

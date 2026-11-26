@@ -6,8 +6,8 @@ game binary ``rts`` share the same ``clap`` CLI definition:
 
 .. code-block:: text
 
-   rts-server [BIND_ADDRESS] [--rules PATH] [--map PATH] [--seed N] [--assets DIR]
-   rts server [BIND_ADDRESS] [--rules PATH] [--map PATH] [--seed N] [--assets DIR]
+   rts-server [BIND_ADDRESS] [--rules PATH] [--map PATH] [--seed N] [--no-fog] [--assets DIR]
+   rts server [BIND_ADDRESS] [--rules PATH] [--map PATH] [--seed N] [--no-fog] [--assets DIR]
 
 Run either from the repository with Cargo:
 
@@ -41,6 +41,9 @@ Arguments
    * - ``--seed N``
      - Unsigned 64-bit match seed for a fixed map. Defaults to 0. It stays on
        the server and is reserved for simulation randomness.
+   * - ``--no-fog``
+     - Reveal terrain, units, and deposits to every player and lift sight
+       limits on orders. Fog of war is enabled by default.
    * - ``--assets DIR``
      - Directory containing optional ``textures/**/*.png`` and
        ``locales/*.lang.ron`` client assets served to connecting clients over
@@ -48,8 +51,8 @@ Arguments
 
 Without ``--map``, every match plays a fresh two-player *Random frontier*
 layout generated from a seed drawn from OS entropy at the start of that
-match. The seed is never sent to clients, so the layout is known only through
-each player's fog of war. See :doc:`../architecture/server`.
+match. The seed stays on the server. The first view frame reveals the entire
+layout when fog of war is disabled. See :doc:`../architecture/server`.
 
 Each option may appear once, in any order. Unknown options, a second
 address, a missing value, or an invalid seed print the usage line and exit.

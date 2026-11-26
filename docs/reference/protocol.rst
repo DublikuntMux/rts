@@ -3,7 +3,7 @@ Multiplayer protocol
 
 Clients and the server exchange compact binary messages over QUIC, defined in
 ``rts_net`` (``crates/net/src/lib.rs``, ``wire.rs``, ``assets.rs``, and
-``quic.rs``). The current protocol version is **10**. Older clients are
+``quic.rs``). The current protocol version is **11**. Older clients are
 incompatible. Version 8 and 9 replays still load; see :doc:`replay-format`.
 
 Encoding and streams
@@ -50,7 +50,10 @@ Shared types
    }
 
    struct LobbySetup { rules: String, map: String, players: u8 }
-   struct ViewIntro { player: PlayerId, players: u8, size: IVec2, start: IVec2, skirmish: bool }
+   struct ViewIntro {
+       player: PlayerId, players: u8, size: IVec2, start: IVec2,
+       skirmish: bool, fog_disabled: bool,
+   }
    struct ViewFrame {
        tick: u32,
        explored: Vec<(u32, TerrainId)>,
@@ -66,6 +69,10 @@ they never reveal authoritative IDs. ``ViewFrame`` and its parts are described
 in :doc:`../architecture/visibility`. ``Turn`` (one ``PlayerInput`` per player
 in slot order) no longer crosses the network. It remains the record format of
 full replays (:doc:`replay-format`).
+
+The ``ViewIntro`` flags byte carries skirmish in bit 0 and the server's
+fog-disabled setting in bit 1. With fog disabled, the initial view frame
+contains every terrain tile in row-major order and all current units.
 
 Client messages
 ---------------

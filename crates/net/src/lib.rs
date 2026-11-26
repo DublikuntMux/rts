@@ -21,7 +21,7 @@ pub use replay::{
 pub use rts_base::INPUT_DELAY_TICKS;
 pub use setup::{LobbySetup, MAX_SETUP_BYTES, MatchSetup};
 
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 pub const MAX_NAME_CHARS: usize = 24;
 pub const MAX_MAP_NAME_CHARS: usize = 64;
 pub const MAX_LISTED_ROOMS: usize = 64;

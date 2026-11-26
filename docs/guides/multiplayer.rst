@@ -15,9 +15,9 @@ Start the server
 You can run an authoritative QUIC server in three ways:
 
 1. **From the game GUI.** Open **Multiplayer** → **Host server**, choose a UDP
-   bind address (default ``0.0.0.0:9001``), pick **Random frontier (fogged)** or
-   any catalog map, optionally specify a custom assets folder, and choose
-   **Host & connect** (or **Start server** to host in the background). The
+   bind address (default ``0.0.0.0:9001``), pick **Random frontier** or any
+   catalog map, choose the fog setting, and optionally specify a custom
+   assets folder. Choose **Host & connect** or **Start server**. The
    active status panel displays the shareable ``quic://...#<sha256>`` address,
    a **Copy address** button on desktop, and a **Stop server** control.
 2. **From the game CLI** (``clap`` subcommand):
@@ -31,6 +31,9 @@ You can run an authoritative QUIC server in three ways:
    .. code-block:: sh
 
       cargo run --release -p rts_server --bin rts-server -- 127.0.0.1:9001
+
+Fog of war is on by default. Pass ``--no-fog`` to either CLI to reveal the
+whole map in each room.
 
 The bind address is optional on the CLI. Without it the server uses the
 ``RTS_SERVER_ADDR`` environment variable, then ``127.0.0.1:9001``. The server
@@ -133,7 +136,7 @@ enemy units disappear when they leave sight.
 Clients can have different bundled content from the server. The server sends
 its own rules (plus any custom textures and translations configured with
 ``--assets``), and clients use them for the match. Clients only need
-compatible game code and the same protocol version (currently 10).
+compatible game code and the same protocol version (currently 11).
 
 Each client records the match as it saw it. **Watch replay** and **Save to
 library** on the last match keep that private replay; it never contains the

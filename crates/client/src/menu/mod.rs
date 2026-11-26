@@ -236,6 +236,7 @@ pub struct Menu {
     pub online_tab: OnlineTab,
     /// Map hosted by the embedded server (`None` = random fogged frontier).
     pub host_map: Option<usize>,
+    pub host_fog: bool,
     /// Index into the [`MapCatalog`].
     pub map: usize,
     /// The opponent's difficulty for a new skirmish.
@@ -261,6 +262,7 @@ impl Default for Menu {
             solo: SoloPage::default(),
             online_tab: OnlineTab::default(),
             host_map: None,
+            host_fog: true,
             map: 0,
             difficulty: Difficulty::default(),
             saves: Browse::default(),
@@ -458,6 +460,7 @@ pub enum Action {
     UseRecentServer,
     OnlineTab(OnlineTab),
     SelectHostMap(Option<usize>),
+    SetHostFog(bool),
     StartHostedServer,
     HostAndConnect,
     ConnectHostedServer,
@@ -540,6 +543,7 @@ impl Action {
             Self::Section(section) => menu.section == *section,
             Self::OnlineTab(tab) => menu.online_tab == *tab,
             Self::SelectHostMap(map) => menu.host_map == *map,
+            Self::SetHostFog(enabled) => menu.host_fog == *enabled,
             Self::SelectMap(map) => menu.map == *map,
             Self::SelectDifficulty(difficulty) => menu.difficulty == *difficulty,
             Self::Select(kind, pick) => menu.browse(*kind).selected.as_ref() == Some(pick),
@@ -688,6 +692,7 @@ fn perform(
             Action::SelectHostMap(map) => {
                 menu.host_map = map;
             }
+            Action::SetHostFog(enabled) => menu.host_fog = enabled,
             Action::StartHostedServer => {
                 let _ = start_hosted_server(&mut hosted, &mut menu, &form, &catalog, &loc);
             }
@@ -878,7 +883,12 @@ fn start_hosted_server(
         .host_map
         .and_then(|idx| catalog.0.get(idx))
         .map(|map| (map.name.clone(), map.setup.clone()));
-    match hosted.start(&form.host_bind, setup, Some(&form.host_assets)) {
+    match hosted.start(
+        &form.host_bind,
+        setup,
+        Some(&form.host_assets),
+        menu.host_fog,
+    ) {
         Ok(info) => {
             let addr = info.bind_addr.to_string();
             menu.notice = Some((loc.fmt("host.started_notice", &[("addr", &addr)]), false));

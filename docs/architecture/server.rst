@@ -244,7 +244,9 @@ Configuration
 -------------
 
 ``Config`` carries the ``MatchSetup`` (rules, map, seed, players), the
-``random_layout`` switch, and all resource limits.
+``random_layout`` and ``fog_of_war`` switches, and all resource limits.
+Fog defaults to enabled. Disabling it changes both simulation sight rules
+and the views the server sends.
 :doc:`../reference/server-cli` lists the defaults. The default setup is the
 bundled rules and the Frontier map, compiled into the binary with
 ``include_str!``, with random layouts on. ``serve_with_config`` refuses zero

@@ -247,6 +247,11 @@ Solo match restart
    Active solo matches can restart from the pause menu after confirmation.
    Restarting reloads the original setup and keeps the difficulty.
 
+Server fog setting
+   Servers can disable fog of war for all rooms with ``--no-fog`` or the
+   setting under **Multiplayer** → **Host server**. Protocol 11 carries
+   the server's setting in the view intro.
+
 Upcoming
 --------
 

@@ -9,6 +9,10 @@ device.
 CLI server, GUI server hosting, and tactical RTS UI
 ---------------------------------------------------
 
+**Server fog setting (2026-11-26).** Tests cover the CLI default and
+``--no-fog``, the embedded host control, and the terrain, units, and view flags
+both players receive from the coordinator with each fog setting.
+
 **Solo match restart (2026-11-26).** Client tests exercise canceling and
 confirming the pause-menu action, reloading the opening simulation state,
 preserving the difficulty and legacy replay rules, and clearing selection.
