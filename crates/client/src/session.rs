@@ -882,22 +882,25 @@ fn handle_actions(
                         &mut loc,
                     )
                 }),
-            SessionAction::Restart if status.can_restart() => session
-                .local_replay()
-                .ok_or_else(|| "The previous match setup is unavailable.".to_owned())
-                .and_then(|replay| {
-                    replay
-                        .restarted()
-                        .map_err(|error| format!("Cannot restart this match: {error}"))
-                })
-                .and_then(|recording| {
-                    let game = session.begin_recording(recording, now)?;
-                    let message = solo_start_message(&game);
-                    commands.insert_resource(RestartMatch(game));
-                    next.set(AppState::Restarting);
-                    status.start_match(MatchKind::Solo, message);
-                    Ok(())
-                }),
+            SessionAction::Restart if *state.get() == AppState::InGame && status.can_restart() => {
+                session
+                    .local_replay()
+                    .ok_or_else(|| "The previous match setup is unavailable.".to_owned())
+                    .and_then(|replay| {
+                        replay
+                            .restarted()
+                            .map_err(|error| format!("Cannot restart this match: {error}"))
+                    })
+                    .and_then(|recording| {
+                        let game = session.begin_recording(recording, now)?;
+                        let message = solo_start_message(&game);
+                        commands.insert_resource(RestartMatch(game));
+                        next.set(AppState::Restarting);
+                        status.start_match(MatchKind::Solo, message);
+                        Ok(())
+                    })
+            }
+            SessionAction::Restart if *state.get() == AppState::Restarting => Ok(()),
             SessionAction::Restart => Err("Only a solo match can be restarted.".into()),
             SessionAction::LoadGame { id } => library.load(Shelf::Saves, id).and_then(|saved| {
                 let Recording::Match(saved) = saved else {

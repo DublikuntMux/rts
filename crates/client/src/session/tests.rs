@@ -358,9 +358,11 @@ fn restart_resets_an_active_solo_match_to_its_setup() {
         .insert(UnitId(0));
 
     app.world_mut().write_message(SessionAction::Restart);
-    for _ in 0..3 {
-        app.update();
-    }
+    app.update();
+    // Another queued restart must leave the pending return to InGame intact.
+    app.world_mut().write_message(SessionAction::Restart);
+    app.update();
+    app.update();
     assert_eq!(
         *app.world().resource::<State<AppState>>().get(),
         AppState::InGame
@@ -368,6 +370,7 @@ fn restart_resets_an_active_solo_match_to_its_setup() {
     let game = app.world().resource::<Match>();
     assert_eq!(game.local_sim().unwrap().state_hash(), opening_hash);
     assert!(game.accepts_orders);
+    assert!(!status(&app).error);
     assert!(app.world().resource::<Selection>().units.is_empty());
     assert_eq!(
         app.world().resource::<Session>().difficulty,

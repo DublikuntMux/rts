@@ -292,10 +292,11 @@ is open. Online matches keep receiving and applying authoritative turns;
 the menu explicitly says the match continues. All world controls are blocked
 by menus and dialogs, including gestures that cross an overlay boundary.
 
-**Restart match** asks for confirmation, then reloads the original setup at
-the same difficulty. After a solo match ends, **Play again** restarts
-immediately. **Leave** asks for confirmation during live solo and online
-matches. Stopped matches and replays leave at once. The confirmation host shares the main
-menu's dialog scenes and renders above the pause menu. Dialog content
-scrolls when a short window cannot fit all actions. Pause and command
+**Restart match** asks for confirmation while the match is active. It reloads
+the original setup at the same difficulty and resets the camera. **Play again**
+after a solo result restarts immediately. **Leave** asks for confirmation
+during live solo and online matches. Stopped matches and replays leave at
+once. The confirmation host shares the main menu's dialog scenes and renders
+above the pause menu. Dialog content scrolls when a short window cannot fit
+all actions. Pause and command
 buttons stay outside the tab order; menu actions use a modal tab group.

@@ -517,10 +517,19 @@ fn restarting_an_active_solo_match_requires_confirmation() {
     assert!(app.world().resource::<Menu>().dialog.is_none());
 
     status(&mut app).result = None;
+    status(&mut app).stopped = true;
+    settle(&mut app);
+    activate_restart(&mut app);
+    assert_eq!(sent(&mut app), [SessionAction::Restart]);
+    assert!(app.world().resource::<Menu>().dialog.is_none());
+
     for kind in [MatchKind::Online, MatchKind::Playback] {
         status(&mut app).kind = kind;
-        settle(&mut app);
-        assert_eq!(restart_button(&mut app), None);
+        for result in [None, Some(crate::session::MatchResult::Victory)] {
+            status(&mut app).result = result;
+            settle(&mut app);
+            assert_eq!(restart_button(&mut app), None);
+        }
     }
 }
 
