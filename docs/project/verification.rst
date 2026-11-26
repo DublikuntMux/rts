@@ -11,7 +11,9 @@ CLI server, GUI server hosting, and tactical RTS UI
 
 **Server fog setting (2026-11-26).** Tests cover the CLI default and
 ``--no-fog``, the embedded host control, and the terrain, units, and view flags
-both players receive from the coordinator with each fog setting.
+both players receive from the coordinator with each fog setting. Regressions
+cover remote attack orders with fog disabled, complete initial terrain, and
+replay serialization compatible with the original v9 view format.
 
 **Tile formation packing (2026-11-26).** Client tests cover four workers or
 two squads sharing a tile, mixed bounds at tile edges, and fixed slot spacing

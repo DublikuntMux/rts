@@ -78,6 +78,33 @@ fn start_shows_only_own_surroundings() {
 }
 
 #[test]
+fn an_open_view_requires_complete_terrain_and_stays_open_without_observers() {
+    let mut sim = corridor();
+    let mut knowledge = PlayerKnowledge::with_fog(&sim, PlayerId(0), false);
+    let mut view = PlayerView::new(sim.rules().clone(), knowledge.intro(&sim)).unwrap();
+    let initial = knowledge.observe(&sim);
+    let mut missing = initial.clone();
+    missing.explored.pop();
+    assert!(view.apply(missing).is_err());
+    let mut unordered = initial.clone();
+    unordered.explored.swap(0, 1);
+    assert!(view.apply(unordered).is_err());
+    view.apply(initial).unwrap();
+    assert_eq!(view.units().count(), 4);
+    let terrain_revision = view.terrain_revision();
+
+    sim.remove_unit(UnitId(0));
+    sim.remove_unit(UnitId(1));
+    sim.step();
+    let update = knowledge.observe(&sim);
+    assert_eq!(update.explored, []);
+    view.apply(update).unwrap();
+    assert_eq!(view.units().count(), 2);
+    assert_eq!(view.terrain_revision(), terrain_revision);
+    assert_eq!(view.visibility(IVec2::new(37, 2)), TileVisibility::Visible);
+}
+
+#[test]
 fn units_are_discovered_and_hidden_again_while_terrain_is_remembered() {
     let mut sim = corridor();
     let (mut knowledge, mut view) = PlayerView::observe(&sim, PlayerId(0));

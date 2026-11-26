@@ -46,6 +46,10 @@ fn player_perspective_replays_roundtrip_and_replay_the_view() {
         !text.contains("seed"),
         "the setup never enters a view replay"
     );
+    assert!(
+        !text.contains("fog_disabled"),
+        "fogged recordings preserve the v9 intro layout"
+    );
     let (decoded, sim) = Recording::from_ron(&text).unwrap();
     assert!(sim.is_none());
     assert_eq!(decoded, Recording::View(replay.clone()));

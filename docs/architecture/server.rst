@@ -166,8 +166,8 @@ The match clock
 
 ``Game::advance`` simulates on a fixed 50 ms schedule per room:
 
-* ``Start`` builds the match, enables ``Sim::enforce_fog``, and creates one
-  ``PlayerKnowledge`` per slot. Each member receives its own
+* ``Start`` builds the match and configures the simulation and each
+  ``PlayerKnowledge`` from the server's fog setting. Each member receives its own
   ``Started { players, input_delay, view }`` and its frame for tick 0.
 * The first tick is due 50 ms after ``Start``.
 * Each tick revalidates the collected input for that tick against each

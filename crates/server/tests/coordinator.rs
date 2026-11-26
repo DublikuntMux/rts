@@ -215,6 +215,38 @@ fn server_can_disable_fog_for_every_player() {
                 .count();
             assert_eq!(own_count, 1);
         }
+        let mut host = view_of(&started, 1);
+        let soldier = host
+            .units()
+            .find(|(id, _)| host.own(*id).is_some())
+            .unwrap()
+            .0;
+        let target = if fog_of_war {
+            UnitId(1)
+        } else {
+            host.units()
+                .find(|(id, _)| host.own(*id).is_none())
+                .unwrap()
+                .0
+        };
+        receive(
+            &mut server,
+            1,
+            ClientMessage::Input {
+                tick: 1,
+                commands: vec![Command::Attack {
+                    units: vec![soldier],
+                    target,
+                }],
+            },
+        );
+        let updates = server.advance(Duration::from_millis(50));
+        let update = updates
+            .iter()
+            .find(|delivery| delivery.client == 1)
+            .unwrap();
+        host.apply(frame(update).clone()).unwrap();
+        assert_eq!(host.attack_target(soldier), (!fog_of_war).then_some(target));
     }
 }
 

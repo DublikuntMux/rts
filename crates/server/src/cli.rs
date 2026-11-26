@@ -104,6 +104,9 @@ pub async fn run_server(args: ServerArgs) -> io::Result<()> {
     let endpoint = rts_net::quic::server_endpoint(socket, &cert, config.lobby_timeout)?;
     eprintln!("RTS QUIC server listening on quic://{local_addr}");
     eprintln!("Certificate SHA-256: {}", cert.fingerprint);
+    if !config.fog_of_war {
+        eprintln!("Fog of war is disabled");
+    }
     if !config.assets.is_empty() {
         eprintln!("Serving {} client asset(s)", config.assets.len());
     }

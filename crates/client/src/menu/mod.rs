@@ -235,7 +235,7 @@ pub struct Menu {
     pub solo: SoloPage,
     /// Active tab on the offline Multiplayer screen (Join vs Host).
     pub online_tab: OnlineTab,
-    /// Map hosted by the embedded server (`None` = random fogged frontier).
+    /// Map hosted by the embedded server (`None` = random frontier).
     pub host_map: Option<usize>,
     pub host_fog: bool,
     /// Index into the [`MapCatalog`].

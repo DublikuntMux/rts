@@ -156,7 +156,7 @@ pub struct ViewIntro {
     pub start: IVec2,
     pub skirmish: bool,
     /// The server supplies the entire map and all units in this view.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fog_disabled: bool,
 }
 
@@ -361,6 +361,7 @@ impl PlayerKnowledge {
     pub fn observe(&mut self, sim: &Sim) -> ViewFrame {
         assert_eq!(sim.terrain().size(), self.fog.size(), "same match");
         let discovered = if self.fog_disabled {
+            // The first observation reveals every tile at once, including tile zero.
             if self.fog.explored[0] {
                 Vec::new()
             } else {
