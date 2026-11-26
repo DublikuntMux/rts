@@ -11,8 +11,7 @@ CLI server, GUI server hosting, and tactical RTS UI
 
 **Playtest follow-up checks (2026-11-26).** All 390 workspace tests passed,
 along with formatting, strict all-target workspace Clippy, ARM64 Android
-Clippy, and the strict Sphinx build. The Android Downloads export was
-compiled without an on-device run.
+Clippy, and the strict Sphinx build.
 
 **Server fog setting (2026-11-26).** Tests cover the CLI default and
 ``--no-fog``, the embedded host control, and the terrain, units, and view flags
@@ -30,8 +29,11 @@ keeps a moving group's position after interpolating the last available frame.
 
 **Android crash report export (2026-11-26).** Android writes the report to
 Downloads and keeps its pending copy when publication fails. Strict Clippy
-passed for the ARM64 Android target. No device or emulator was available to
-exercise the Downloads provider.
+passed for the ARM64 Android target. A test activity on an x86-64 Android
+API 37 emulator called the game's JNI exporter on a native thread. ADB
+confirmed that the shared Downloads file matched the input bytes and
+MediaStore marked the row published (``is_pending=0``). The in-game export
+dialog, startup crash reproduction, and physical hardware were untested.
 
 **Rally points and minimap orders (2026-11-26).** Tests cover queued minimap
 orders at the map boundary, owner-only rally state, recruit movement and
