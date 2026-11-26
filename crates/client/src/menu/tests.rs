@@ -74,7 +74,9 @@ fn app_with(width: u32, crash: Option<CrashReport>) -> App {
     .init_resource::<InputFocus>()
     .init_resource::<InputFocusVisible>()
     .init_resource::<ButtonInput<KeyCode>>()
+    .init_resource::<SentActions>()
     .add_message::<SessionAction>()
+    .add_systems(Last, capture_session_actions)
     .add_plugins(MenuPlugin);
     let mut window = Window {
         resolution: WindowResolution::new(width, 720),
@@ -155,11 +157,19 @@ fn status(app: &mut App) -> Mut<'_, SessionStatus> {
     app.world_mut().resource_mut::<SessionStatus>()
 }
 
+#[derive(Resource, Default)]
+struct SentActions(Vec<SessionAction>);
+
+fn capture_session_actions(
+    mut messages: MessageReader<SessionAction>,
+    mut actions: ResMut<SentActions>,
+) {
+    // Tests let the UI settle for several frames, which can expire unread messages.
+    actions.0.extend(messages.read().cloned());
+}
+
 fn sent(app: &mut App) -> Vec<SessionAction> {
-    app.world_mut()
-        .resource_mut::<Messages<SessionAction>>()
-        .drain()
-        .collect()
+    std::mem::take(&mut app.world_mut().resource_mut::<SentActions>().0)
 }
 
 fn lobby(ready: bool) -> Lobby {
