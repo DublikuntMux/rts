@@ -6,15 +6,16 @@ pub(super) fn save_to_downloads(name: &str, report: &[u8]) -> Result<(), String>
     let app = bevy::android::ANDROID_APP
         .get()
         .ok_or("Android app storage is unavailable.")?;
-    // SAFETY: AndroidApp supplies the running process's JVM.
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    vm.attach_current_thread_for_scope(|env| {
-        let activity = app.activity_as_ptr().cast();
-        // SAFETY: AndroidApp owns this global reference and keeps it valid during the export.
-        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
-        write_download(env, &activity, name, report)
-    })
-    .map_err(|error| format!("Cannot save crash report in Downloads: {error}"))
+    JavaVM::singleton()
+        .and_then(|vm| {
+            vm.attach_current_thread_for_scope(|env| {
+                let activity = app.activity_as_ptr().cast();
+                // SAFETY: AndroidApp owns this global reference and keeps it valid during the export.
+                let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+                write_download(env, &activity, name, report)
+            })
+        })
+        .map_err(|error| format!("Cannot save crash report in Downloads: {error}"))
 }
 
 fn write_download(
@@ -31,11 +32,19 @@ fn write_download(
             &[],
         )?
         .l()?;
-    let downloads = env
+    let volume = env
         .get_static_field(
+            jni_str!("android/provider/MediaStore"),
+            jni_str!("VOLUME_EXTERNAL_PRIMARY"),
+            jni_sig!("Ljava/lang/String;"),
+        )?
+        .l()?;
+    let downloads = env
+        .call_static_method(
             jni_str!("android/provider/MediaStore$Downloads"),
-            jni_str!("EXTERNAL_CONTENT_URI"),
-            jni_sig!("Landroid/net/Uri;"),
+            jni_str!("getContentUri"),
+            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+            &[JValue::Object(&volume)],
         )?
         .l()?;
     let values = content_values(env, 1)?;
