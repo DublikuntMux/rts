@@ -23,6 +23,7 @@ pub struct HudLayout {
     pub minimap: Rect,
     pub commands: Option<Rect>,
     pub details: Rect,
+    replay_toggle: Option<Rect>,
     modal: bool,
 }
 
@@ -54,6 +55,7 @@ impl HudLayout {
                     Vec2::new(size.x - HUD_HEIGHT, size.y),
                 ),
                 modal: false,
+                replay_toggle: None,
             };
         }
 
@@ -87,7 +89,37 @@ impl HudLayout {
             commands,
             details: Rect::from_corners(details_min, details_min + details_size),
             modal: panel.is_some(),
+            replay_toggle: None,
         }
+    }
+
+    fn resources_below_minimap(&self) -> bool {
+        self.phone && self.minimap.min.x < 243.0
+    }
+
+    pub fn resource_bar_position(&self) -> Vec2 {
+        if self.resources_below_minimap() {
+            Vec2::new(8.0, self.minimap.max.y + 8.0)
+        } else {
+            Vec2::new(68.0, 12.0)
+        }
+    }
+
+    pub fn replay_toggle_bounds(&self, size: Vec2, skirmish: bool) -> Rect {
+        let top = if skirmish && self.resources_below_minimap() {
+            self.resource_bar_position().y + 42.0
+        } else if self.phone {
+            self.minimap.max.y + 8.0
+        } else {
+            12.0
+        };
+        let right = size.x - 12.0;
+        Rect::new((right - 190.0).max(12.0), top, right, top + 48.0)
+    }
+
+    pub fn with_replay_toggle(mut self, size: Vec2, enabled: bool, skirmish: bool) -> Self {
+        self.replay_toggle = enabled.then(|| self.replay_toggle_bounds(size, skirmish));
+        self
     }
 
     /// Leave room to move edge units completely past a corner control and its touch area.
@@ -104,6 +136,12 @@ impl HudLayout {
 
     /// Phone controls consume only their visible rectangles, unless a popup is open.
     pub fn blocks_point(&self, point: Vec2) -> bool {
+        if self
+            .replay_toggle
+            .is_some_and(|bounds| bounds.contains(point))
+        {
+            return true;
+        }
         if self.phone {
             self.modal
                 || self.minimap.contains(point)
@@ -117,6 +155,17 @@ impl HudLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_skirmish_replay_toggle_sits_below_the_resource_bar() {
+        let size = Vec2::new(320.0, 640.0);
+        let hud = HudLayout::new(size, false, None).with_replay_toggle(size, true, true);
+        let resources = hud.resource_bar_position();
+        let toggle = hud.replay_toggle_bounds(size, true);
+        assert!(resources.y > hud.minimap.max.y);
+        assert_eq!(toggle.min.y, resources.y + 42.0);
+        assert!(hud.blocks_point(toggle.center()));
+    }
 
     #[test]
     fn phone_uses_either_small_dimension_and_preserves_the_battlefield() {

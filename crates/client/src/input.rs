@@ -13,7 +13,7 @@ use rts_base::{Command, IVec2 as SimPos, PlayerId, Unit, UnitDef, UnitId};
 use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
-    hud::{HudLayout, PhoneHud, Targeting},
+    hud::{HudLayout, PhoneHud, PhonePanel, Targeting},
     map::{TILE_PX, to_world},
     menu::Menu,
     pause_menu::{PAUSE_BUTTON_BOUNDS, PauseMenu, world_input_blocked},
@@ -219,10 +219,36 @@ struct ScreenView {
     /// Interface scale; the HUD and pause button grow with it.
     ui_scale: f32,
     hud: HudLayout,
-    economy: Option<Rect>,
+    economy: Option<skirmish::EconomyBounds>,
 }
 
 impl ScreenView {
+    fn new(
+        transform: &Transform,
+        projection: &OrthographicProjection,
+        size: Vec2,
+        ui_scale: f32,
+        game: &Match,
+        selection: &Selection,
+        panel: Option<PhonePanel>,
+    ) -> Self {
+        let logical_size = size / ui_scale;
+        let hud = HudLayout::new(logical_size, !selection.units.is_empty(), panel)
+            .with_replay_toggle(
+                logical_size,
+                game.can_toggle_replay_fog(),
+                game.view.is_skirmish(),
+            );
+        Self {
+            center: transform.translation.truncate(),
+            scale: projection.scale,
+            size,
+            ui_scale,
+            economy: skirmish::actions_bounds(game, selection, logical_size, &hud),
+            hud,
+        }
+    }
+
     fn world(&self, screen: Vec2) -> Vec2 {
         let offset = screen - self.size / 2.0;
         self.center + Vec2::new(offset.x, -offset.y) * self.scale
@@ -272,21 +298,17 @@ fn control_units(
             .is_some_and(|unit| unit.owner == game.local_player)
     });
     let panel = phone_hud.as_deref().and_then(|hud| hud.panel);
-    let hud = HudLayout::new(
-        window.size() / ui_scale.0,
-        !selection.units.is_empty(),
+    let view = ScreenView::new(
+        transform,
+        projection,
+        window.size(),
+        ui_scale.0,
+        &game,
+        &selection,
         panel,
     );
-    let blocked =
-        world_input_blocked(pause.as_deref(), menu.as_deref()) || (hud.phone && panel.is_some());
-    let view = ScreenView {
-        center: transform.translation.truncate(),
-        scale: projection.scale,
-        size: window.size(),
-        ui_scale: ui_scale.0,
-        economy: skirmish::actions_bounds(&game, &selection, window.size() / ui_scale.0, &hud),
-        hud,
-    };
+    let blocked = world_input_blocked(pause.as_deref(), menu.as_deref())
+        || (view.hud.phone && panel.is_some());
     if pointer.capture(
         blocked || !window.focused || keys.just_pressed(KeyCode::Escape),
         &touches,
@@ -752,19 +774,15 @@ fn draw_selection(
             }
         }
     }
-    let hud = HudLayout::new(
-        window.size() / ui_scale.0,
-        !selection.units.is_empty(),
+    let view = ScreenView::new(
+        transform,
+        projection,
+        window.size(),
+        ui_scale.0,
+        &game,
+        &selection,
         phone_hud.as_deref().and_then(|hud| hud.panel),
     );
-    let view = ScreenView {
-        center: transform.translation.truncate(),
-        scale: projection.scale,
-        size: window.size(),
-        ui_scale: ui_scale.0,
-        economy: skirmish::actions_bounds(&game, &selection, window.size() / ui_scale.0, &hud),
-        hud,
-    };
     if let Some(press) = pointer
         .mouse
         .or_else(|| pointer.finger.map(|(_, press)| press))
@@ -987,6 +1005,33 @@ mod tests {
 
     fn test_app() -> App {
         test_app_with("worker")
+    }
+
+    #[test]
+    fn clicking_or_tapping_the_replay_fog_control_preserves_selection() {
+        let sim = crate::skirmish::test_setup().simulation().unwrap();
+        let mut app = app_with_sim(sim.clone());
+        app.insert_resource(Match::full_replay(sim, PlayerId(0)));
+        app.world_mut().resource_mut::<Selection>().units = [UnitId(0)].into();
+        let size = app
+            .world_mut()
+            .query::<&Window>()
+            .single(app.world())
+            .unwrap()
+            .size();
+        let control = HudLayout::new(size, true, None)
+            .replay_toggle_bounds(size, true)
+            .center();
+        click(&mut app, control);
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            [UnitId(0)].into()
+        );
+        tap(&mut app, control);
+        assert_eq!(
+            app.world().resource::<Selection>().units,
+            [UnitId(0)].into()
+        );
     }
 
     /// A local unit of `kind` at tile (1, 1), screen (336, 236), and an enemy soldier at tile

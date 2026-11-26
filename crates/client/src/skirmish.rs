@@ -513,7 +513,7 @@ fn update_skirmish(
     let count = visible_actions(&game, &selection);
     let button_width = action_width(size.x, action_columns(size.x, count));
     for mut bar in &mut resource_bars {
-        let position = resource_bar_position(&hud);
+        let position = hud.resource_bar_position();
         bar.top = px(position.y);
         bar.left = px(position.x);
         bar.display = if phone.panel.is_none() {
@@ -588,14 +588,6 @@ fn update_skirmish(
                 };
             }
         }
-    }
-}
-
-pub fn resource_bar_position(hud: &HudLayout) -> Vec2 {
-    if hud.phone && hud.minimap.min.x < 243.0 {
-        Vec2::new(8.0, hud.minimap.max.y + 8.0)
-    } else {
-        Vec2::new(68.0, 12.0)
     }
 }
 
@@ -792,6 +784,7 @@ fn update_deposits(
     }
     for (sprite, mut visibility, mut image) in &mut sprites {
         let Some(deposit) = game.view.deposit(sprite.0) else {
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         visibility.set_if_neq(if deposit.remaining > 0 {
@@ -908,12 +901,28 @@ fn action_columns(screen_width: f32, count: usize) -> usize {
         .unwrap_or(1)
 }
 
+#[derive(Clone, Copy)]
+pub struct EconomyBounds {
+    full_rows: Rect,
+    last_row: Option<Rect>,
+}
+
+impl EconomyBounds {
+    pub fn contains(self, point: Vec2) -> bool {
+        self.full_rows.contains(point) || self.last_row.is_some_and(|row| row.contains(point))
+    }
+
+    pub const fn top(self) -> f32 {
+        self.full_rows.min.y
+    }
+}
+
 pub fn actions_bounds(
     game: &Match,
     selection: &Selection,
     size: Vec2,
     hud: &HudLayout,
-) -> Option<Rect> {
+) -> Option<EconomyBounds> {
     if !hud.phone {
         return None;
     }
@@ -923,16 +932,30 @@ pub fn actions_bounds(
     }
     let columns = action_columns(size.x, count);
     let button_width = action_width(size.x, columns);
-    // Match the row's flex wrapping, including the gaps between rows.
+    let rows = count / columns;
+    let remaining = count % columns;
     #[expect(clippy::cast_precision_loss, reason = "only five actions")]
-    let width = (button_width + ACTION_GAP).mul_add(columns as f32, -ACTION_GAP);
+    let row_width = |buttons| (button_width + ACTION_GAP).mul_add(buttons as f32, -ACTION_GAP);
     #[expect(clippy::cast_precision_loss, reason = "only five actions")]
-    let height = (ACTION_HEIGHT + ACTION_GAP).mul_add(count.div_ceil(columns) as f32, -ACTION_GAP);
-    let y = size.y - actions_bottom(hud);
-    Some(Rect::from_corners(
-        Vec2::new(8.0, y - height),
-        Vec2::new(8.0 + width, y),
-    ))
+    let full_height = (ACTION_HEIGHT + ACTION_GAP).mul_add(rows as f32, -ACTION_GAP);
+    let bottom = size.y - actions_bottom(hud);
+    let full_bottom = if remaining == 0 {
+        bottom
+    } else {
+        bottom - ACTION_HEIGHT - ACTION_GAP
+    };
+    Some(EconomyBounds {
+        full_rows: Rect::from_corners(
+            Vec2::new(8.0, full_bottom - full_height),
+            Vec2::new(8.0 + row_width(columns), full_bottom),
+        ),
+        last_row: (remaining > 0).then(|| {
+            Rect::from_corners(
+                Vec2::new(8.0, bottom - ACTION_HEIGHT),
+                Vec2::new(8.0 + row_width(remaining), bottom),
+            )
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -1120,7 +1143,11 @@ mod tests {
         assert_eq!(columns, 4);
         assert!(action_width(size.x, columns) >= 48.0);
         let bounds = actions_bounds(&game, &selection, size, &hud).unwrap();
-        assert_eq!(bounds.size(), Vec2::new(224.0, 106.0));
+        assert_eq!(bounds.full_rows.size(), Vec2::new(224.0, 50.0));
+        let last_row = bounds.last_row.unwrap();
+        assert_eq!(last_row.size(), Vec2::new(51.5, 50.0));
+        assert!(bounds.contains(last_row.center()));
+        assert!(!bounds.contains(Vec2::new(last_row.max.x + 1.0, last_row.center().y)));
     }
 
     #[test]
@@ -1152,6 +1179,34 @@ mod tests {
             economy_hint(&game, &selection, Targeting::None, &loc).as_deref(),
             Some("Train rifle squads at the barracks.")
         );
+    }
+
+    #[test]
+    fn restoring_replay_fog_hides_deposits_the_player_has_not_seen() {
+        let setup = rts_server::Config::default().setup;
+        let game = Match::full_replay(setup.simulation().unwrap(), rts_base::PlayerId(0));
+        let original = game.view.deposits().count();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_resource::<Localization>()
+            .insert_resource(game)
+            .add_systems(Update, update_deposits);
+        let visible = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<&Visibility, With<DepositSprite>>()
+                .iter(app.world())
+                .filter(|&&visibility| visibility != Visibility::Hidden)
+                .count()
+        };
+        app.update();
+        assert_eq!(visible(&mut app), original);
+        app.world_mut().resource_mut::<Match>().toggle_replay_fog();
+        app.update();
+        assert!(visible(&mut app) > original);
+        app.world_mut().resource_mut::<Match>().toggle_replay_fog();
+        app.update();
+        assert_eq!(visible(&mut app), original);
     }
 
     #[test]

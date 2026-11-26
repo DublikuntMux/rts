@@ -110,7 +110,7 @@ fn skirmish_start_view(
 ) -> Option<View> {
     let hud = HudLayout::new(window_size / ui_scale, false, None);
     let top = if hud.phone && !hud.landscape {
-        let resource_bar = skirmish::resource_bar_position(&hud);
+        let resource_bar = hud.resource_bar_position();
         (resource_bar.y + 42.0).max(hud.minimap.max.y + 12.0)
     } else {
         64.0
@@ -243,6 +243,11 @@ fn control_camera(
             .as_deref()
             .is_some_and(|selection| !selection.units.is_empty()),
         panel,
+    )
+    .with_replay_toggle(
+        logical_size,
+        game.as_deref().is_some_and(Match::can_toggle_replay_fog),
+        game.as_deref().is_some_and(|game| game.view.is_skirmish()),
     );
     let blocked =
         world_input_blocked(pause.as_deref(), menu.as_deref()) || (hud.phone && panel.is_some());
@@ -356,7 +361,7 @@ fn camera_view(
     window_size: Vec2,
     ui_scale: f32,
     hud: &HudLayout,
-    economy: Option<Rect>,
+    economy: Option<skirmish::EconomyBounds>,
     bounds: Rect,
     settings: &RtsCamera,
 ) -> View {
@@ -364,7 +369,7 @@ fn camera_view(
     if hud.phone
         && let Some(rect) = economy
     {
-        overscroll = overscroll.max(window_size.y / ui_scale - rect.min.y + 32.0);
+        overscroll = overscroll.max(window_size.y / ui_scale - rect.top() + 32.0);
     }
     let mut view = View {
         center,

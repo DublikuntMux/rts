@@ -60,7 +60,7 @@ impl Plugin for EffectsPlugin {
 
 /// One shot in flight or landing, in client world space.
 #[derive(Component, Debug)]
-struct ShotEffect {
+pub struct ShotEffect {
     from: Vec2,
     to: Vec2,
     /// Seconds of virtual time when the soldier fired.

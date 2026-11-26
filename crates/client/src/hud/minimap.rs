@@ -353,25 +353,32 @@ fn click_map(
     {
         return;
     }
-    let Some(target) = map_point(node.into_inner(), event.pointer.position, &window, bounds.0)
-    else {
-        return;
-    };
-    if order_from_minimap(
-        target,
-        &selection,
-        &mut game,
-        &mut feedback,
-        time.elapsed_secs_f64(),
-        &mut targeting,
-    ) {
+    let target = map_point(
+        node.into_inner(),
+        event.pointer.position,
+        &window,
+        bounds.0,
+        false,
+    );
+    if let Some(target) = target
+        && order_from_minimap(
+            target,
+            &selection,
+            &mut game,
+            &mut feedback,
+            time.elapsed_secs_f64(),
+            &mut targeting,
+        )
+    {
         return;
     }
     if super::phone_layout(window.size() / scale.0) && phone.panel != Some(PhonePanel::Map) {
         phone.panel = Some(PhonePanel::Map);
         return;
     }
-    recenter(target, &window, bounds.0, scale.0, camera);
+    if let Some(target) = target {
+        recenter(target, &window, bounds.0, scale.0, camera);
+    }
 }
 
 fn drag_map(
@@ -396,9 +403,13 @@ fn drag_map(
         map.dragging.insert(event.pointer.id);
     }
     if map.dragging.contains(&event.pointer.id)
-        && (!super::phone_layout(window.size() / scale.0) || phone.panel == Some(PhonePanel::Map))
-        && let Some(target) =
-            map_point(node.into_inner(), event.pointer.position, &window, bounds.0)
+        && let Some(target) = map_point(
+            node.into_inner(),
+            event.pointer.position,
+            &window,
+            bounds.0,
+            true,
+        )
     {
         recenter(target, &window, bounds.0, scale.0, camera);
     }
@@ -409,9 +420,14 @@ fn map_point(
     position: Vec2,
     window: &Window,
     bounds: Rect,
+    clamp_to_map: bool,
 ) -> Option<Vec2> {
     let point = node.normalize_point(*transform, position * window.scale_factor())?;
-    let point = (point + Vec2::splat(0.5)).clamp(Vec2::ZERO, Vec2::ONE);
+    let point = point + Vec2::splat(0.5);
+    if !(clamp_to_map || point.cmpge(Vec2::ZERO).all() && point.cmple(Vec2::ONE).all()) {
+        return None;
+    }
+    let point = point.clamp(Vec2::ZERO, Vec2::ONE);
     Some(Vec2::new(
         bounds.width().mul_add(point.x, bounds.min.x),
         bounds.height().mul_add(-point.y, bounds.max.y),
@@ -440,6 +456,36 @@ fn recenter(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn map_padding_is_excluded_from_taps_but_drags_clamp_to_the_edge() {
+        let node = ComputedNode {
+            size: Vec2::new(100.0, 80.0),
+            ..default()
+        };
+        let transform = UiGlobalTransform::from_xy(100.0, 100.0);
+        let window = Window::default();
+        let bounds = Rect::new(0.0, -800.0, 1000.0, 0.0);
+        let padding = Vec2::new(154.0, 100.0);
+        assert_eq!(
+            map_point((&node, &transform), padding, &window, bounds, false),
+            None
+        );
+        assert_eq!(
+            map_point((&node, &transform), padding, &window, bounds, true),
+            Some(Vec2::new(1000.0, -400.0)),
+        );
+        assert_eq!(
+            map_point(
+                (&node, &transform),
+                Vec2::new(100.0, 100.0),
+                &window,
+                bounds,
+                false
+            ),
+            Some(Vec2::new(500.0, -400.0)),
+        );
+    }
 
     #[test]
     fn camera_footprint_and_unit_markers_share_map_coordinates() {

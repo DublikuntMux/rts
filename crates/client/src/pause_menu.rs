@@ -11,6 +11,7 @@ use bevy::{
 };
 
 use crate::{
+    effects::ShotEffect,
     font::GameFont,
     game::{AppState, Match},
     hud::{HudLayout, PhoneHud, Targeting},
@@ -85,11 +86,11 @@ fn spawn_replay_fog(mut commands: Commands, game: Option<Res<Match>>, font: Opti
             position_type: PositionType::Absolute,
             top: px(12),
             right: px(12),
-            min_height: px(48),
             padding: UiRect::horizontal(px(12)),
             border: UiRect::all(px(2)),
             display: Display::None,
             align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
             ..default()
         },
         BackgroundColor::default(),
@@ -107,12 +108,20 @@ fn spawn_replay_fog(mut commands: Commands, game: Option<Res<Match>>, font: Opti
 
 fn toggle_replay_fog(
     _: On<Activate>,
+    mut commands: Commands,
     mut game: ResMut<Match>,
     menu: Res<Menu>,
     phone: Option<Res<PhoneHud>>,
+    shots: Query<Entity, With<ShotEffect>>,
 ) {
-    if menu.dialog.is_none() && phone.as_deref().is_none_or(|phone| phone.panel.is_none()) {
+    if game.can_toggle_replay_fog()
+        && menu.dialog.is_none()
+        && phone.as_deref().is_none_or(|phone| phone.panel.is_none())
+    {
         game.toggle_replay_fog();
+        for entity in &shots {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -137,7 +146,9 @@ fn update_replay_fog(
     let (Some(game), Ok(window)) = (game, window.single()) else {
         return;
     };
-    let hud = HudLayout::new(window.size() / scale.0, false, None);
+    let size = window.size() / scale.0;
+    let bounds =
+        HudLayout::new(size, false, None).replay_toggle_bounds(size, game.view.is_skirmish());
     let visible =
         menu.dialog.is_none() && phone.as_deref().is_none_or(|phone| phone.panel.is_none());
     let key = if game.view.intro().fog_disabled {
@@ -146,11 +157,9 @@ fn update_replay_fog(
         "replay.hide_fog"
     };
     for (mut node, hover, pressed, mut fill, mut border) in &mut buttons {
-        node.top = px(if hud.phone {
-            hud.minimap.max.y + 8.0
-        } else {
-            12.0
-        });
+        node.top = px(bounds.min.y);
+        node.width = px(bounds.width());
+        node.height = px(bounds.height());
         node.display = if visible {
             Display::Flex
         } else {

@@ -99,8 +99,10 @@ The match screen
   the current selection, including their wood and gold costs. Commands are
   disabled without a selection or during replay playback.
 
-On phones, the bottom bar is replaced by floating controls. Tap the top-right
-map thumbnail without a selection to open the minimap. Selecting units shows a small command dock
+On phones, the bottom bar is replaced by floating controls. Tap the
+top-right map thumbnail with an empty selection, or tap its border, to open
+the larger map. Drag the thumbnail to pan with or without a selection.
+Selecting units shows a small command dock
 in the bottom-right corner: two rows in portrait, one row in landscape. Tap
 its unit portrait to see selection details. With no selection, the command
 dock disappears. On Frontier, phone economy actions appear in a separate
