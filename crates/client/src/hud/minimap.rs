@@ -29,6 +29,9 @@ use crate::{
     pause_menu::{PauseMenu, world_input_blocked},
 };
 
+const MAP_PADDING: f32 = 8.0;
+const MAP_BORDER: f32 = 2.0;
+
 #[derive(Component, Default)]
 pub(super) struct Minimap {
     dragging: HashSet<PointerId>,
@@ -54,7 +57,7 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
                 width: px(HUD_HEIGHT),
                 height: percent(100),
                 flex_shrink: 0.0,
-                padding: UiRect::all(px(8)),
+                padding: UiRect::all(px(MAP_PADDING)),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 ..default()
@@ -74,11 +77,15 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
                 width: px(168),
                 height: px(168.0 * aspect.y / aspect.x),
                 max_height: px(168),
-                border: UiRect::all(px(2)),
+                border: UiRect::all(px(MAP_BORDER)),
                 overflow: Overflow::clip(),
                 ..default()
             },
-            ImageNode::new(image),
+            ImageNode {
+                image,
+                image_mode: NodeImageMode::Stretch,
+                ..default()
+            },
             bevel_recessed(),
             BackgroundColor(FIELD),
             Pickable::IGNORE,
@@ -197,9 +204,7 @@ pub(super) fn update_minimap(
 ) {
     let size = window.size() / scale.0;
     let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
-    let dimensions = game.view.size().as_vec2();
-    let available = layout.minimap.size() - Vec2::splat(16.0);
-    let image_size = dimensions * (available / dimensions).min_element();
+    let image_size = image_node_size(layout.minimap.size(), game.view.size().as_vec2());
     commands.entity(*root).insert(GlobalZIndex(
         if layout.phone && phone.panel == Some(PhonePanel::Map) {
             4
@@ -295,6 +300,12 @@ pub(super) fn update_minimap(
     for entity in existing.values() {
         commands.entity(*entity).despawn();
     }
+}
+
+fn image_node_size(panel: Vec2, dimensions: Vec2) -> Vec2 {
+    let padding = Vec2::splat(2.0 * (MAP_PADDING + MAP_BORDER));
+    let available = (panel - padding).max(Vec2::ZERO);
+    dimensions * (available / dimensions).min_element() + Vec2::splat(2.0 * MAP_BORDER)
 }
 
 fn map_fraction(world: Vec2, bounds: Rect) -> Vec2 {
@@ -422,8 +433,15 @@ fn map_point(
     bounds: Rect,
     clamp_to_map: bool,
 ) -> Option<Vec2> {
-    let point = node.normalize_point(*transform, position * window.scale_factor())?;
-    let point = point + Vec2::splat(0.5);
+    let content = node.content_box();
+    let size = content.size();
+    if size.cmple(Vec2::ZERO).any() {
+        return None;
+    }
+    let local = transform
+        .try_inverse()?
+        .transform_point2(position * window.scale_factor());
+    let point = (local - content.min) / size;
     if !(clamp_to_map || point.cmpge(Vec2::ZERO).all() && point.cmple(Vec2::ONE).all()) {
         return None;
     }
@@ -461,18 +479,37 @@ mod tests {
     fn map_padding_is_excluded_from_taps_but_drags_clamp_to_the_edge() {
         let node = ComputedNode {
             size: Vec2::new(100.0, 80.0),
+            border: BorderRect {
+                min_inset: Vec2::splat(2.0),
+                max_inset: Vec2::splat(2.0),
+            },
             ..default()
         };
         let transform = UiGlobalTransform::from_xy(100.0, 100.0);
         let window = Window::default();
         let bounds = Rect::new(0.0, -800.0, 1000.0, 0.0);
         let padding = Vec2::new(154.0, 100.0);
+        let bezel = Vec2::new(149.0, 100.0);
         assert_eq!(
             map_point((&node, &transform), padding, &window, bounds, false),
             None
         );
         assert_eq!(
             map_point((&node, &transform), padding, &window, bounds, true),
+            Some(Vec2::new(1000.0, -400.0)),
+        );
+        assert_eq!(
+            map_point((&node, &transform), bezel, &window, bounds, false),
+            None
+        );
+        assert_eq!(
+            map_point(
+                (&node, &transform),
+                Vec2::new(148.0, 100.0),
+                &window,
+                bounds,
+                false
+            ),
             Some(Vec2::new(1000.0, -400.0)),
         );
         assert_eq!(
