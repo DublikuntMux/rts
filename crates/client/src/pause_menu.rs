@@ -111,9 +111,11 @@ fn pause_menu(loc: &Localization) -> impl Scene {
     let can_leave = resumable.clone();
     let completed = ShowIf(|view| view.status.result.is_some());
     let solo = ShowIf(|view| view.status.can_save_game());
-    let restart = ShowIf(|view| view.status.can_restart());
+    let restart = ShowIf(|view| view.status.can_restart() && view.status.result.is_none());
+    let play_again = ShowIf(|view| view.status.can_restart() && view.status.result.is_some());
     let dialog_shown = ShowIf(|view| view.menu.dialog.is_some());
     let resume_label = loc.t("pause.resume").to_owned();
+    let restart_label = loc.t("pause.restart").to_owned();
     let play_again_label = loc.t("pause.play_again").to_owned();
     let save_game_label = loc.t("pause.save_game").to_owned();
     let save_replay_label = loc.t("pause.save_replay").to_owned();
@@ -140,8 +142,11 @@ fn pause_menu(loc: &Localization) -> impl Scene {
                 @wide_button(resume_label, Action::Resume, Tone::Primary)
                 resumable
                 --
-                @wide_button(play_again_label, Action::Game(SessionAction::Restart), Tone::Primary)
+                @wide_button(restart_label, Action::Game(SessionAction::Restart), Tone::Secondary)
                 restart
+                --
+                @wide_button(play_again_label, Action::Game(SessionAction::Restart), Tone::Primary)
+                play_again
                 --
                 @wide_button(save_game_label, Action::Game(SessionAction::SaveGame), Tone::Secondary)
                 solo

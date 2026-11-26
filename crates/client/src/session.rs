@@ -53,7 +53,7 @@ pub enum SessionAction {
         map: usize,
         difficulty: Difficulty,
     },
-    /// Starts a fresh match with the completed skirmish's setup and difficulty.
+    /// Starts the solo match over with its original setup and difficulty.
     Restart,
     /// Continues a saved solo match.
     LoadGame {
@@ -247,7 +247,7 @@ impl SessionStatus {
     }
 
     pub const fn can_restart(&self) -> bool {
-        self.running && matches!(self.kind, MatchKind::Solo) && self.result.is_some()
+        self.running && matches!(self.kind, MatchKind::Solo)
     }
 
     /// Clears the match view after leaving it.
@@ -335,6 +335,10 @@ impl Session {
     fn begin(&mut self, setup: MatchSetup, now: f64) -> Result<Match, String> {
         let recording =
             Replay::new(setup).map_err(|error| format!("Cannot start this map: {error}"))?;
+        self.begin_recording(recording, now)
+    }
+
+    fn begin_recording(&mut self, recording: Replay, now: f64) -> Result<Match, String> {
         let sim = recording
             .simulation()
             .map_err(|error| format!("Cannot start this map: {error}"))?;
@@ -867,15 +871,12 @@ fn handle_actions(
                 .ok_or_else(|| "This map is not available.".to_owned())
                 .and_then(|map| {
                     session.difficulty = *difficulty;
-                    let game = session.begin(map.setup.clone(), now);
+                    let game = session.begin(map.setup.clone(), now)?;
+                    let message = solo_start_message(&game);
                     play(
-                        game,
+                        Ok(game),
                         MatchKind::Solo,
-                        if map.skirmish {
-                            "Harvest resources and destroy the enemy headquarters."
-                        } else {
-                            "Select units, then give orders."
-                        },
+                        message,
                         &mut status,
                         &mut network,
                         &mut server_assets,
@@ -884,19 +885,21 @@ fn handle_actions(
                 }),
             SessionAction::Restart if status.can_restart() => session
                 .local_replay()
-                .map(|replay| replay.setup.clone())
                 .ok_or_else(|| "The previous match setup is unavailable.".to_owned())
-                .and_then(|setup| {
-                    let game = session.begin(setup, now)?;
+                .and_then(|replay| {
+                    replay
+                        .restarted()
+                        .map_err(|error| format!("Cannot restart this match: {error}"))
+                })
+                .and_then(|recording| {
+                    let game = session.begin_recording(recording, now)?;
+                    let message = solo_start_message(&game);
                     commands.insert_resource(RestartMatch(game));
                     next.set(AppState::Restarting);
-                    status.start_match(
-                        MatchKind::Solo,
-                        "Harvest resources and destroy the enemy headquarters.",
-                    );
+                    status.start_match(MatchKind::Solo, message);
                     Ok(())
                 }),
-            SessionAction::Restart => Err("Complete a solo skirmish before restarting.".into()),
+            SessionAction::Restart => Err("Only a solo match can be restarted.".into()),
             SessionAction::LoadGame { id } => library.load(Shelf::Saves, id).and_then(|saved| {
                 let Recording::Match(saved) = saved else {
                     return Err("This save is not a local match.".into());
@@ -1560,6 +1563,14 @@ fn finish_playback(session: &mut Session, status: &mut SessionStatus, game: &Mat
 fn cleanup_match(mut commands: Commands, mut selection: ResMut<Selection>) {
     selection.units.clear();
     commands.remove_resource::<Match>();
+}
+
+const fn solo_start_message(game: &Match) -> &'static str {
+    if game.view.is_skirmish() {
+        "Harvest resources and destroy the enemy headquarters."
+    } else {
+        "Select units, then give orders."
+    }
 }
 
 fn restart_match(world: &mut World) {

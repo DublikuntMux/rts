@@ -199,9 +199,13 @@
         "dialog.quit_title": "Quit the game?",
         "dialog.quit_body": "You are connected to a server. Quitting leaves it.",
 
+        "dialog.restart_match_title": "Restart the match?",
+        "dialog.restart_match_body": "The match starts over. Your saved games remain available.",
+
         // Pause menu & match results
         "pause.title": "Pause menu",
         "pause.resume": "Resume",
+        "pause.restart": "Restart match",
         "pause.play_again": "Play again",
         "pause.save_game": "Save game",
         "pause.save_replay": "Save replay",

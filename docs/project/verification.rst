@@ -9,6 +9,12 @@ device.
 CLI server, GUI server hosting, and tactical RTS UI
 ---------------------------------------------------
 
+**Solo match restart (2026-11-26).** Client tests exercise canceling and
+confirming the pause-menu action, reloading the opening simulation state,
+preserving the difficulty and legacy replay rules, and clearing selection.
+The tests also cover **Play again** after a result and verify that online
+matches and replays offer neither restart action.
+
 **Clap CLI, embedded GUI server hosting, and beveled RTS UI (2026-11-22).**
 Replaced manual server argument parsing with ``clap`` derive types shared by
 ``rts-server`` and the new ``rts server`` subcommand on ``rts``. Added

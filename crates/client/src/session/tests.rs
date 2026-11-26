@@ -302,6 +302,112 @@ fn status(app: &App) -> &SessionStatus {
 }
 
 #[test]
+fn restart_resets_an_active_solo_match_to_its_setup() {
+    let mut app = headless();
+    app.world_mut().write_message(SessionAction::NewGame {
+        map: 0,
+        difficulty: rts_ai::Difficulty::Hard,
+    });
+    app.update();
+    app.update();
+    let game = app.world().resource::<Match>();
+    let opening_hash = game.local_sim().unwrap().state_hash();
+    app.world_mut().run_schedule(FixedUpdate);
+    assert_ne!(
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash(),
+        opening_hash
+    );
+    app.world_mut()
+        .resource_mut::<Selection>()
+        .units
+        .insert(UnitId(0));
+
+    app.world_mut().write_message(SessionAction::Restart);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(
+        *app.world().resource::<State<AppState>>().get(),
+        AppState::InGame
+    );
+    let game = app.world().resource::<Match>();
+    assert_eq!(game.local_sim().unwrap().state_hash(), opening_hash);
+    assert!(game.accepts_orders);
+    assert!(app.world().resource::<Selection>().units.is_empty());
+    assert_eq!(
+        app.world().resource::<Session>().difficulty,
+        rts_ai::Difficulty::Hard
+    );
+}
+
+#[test]
+fn restart_keeps_the_recording_rules_of_a_legacy_save() {
+    let mut app = headless();
+    let setup = setup();
+    let opening_hash = setup.simulation().unwrap().state_hash();
+    let mut legacy = Replay {
+        version: 8,
+        setup,
+        turns: vec![],
+        final_hash: opening_hash,
+    };
+    let mut sim = legacy.simulation().unwrap();
+    let turn = Turn {
+        tick: 1,
+        inputs: (0..legacy.setup.players)
+            .map(|player| PlayerInput {
+                player: PlayerId(player),
+                commands: Vec::new(),
+            })
+            .collect(),
+    };
+    turn.apply(&mut sim).unwrap();
+    legacy.push(turn, sim.state_hash()).unwrap();
+    let mut library = app.world_mut().resource_mut::<Library>();
+    let id = library
+        .add(
+            Shelf::Saves,
+            &Recording::Match(legacy),
+            Some(Difficulty::Hard),
+        )
+        .unwrap()
+        .id;
+    app.world_mut()
+        .write_message(SessionAction::LoadGame { id });
+    app.update();
+    app.update();
+    assert_ne!(
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash(),
+        opening_hash
+    );
+
+    app.world_mut().write_message(SessionAction::Restart);
+    for _ in 0..3 {
+        app.update();
+    }
+    let replay = app.world().resource::<Session>().local_replay().unwrap();
+    assert_eq!(replay.version, 8);
+    assert_eq!(replay.final_hash, opening_hash);
+    assert_eq!(replay.turns, []);
+    assert_eq!(
+        app.world()
+            .resource::<Match>()
+            .local_sim()
+            .unwrap()
+            .state_hash(),
+        opening_hash
+    );
+}
+
+#[test]
 fn saved_solo_game_continues_from_its_recorded_state() {
     let mut app = headless();
     app.world_mut().write_message(SessionAction::NewGame {

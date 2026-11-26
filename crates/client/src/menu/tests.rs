@@ -467,6 +467,64 @@ fn leaving_a_live_match_asks_first() {
 }
 
 #[test]
+fn restarting_an_active_solo_match_requires_confirmation() {
+    use crate::pause_menu::PauseMenuPlugin;
+    use bevy::ui_widgets::Activate;
+
+    let mut app = app(1280);
+    app.add_plugins(PauseMenuPlugin);
+    status(&mut app).running = true;
+    status(&mut app).kind = MatchKind::Solo;
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::InGame);
+    settle(&mut app);
+    act(&mut app, Action::TogglePause);
+
+    let restart_button = |app: &mut App| {
+        app.world_mut()
+            .query_filtered::<(Entity, &Action, &Node), Without<InteractionDisabled>>()
+            .iter(app.world())
+            .find(|(_, action, node)| {
+                **action == Action::Game(SessionAction::Restart) && node.display != Display::None
+            })
+            .map(|(id, _, _)| id)
+    };
+    let activate_restart = |app: &mut App| {
+        let entity = restart_button(app).unwrap();
+        app.world_mut().trigger(Activate { entity });
+        settle(app);
+    };
+
+    activate_restart(&mut app);
+    assert_eq!(sent(&mut app), []);
+    assert_eq!(
+        app.world().resource::<Menu>().dialog,
+        Some(Dialog::Confirm(Confirm::RestartMatch))
+    );
+    act(&mut app, Action::CloseDialog);
+    assert_eq!(sent(&mut app), []);
+    assert!(app.world().resource::<PauseMenu>().open);
+
+    activate_restart(&mut app);
+    act(&mut app, Action::Confirm);
+    assert_eq!(sent(&mut app), [SessionAction::Restart]);
+
+    status(&mut app).result = Some(crate::session::MatchResult::Victory);
+    settle(&mut app);
+    activate_restart(&mut app);
+    assert_eq!(sent(&mut app), [SessionAction::Restart]);
+    assert!(app.world().resource::<Menu>().dialog.is_none());
+
+    status(&mut app).result = None;
+    for kind in [MatchKind::Online, MatchKind::Playback] {
+        status(&mut app).kind = kind;
+        settle(&mut app);
+        assert_eq!(restart_button(&mut app), None);
+    }
+}
+
+#[test]
 fn browse_filters_orders_and_keeps_a_valid_selection() {
     let record = |id: &str, map: &str, saved_at| Record {
         id: id.into(),

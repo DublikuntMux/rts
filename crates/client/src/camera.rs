@@ -82,9 +82,12 @@ fn focus_on_start(
     let start = to_world(game.view.start());
     let (settings, mut transform, mut projection) = camera.into_inner();
     transform.translation = start.extend(transform.translation.z);
+    let Projection::Orthographic(ortho) = projection.as_mut() else {
+        return;
+    };
+    ortho.scale = 1.0;
     if game.view.is_skirmish()
         && let Ok(window) = window.single()
-        && let Projection::Orthographic(ortho) = projection.as_mut()
         && let Some(view) = skirmish_start_view(
             &game,
             start,

@@ -214,6 +214,7 @@ pub enum Confirm {
     LeaveRoom,
     /// Leaving a match that would lose progress.
     LeaveMatch,
+    RestartMatch,
     Quit,
 }
 
@@ -835,6 +836,9 @@ fn perform(
                         Confirm::LeaveMatch => {
                             session.write(SessionAction::Leave);
                         }
+                        Confirm::RestartMatch => {
+                            session.write(SessionAction::Restart);
+                        }
                         Confirm::Quit => {
                             hosted.stop();
                             session.write(SessionAction::Disconnect);
@@ -842,6 +846,9 @@ fn perform(
                         }
                     }
                 }
+            }
+            Action::Game(SessionAction::Restart) if status.result.is_none() => {
+                menu.dialog = Some(Dialog::Confirm(Confirm::RestartMatch));
             }
             Action::Game(SessionAction::Leave) if leave_needs_confirmation(&status) => {
                 menu.dialog = Some(Dialog::Confirm(Confirm::LeaveMatch));

@@ -199,9 +199,13 @@
         "dialog.quit_title": "Spiel beenden?",
         "dialog.quit_body": "Du bist mit einem Server verbunden. Beenden trennt die Verbindung.",
 
+        "dialog.restart_match_title": "Partie neu starten?",
+        "dialog.restart_match_body": "Die Partie beginnt von vorn. Gespeicherte Partien bleiben verfügbar.",
+
         // Pause menu & match results
         "pause.title": "Pausenmenü",
         "pause.resume": "Fortsetzen",
+        "pause.restart": "Partie neu starten",
         "pause.play_again": "Erneut spielen",
         "pause.save_game": "Spiel speichern",
         "pause.save_replay": "Wiederholung speichern",

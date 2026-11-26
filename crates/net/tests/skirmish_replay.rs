@@ -87,3 +87,18 @@ fn terminal_skirmish_turns_advance_in_order_and_replay_with_frozen_gameplay() {
     assert_eq!(verified.outcome(), sim.outcome());
     assert_eq!(verified.tick(), sim.tick());
 }
+
+#[test]
+fn restarting_rejects_unsupported_replay_versions() {
+    let setup = MatchSetup {
+        rules: include_str!("../../../assets/data/core.rules.ron").into(),
+        map: include_str!("../../../assets/maps/frontier.map.ron").into(),
+        seed: 0,
+        players: 2,
+    };
+    let mut replay = Replay::new(setup).unwrap();
+    for version in [0, 7, u32::MAX] {
+        replay.version = version;
+        assert!(replay.restarted().is_err());
+    }
+}

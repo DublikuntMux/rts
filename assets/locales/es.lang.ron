@@ -199,9 +199,13 @@
         "dialog.quit_title": "¿Salir del juego?",
         "dialog.quit_body": "Estás conectado a un servidor. Salir cerrará la conexión.",
 
+        "dialog.restart_match_title": "¿Reiniciar la partida?",
+        "dialog.restart_match_body": "La partida vuelve a empezar. Tus partidas guardadas seguirán disponibles.",
+
         // Pause menu & match results
         "pause.title": "Menú de pausa",
         "pause.resume": "Reanudar",
+        "pause.restart": "Reiniciar partida",
         "pause.play_again": "Jugar de nuevo",
         "pause.save_game": "Guardar partida",
         "pause.save_replay": "Guardar repetición",

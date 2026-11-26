@@ -243,6 +243,10 @@ CLI server subcommand, GUI server hosting, and tactical RTS UI redesign
    telemetry strip, riveted headers, physical press bevel inversion, recessed
    display wells, and a dynamic color-coded health bar.
 
+Solo match restart
+   Active solo matches can restart from the pause menu after confirmation.
+   Restarting reloads the original setup and keeps the difficulty.
+
 Upcoming
 --------
 

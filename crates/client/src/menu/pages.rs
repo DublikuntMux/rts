@@ -1650,6 +1650,11 @@ fn confirm_dialog(view: &View, confirm: &Confirm) -> impl Scene {
             .to_owned(),
             loc.t("dialog.leave_confirm").to_owned(),
         ),
+        Confirm::RestartMatch => (
+            loc.t("dialog.restart_match_title").to_owned(),
+            loc.t("dialog.restart_match_body").to_owned(),
+            loc.t("pause.restart").to_owned(),
+        ),
         Confirm::Quit => (
             loc.t("dialog.quit_title").to_owned(),
             loc.t("dialog.quit_body").to_owned(),

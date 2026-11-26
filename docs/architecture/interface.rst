@@ -284,15 +284,18 @@ The button or Escape toggles the menu without clearing selected units.
 Escape first cancels Move targeting, then closes a confirmation dialog,
 then toggles the menu.
 
-**Resume**, **Save game** (solo only), **Save replay**, and **Leave** are
+**Resume**, **Restart match** (solo only), **Save game** (solo only),
+**Save replay**, and **Leave** are
 stacked in the menu. The latest session message appears there as well.
 Solo simulation and replay playback pause while the menu or its confirmation
 is open. Online matches keep receiving and applying authoritative turns;
 the menu explicitly says the match continues. All world controls are blocked
 by menus and dialogs, including gestures that cross an overlay boundary.
 
-**Leave** asks for confirmation during live solo and online matches. Stopped
-matches and replays leave at once. The confirmation host shares the main
+**Restart match** asks for confirmation, then reloads the original setup at
+the same difficulty. After a solo match ends, **Play again** restarts
+immediately. **Leave** asks for confirmation during live solo and online
+matches. Stopped matches and replays leave at once. The confirmation host shares the main
 menu's dialog scenes and renders above the pause menu. Dialog content
 scrolls when a short window cannot fit all actions. Pause and command
 buttons stay outside the tab order; menu actions use a modal tab group.

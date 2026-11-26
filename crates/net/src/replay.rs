@@ -41,9 +41,21 @@ impl Replay {
     /// # Errors
     /// Returns an error if the match setup is invalid.
     pub fn new(setup: MatchSetup) -> Result<Self, NetError> {
-        let final_hash = match_simulation(&setup, REPLAY_VERSION)?.state_hash();
+        Self::with_version(setup, REPLAY_VERSION)
+    }
+
+    /// Starts a fresh recording with this setup and its original simulation rules.
+    ///
+    /// # Errors
+    /// Returns an error if the recording version or match setup is invalid.
+    pub fn restarted(&self) -> Result<Self, NetError> {
+        Self::with_version(self.setup.clone(), self.version)
+    }
+
+    fn with_version(setup: MatchSetup, version: u32) -> Result<Self, NetError> {
+        let final_hash = match_simulation(&setup, version)?.state_hash();
         Ok(Self {
-            version: REPLAY_VERSION,
+            version,
             setup,
             turns: Vec::new(),
             final_hash,
@@ -53,7 +65,7 @@ impl Replay {
     /// The initial simulation with the combat rules this recording's version uses.
     ///
     /// # Errors
-    /// Returns an error for an invalid setup.
+    /// Returns an error for an invalid version or setup.
     pub fn simulation(&self) -> Result<Sim, NetError> {
         match_simulation(&self.setup, self.version)
     }
@@ -107,16 +119,10 @@ impl Replay {
     /// # Errors
     /// Returns an error for invalid setup, version, turns or a final hash mismatch.
     pub fn playback(&self) -> Result<Sim, NetError> {
-        if self.version != SANDBOX_REPLAY_VERSION {
-            validate_version(self.version)?;
-        }
         if self.turns.len() > MAX_REPLAY_TURNS {
             return Err(NetError::invalid("too many replay turns"));
         }
         let mut sim = self.simulation()?;
-        if self.version == SANDBOX_REPLAY_VERSION && sim.is_skirmish() {
-            return Err(NetError::invalid("skirmish requires replay version 8"));
-        }
         for turn in &self.turns {
             self.validate_turn_version(turn)?;
             turn.apply(&mut sim)?;
@@ -154,7 +160,13 @@ impl Replay {
 
 /// Builds a match for a full replay version: current recordings fight only what they see.
 fn match_simulation(setup: &MatchSetup, version: u32) -> Result<Sim, NetError> {
+    if version != SANDBOX_REPLAY_VERSION {
+        validate_version(version)?;
+    }
     let mut sim = setup.simulation()?;
+    if version == SANDBOX_REPLAY_VERSION && sim.is_skirmish() {
+        return Err(NetError::invalid("skirmish requires replay version 8"));
+    }
     if version >= REPLAY_VERSION {
         sim.enforce_fog();
     }

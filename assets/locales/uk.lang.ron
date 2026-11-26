@@ -199,9 +199,13 @@
         "dialog.quit_title": "Вийти з гри?",
         "dialog.quit_body": "Ви підключені до сервера. Вихід розірве з'єднання.",
 
+        "dialog.restart_match_title": "Почати матч заново?",
+        "dialog.restart_match_body": "Матч почнеться спочатку. Збережені ігри залишаться доступними.",
+
         // Pause menu & match results
         "pause.title": "Меню паузи",
         "pause.resume": "Продовжити",
+        "pause.restart": "Почати заново",
         "pause.play_again": "Грати знову",
         "pause.save_game": "Зберегти гру",
         "pause.save_replay": "Зберегти повтор",

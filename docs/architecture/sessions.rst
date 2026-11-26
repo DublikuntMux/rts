@@ -105,10 +105,11 @@ Modes
    @enduml
 
 Connection failures in the menu set ``Server::Failed`` without creating a
-stopped match. Only ``Leave``, ``SaveReplay``, and ``SaveGame`` are allowed
+stopped match. Only ``Leave``, ``Restart``, ``SaveReplay``, and ``SaveGame`` are allowed
 while a match is on screen. Other actions require ``AppState::Menu`` and no
 running match; otherwise they fail with *Leave the current match first.*
-Saving a game also requires a running, unstopped solo match.
+Saving a game also requires a running, unstopped solo match. Restarting is
+solo only and preserves the setup, recording version, and difficulty.
 
 Starting a match
 ----------------
