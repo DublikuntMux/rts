@@ -298,10 +298,14 @@ impl Sim {
         units: Vec<UnitId>,
         target: IVec2,
     ) {
+        let known = self
+            .fog_navigation
+            .as_ref()
+            .and_then(|fog| fog.views.get(usize::from(player.0)))
+            .is_none_or(|view| view.tile(tile_of(target)) != crate::TileVisibility::Unexplored);
         if !target.cmpge(IVec2::ZERO).all()
             || !target.cmplt(self.terrain.size() * TILE).all()
-            || self.can_target(player, target)
-                && self.terrain.speed_modifier(target, &self.rules) == 0
+            || known && self.terrain.speed_modifier(target, &self.rules) == 0
         {
             return;
         }

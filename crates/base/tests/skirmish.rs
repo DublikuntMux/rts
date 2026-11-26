@@ -81,6 +81,50 @@ fn a_producer_rallies_new_units_and_keeps_its_point_private() {
 }
 
 #[test]
+fn rally_points_reject_remembered_obstacles_without_revealing_unexplored_ones() {
+    let rules = RULES.replace(
+        "speed_modifier: 1, color: \"#00ff00\")",
+        "speed_modifier: 1, color: \"#00ff00\"), (id: \"rock\", symbol: '#', speed_modifier: 0, color: \"#555555\")",
+    );
+    let map = MapData::from_ron(
+        r#"(
+        name: "Fogged rally", players: [(start: (0.5,0.5)), (start: (15.5,0.5))],
+        tiles: [".......#........", "................"],
+        units: [
+            (kind: "headquarters", owner: 0, pos: (0.5,0.5)),
+            (kind: "headquarters", owner: 1, pos: (15.5,0.5)),
+            (kind: "worker", owner: 0, pos: (6.5,0.5)),
+        ],
+        skirmish: Some((deposits: [
+            (kind: Wood, pos: (2.5,1.5), remaining: 11),
+            (kind: Gold, pos: (3.5,1.5), remaining: 13),
+        ])),
+    )"#,
+    )
+    .unwrap();
+    let original = Sim::new(Rules::from_ron(&rules).unwrap(), &map).unwrap();
+    let target = IVec2::new(7 * TILE + TILE / 2, TILE / 2);
+    for known in [false, true] {
+        let mut sim = original.clone();
+        if !known {
+            sim.remove_unit(UnitId(2));
+        }
+        sim.enforce_fog();
+        sim.remove_unit(UnitId(2));
+        let player = PlayerId(0);
+        let hq = sim.headquarters(player).unwrap();
+        sim.step_with_commands([(
+            player,
+            Command::SetRallyPoint {
+                units: vec![hq],
+                target,
+            },
+        )]);
+        assert_eq!(sim.rally_point(hq), (!known).then_some(target));
+    }
+}
+
+#[test]
 fn headquarters_are_stationary_and_the_enemy_can_destroy_them() {
     let mut sim = simulation(MAP);
     let own = sim.headquarters(PlayerId(0)).unwrap();
