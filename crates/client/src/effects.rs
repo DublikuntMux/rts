@@ -262,6 +262,7 @@ mod tests {
     use super::*;
     use crate::{
         map::{UpdateZoomDetail, ZoomDetail},
+        session::SessionStatus,
         units::UnitsPlugin,
     };
 
@@ -296,6 +297,7 @@ mod tests {
             ScenePlugin,
         ))
         .init_resource::<ZoomDetail>()
+        .init_resource::<SessionStatus>()
         .configure_sets(Update, UpdateZoomDetail)
         .init_asset::<Image>()
         .insert_state(AppState::InGame)

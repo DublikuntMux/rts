@@ -17,6 +17,7 @@ use crate::{
     game::{AppState, Match},
     map::{UpdateZoomDetail, ZoomDetail, to_world},
     server_assets::{ServerAssets, load_image},
+    session::SessionStatus,
 };
 
 const UNIT_Z: f32 = 1.0;
@@ -104,6 +105,7 @@ fn unit_scene(id: UnitId, sprite: Sprite, anchor: Anchor, placement: Placement) 
 fn sync_units(
     mut commands: Commands,
     game: Res<Match>,
+    status: Res<SessionStatus>,
     graphics: Res<Graphics>,
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
@@ -127,9 +129,9 @@ fn sync_units(
     let tick_seconds = fixed.timestep().as_secs_f64();
     layout.update(game.view.units().map(|(id, unit)| {
         let bounds = UnitBounds::from_definition(game.view.rules().unit(unit.kind));
-        let traveling = motion
-            .get(&id)
-            .is_some_and(|motion| motion.is_traveling(to_world(unit.pos), tick, now, tick_seconds));
+        let traveling = motion.get(&id).is_some_and(|motion| {
+            motion.is_traveling(to_world(unit.pos), tick, now, tick_seconds, status.stopped)
+        });
         (id, unit.pos, bounds, traveling)
     }));
     for (id, unit) in game.view.units() {
@@ -356,6 +358,7 @@ mod tests {
             ScenePlugin,
         ))
         .init_resource::<ZoomDetail>()
+        .init_resource::<SessionStatus>()
         .add_systems(Update, update_zoom_detail.in_set(UpdateZoomDetail))
         .init_asset::<Image>()
         .insert_state(AppState::InGame)
@@ -455,6 +458,65 @@ mod tests {
                 last = Some(position);
             }
         }
+    }
+
+    #[test]
+    fn moving_formation_holds_its_position_when_frames_stall() {
+        let rules =
+            Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
+        let map = MapData::from_ron(
+            r#"(name: "stalled crossing", players: [(start: (0.95,0.5))],
+                tiles: ["...."], units: [
+                    (kind:"worker",owner:0,pos:(0.95,0.5)),
+                    (kind:"worker",owner:0,pos:(0.95,0.5)),
+                    (kind:"worker",owner:0,pos:(0.95,0.5)),
+                    (kind:"worker",owner:0,pos:(0.95,0.5))])"#,
+        )
+        .unwrap();
+        let mut sim = Sim::new(rules, &map).unwrap();
+        sim.queue_command(
+            PlayerId(0),
+            Command::Move {
+                units: (0..4).map(UnitId).collect(),
+                target: SimPos::new(7 * TILE / 2, TILE / 2),
+            },
+        );
+        let mut app = scene_app(sim);
+        app.insert_resource(Time::<Fixed>::from_hz(f64::from(rts_base::TICK_RATE)))
+            .add_systems(FixedUpdate, |mut game: ResMut<Match>| {
+                if game.view.unit(UnitId(0)).unwrap().pos.x < TILE {
+                    game.step();
+                }
+            });
+
+        for _ in 0..60 {
+            app.update();
+        }
+        let world = app.world();
+        let game = world.resource::<Match>();
+        let position = game.view.unit(UnitId(0)).unwrap().pos;
+        assert!(
+            (TILE..TILE + TILE / 4).contains(&position.x),
+            "expected a sample just past the crossing, got {position:?} at tick {}",
+            game.view.tick()
+        );
+        let center = world
+            .resource::<UnitVisuals>()
+            .entities
+            .values()
+            .map(|&entity| {
+                world
+                    .get::<Transform>(entity)
+                    .unwrap()
+                    .translation
+                    .truncate()
+            })
+            .sum::<Vec2>()
+            / 4.0;
+        assert!(
+            center.abs_diff_eq(to_world(position), 0.1),
+            "formation moved off its last sample: {center:?}"
+        );
     }
 
     #[test]
@@ -950,11 +1012,16 @@ mod tests {
             .insert_resource(TimeUpdateStrategy::ManualDuration(
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             ))
-            .add_systems(FixedUpdate, move |mut game: ResMut<Match>| {
-                if !arrived(&game) {
-                    game.step();
-                }
-            });
+            .add_systems(
+                FixedUpdate,
+                move |mut game: ResMut<Match>, mut status: ResMut<SessionStatus>| {
+                    if arrived(&game) {
+                        status.stopped = true;
+                    } else {
+                        game.step();
+                    }
+                },
+            );
         let mut arrived_at = None;
         let mut arrival_checks = 0;
         for _ in 0..180 {

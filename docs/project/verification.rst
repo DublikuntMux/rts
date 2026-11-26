@@ -9,7 +9,7 @@ device.
 CLI server, GUI server hosting, and tactical RTS UI
 ---------------------------------------------------
 
-**Playtest follow-up checks (2026-11-26).** All 389 workspace tests passed,
+**Playtest follow-up checks (2026-11-26).** All 390 workspace tests passed,
 along with formatting, strict all-target workspace Clippy, ARM64 Android
 Clippy, and the strict Sphinx build. The Android Downloads export was
 compiled without an on-device run.
@@ -25,7 +25,8 @@ two squads sharing a tile, mixed bounds at tile edges, and fixed slot spacing
 across tile boundaries. Scene tests verify steady rendered travel for one or
 four workers and show the group packing inside the destination tile after
 reaching its exact simulation target on the final available tick. A mixed
-tile keeps its packed layout while one occupant travels.
+tile keeps its packed layout while one occupant travels. A stalled session
+keeps a moving group's position after interpolating the last available frame.
 
 **Android crash report export (2026-11-26).** Android writes the report to
 Downloads and keeps its pending copy when publication fails. Strict Clippy

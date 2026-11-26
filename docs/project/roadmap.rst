@@ -120,11 +120,11 @@ Unit movement and sprites
    and replay version 6 gates the changed movement rules and hashes.
 
    Linear simulation-position interpolation keeps travel speed steady through
-   tile centers and boundaries. Packed groups are anchored at the point they
-   were ordered to, never at the tile center, so arriving never shifts them and
-   a lone unit stands exactly on its ordered point. Packing offsets and scale
-   ease independently when groups change or units stop. Unit rules require sprite
-   paths; sprites of any aspect ratio fit their bounds and HUD portraits
+   tile centers and boundaries. Moving groups keep their arrangement through
+   a pause or delayed server frame. Stopped groups settle inside their tile
+   while a lone unit stays exactly on its ordered point. Packing offsets and
+   scale ease independently when groups change or units stop. Unit rules require
+   sprite paths. Sprites of any aspect ratio fit their bounds and HUD portraits
    without stretching. Bundled worker and soldier sprites use transparent
    backgrounds and player-color tinting. Distant units switch to their solid bounding
    rectangles at the same zoom as terrain colors, sharing the map's configurable
