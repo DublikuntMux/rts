@@ -73,10 +73,17 @@ enum EconomyAction {
     Worker,
     RifleSquad,
     Scout,
+    Rally,
 }
 
 impl EconomyAction {
-    const ALL: [Self; 4] = [Self::Barracks, Self::Worker, Self::RifleSquad, Self::Scout];
+    const ALL: [Self; 5] = [
+        Self::Barracks,
+        Self::Worker,
+        Self::RifleSquad,
+        Self::Scout,
+        Self::Rally,
+    ];
 
     const fn label(self) -> &'static str {
         match self {
@@ -84,6 +91,7 @@ impl EconomyAction {
             Self::Worker => "Train worker",
             Self::RifleSquad => "Rifle squad",
             Self::Scout => "Train scout",
+            Self::Rally => "Set rally point",
         }
     }
 
@@ -95,6 +103,7 @@ impl EconomyAction {
             Self::Worker => Some(rules.worker_cost),
             Self::RifleSquad => Some(rules.rifle_cost),
             Self::Scout => rules.scout.map(|scout| scout.cost),
+            Self::Rally => Some(Resources::default()),
         }
     }
 
@@ -103,16 +112,23 @@ impl EconomyAction {
         game: &'a Match,
         selection: &'a Selection,
     ) -> impl Iterator<Item = UnitId> + 'a {
-        selected_kind(
-            game,
-            selection,
-            match self {
-                Self::Barracks => "worker",
-                Self::Worker => "headquarters",
-                Self::RifleSquad | Self::Scout => "barracks",
-            },
-        )
-        .filter(move |_| self.cost(game).is_some())
+        let kind = match self {
+            Self::Barracks => game.view.rules().unit_kind("worker"),
+            Self::Worker => game.view.rules().unit_kind("headquarters"),
+            Self::RifleSquad | Self::Scout => game.view.rules().unit_kind("barracks"),
+            Self::Rally => None,
+        };
+        selection.units.iter().copied().filter(move |&id| {
+            self.cost(game).is_some()
+                && game.view.unit(id).is_some_and(|unit| {
+                    unit.owner == game.local_player
+                        && if self == Self::Rally {
+                            game.view.production(id).is_some()
+                        } else {
+                            Some(unit.kind) == kind
+                        }
+                })
+        })
     }
 
     fn ready_units<'a>(
@@ -121,7 +137,7 @@ impl EconomyAction {
         selection: &'a Selection,
     ) -> impl Iterator<Item = UnitId> + 'a {
         self.units(game, selection).filter(move |&id| {
-            self == Self::Barracks
+            matches!(self, Self::Barracks | Self::Rally)
                 || game
                     .view
                     .production(id)
@@ -134,6 +150,30 @@ impl EconomyAction {
             .zip(game.view.resources())
             .is_some_and(|(cost, funds)| funds.can_afford(cost))
     }
+
+    const fn targeting(self) -> Option<Targeting> {
+        match self {
+            Self::Barracks => Some(Targeting::Barracks),
+            Self::Rally => Some(Targeting::Rally),
+            _ => None,
+        }
+    }
+}
+
+pub fn rally_producers<'a>(
+    game: &'a Match,
+    selection: &'a Selection,
+) -> impl Iterator<Item = UnitId> + 'a {
+    EconomyAction::Rally.units(game, selection)
+}
+
+pub fn set_rally(game: &mut Match, selection: &Selection, target: IVec2) -> bool {
+    let units = rally_producers(game, selection).collect::<Vec<_>>();
+    !units.is_empty()
+        && target.cmpge(IVec2::ZERO).all()
+        && target.cmplt(game.view.world_size()).all()
+        && game.view.speed_modifier(target) != Some(0)
+        && game.queue_command(Command::SetRallyPoint { units, target })
 }
 
 fn resource_label(kind: ResourceKind, loc: &Localization) -> &str {
@@ -336,6 +376,7 @@ fn spawn_economy_button(
                 EconomyAction::Worker => "economy.worker_short",
                 EconomyAction::RifleSquad => "economy.rifles_short",
                 EconomyAction::Scout => "economy.scout_short",
+                EconomyAction::Rally => "economy.rally_short",
             }
         } else {
             match action {
@@ -343,6 +384,7 @@ fn spawn_economy_button(
                 EconomyAction::Worker => "economy.train_worker",
                 EconomyAction::RifleSquad => "economy.train_rifles",
                 EconomyAction::Scout => "economy.train_scout",
+                EconomyAction::Rally => "economy.set_rally",
             }
         };
         button.spawn((
@@ -351,6 +393,9 @@ fn spawn_economy_button(
             TextColor(INK),
             Pickable::IGNORE,
         ));
+        if action == EconomyAction::Rally {
+            return;
+        }
         let cost = action.cost(game).unwrap_or_default();
         let w = loc.t("economy.wood_short");
         let g = loc.t("economy.gold_short");
@@ -389,7 +434,7 @@ fn activate_economy(
     {
         return;
     }
-    if action == EconomyAction::Barracks && *targeting == Targeting::Barracks {
+    if action.targeting() == Some(*targeting) {
         *targeting = Targeting::None;
         return;
     }
@@ -402,6 +447,7 @@ fn activate_economy(
     }
     match action {
         EconomyAction::Barracks => *targeting = Targeting::Barracks,
+        EconomyAction::Rally => *targeting = Targeting::Rally,
         EconomyAction::Worker => {
             game.queue_command(Command::TrainWorker { units });
         }
@@ -509,7 +555,7 @@ fn update_skirmish(
         } else {
             Display::None
         };
-        let selected = *action == EconomyAction::Barracks && *targeting == Targeting::Barracks;
+        let selected = action.targeting() == Some(*targeting);
         let disabled = !game.accepts_orders
             || !visible
             || (!selected
@@ -555,7 +601,7 @@ pub fn economy_hint(
     targeting: Targeting,
     loc: &Localization,
 ) -> Option<String> {
-    if targeting == Targeting::Barracks {
+    if matches!(targeting, Targeting::Barracks | Targeting::Rally) {
         return Some(targeting.prompt(loc).to_owned());
     }
     if let Some(work) = selection
@@ -844,7 +890,7 @@ fn actions_bottom(hud: &HudLayout) -> f32 {
     8.0 + hud.commands.map_or(0.0, |rect| rect.height() + 8.0)
 }
 
-#[expect(clippy::cast_precision_loss, reason = "only four actions")]
+#[expect(clippy::cast_precision_loss, reason = "only five actions")]
 fn action_width(screen_width: f32, count: usize) -> f32 {
     let gaps = count.saturating_sub(1) as f32;
     let count = count.max(1) as f32;
@@ -864,7 +910,7 @@ pub fn actions_bounds(
     if count == 0 {
         return None;
     }
-    #[expect(clippy::cast_precision_loss, reason = "only four actions")]
+    #[expect(clippy::cast_precision_loss, reason = "only five actions")]
     let width = (action_width(size.x, count) + ACTION_GAP).mul_add(count as f32, -ACTION_GAP);
     let y = size.y - actions_bottom(hud);
     Some(Rect::from_corners(

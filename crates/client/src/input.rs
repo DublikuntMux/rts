@@ -14,7 +14,7 @@ use crate::{
     camera::{CameraControl, RtsCamera},
     game::{AppState, Match},
     hud::{HudLayout, PhoneHud, Targeting},
-    map::TILE_PX,
+    map::{TILE_PX, to_world},
     menu::Menu,
     pause_menu::{PAUSE_BUTTON_BOUNDS, PauseMenu, world_input_blocked},
     skirmish,
@@ -200,7 +200,7 @@ impl PointerState {
 }
 
 #[derive(Resource, Default)]
-struct OrderFeedback(Option<(Vec2, Marker, f64)>);
+pub struct OrderFeedback(Option<(Vec2, Marker, f64)>);
 
 /// What the last order marker shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -347,10 +347,9 @@ fn control_units(
         );
     }
     if mouse.just_pressed(MouseButton::Right) {
-        if targeting
-            .as_deref_mut()
-            .is_some_and(|mode| std::mem::take(mode) == Targeting::Barracks)
-        {
+        if targeting.as_deref_mut().is_some_and(|mode| {
+            matches!(std::mem::take(mode), Targeting::Barracks | Targeting::Rally)
+        }) {
             return;
         }
         if let Some(position) = window.cursor_position() {
@@ -403,6 +402,8 @@ fn update_targeting(
             || selection.units.is_empty()
             || (*targeting == Targeting::Barracks
                 && skirmish::workers(game, selection).next().is_none())
+            || (*targeting == Targeting::Rally
+                && skirmish::rally_producers(game, selection).next().is_none())
         {
             *targeting = Targeting::None;
         } else if keys.just_pressed(KeyCode::KeyM) && selection.mobile_units(game).next().is_some()
@@ -445,6 +446,12 @@ fn finish_press(
                     },
                     now,
                 ));
+                return;
+            }
+            Targeting::Rally => {
+                if rally_to(sim_position(position), selection, game, feedback, now) {
+                    *targeting = Targeting::None;
+                }
                 return;
             }
             Targeting::None => {}
@@ -544,6 +551,12 @@ fn issue_move(
     scale: f32,
     touch: bool,
 ) {
+    if selection.mobile_units(game).next().is_none()
+        && skirmish::rally_producers(game, selection).next().is_some()
+    {
+        rally_to(sim_position(position), selection, game, feedback, now);
+        return;
+    }
     let armed: Vec<_> = selection
         .units
         .iter()
@@ -599,10 +612,20 @@ fn move_to(
     feedback: &mut OrderFeedback,
     now: f64,
 ) {
+    move_to_target(sim_position(position), selection, game, feedback, now);
+}
+
+fn move_to_target(
+    target: SimPos,
+    selection: &Selection,
+    game: &mut Match,
+    feedback: &mut OrderFeedback,
+    now: f64,
+) {
     if !game.accepts_orders || selection.mobile_units(game).next().is_none() {
         return;
     }
-    let target = sim_position(position);
+    let position = to_world(target);
     // Unexplored ground may be open; the authority decides.
     let inside = target.cmpge(SimPos::ZERO).all() && target.cmplt(game.view.world_size()).all();
     let traversable = inside && game.view.speed_modifier(target) != Some(0);
@@ -614,6 +637,52 @@ fn move_to(
     }) {
         feedback.0 = Some((position, Marker::Move, now));
     }
+}
+
+fn rally_to(
+    target: SimPos,
+    selection: &Selection,
+    game: &mut Match,
+    feedback: &mut OrderFeedback,
+    now: f64,
+) -> bool {
+    let accepted = skirmish::set_rally(game, selection, target);
+    let marker = if accepted {
+        Marker::Move
+    } else {
+        Marker::Blocked
+    };
+    feedback.0 = Some((to_world(target), marker, now));
+    accepted
+}
+
+/// Returns whether the minimap click was used for an order rather than camera navigation.
+pub fn order_from_minimap(
+    position: Vec2,
+    selection: &Selection,
+    game: &mut Match,
+    feedback: &mut OrderFeedback,
+    now: f64,
+    targeting: &mut Targeting,
+) -> bool {
+    if !game.accepts_orders || *targeting == Targeting::Barracks {
+        return false;
+    }
+    let target = sim_position(position).clamp(SimPos::ZERO, game.view.world_size() - SimPos::ONE);
+    let can_move = selection.mobile_units(game).next().is_some();
+    if (*targeting == Targeting::Rally || !can_move)
+        && skirmish::rally_producers(game, selection).next().is_some()
+    {
+        if rally_to(target, selection, game, feedback, now) {
+            *targeting = Targeting::None;
+        }
+        return true;
+    }
+    if can_move {
+        move_to_target(target, selection, game, feedback, now);
+        *targeting = Targeting::None;
+    }
+    can_move
 }
 
 fn draw_selection(
@@ -678,6 +747,9 @@ fn draw_selection(
                     style.color,
                 );
             }
+            if let Some(target) = game.view.rally_point(visual.0) {
+                draw_rally_flag(&mut gizmos, to_world(target), projection.scale, style.color);
+            }
         }
     }
     let hud = HudLayout::new(
@@ -727,6 +799,14 @@ fn draw_selection(
         gizmos.circle_2d(position, style.marker_radius * projection.scale, color);
         gizmos.cross_2d(position, style.marker_cross_size * projection.scale, color);
     }
+}
+
+fn draw_rally_flag(gizmos: &mut Gizmos, point: Vec2, scale: f32, color: Color) {
+    let pole = point + Vec2::Y * (16.0 * scale);
+    let tip = pole + Vec2::new(10.0, -4.0) * scale;
+    let bottom = pole - Vec2::Y * (8.0 * scale);
+    gizmos.line_2d(point, pole, color);
+    gizmos.linestrip_2d([pole, tip, bottom], color);
 }
 
 fn placement_preview(pointer: &PointerState, window: &Window, view: &ScreenView) -> Option<SimPos> {
@@ -828,6 +908,81 @@ mod tests {
         press.update(Vec2::new(10.0, 0.0), 8.0);
         press.update(Vec2::ZERO, 8.0);
         assert!(press.dragged);
+    }
+
+    #[test]
+    fn minimap_click_moves_units_or_sets_a_rally_at_the_map_edge() {
+        let sim = crate::skirmish::test_setup().simulation().unwrap();
+        let mut game = Match::new(sim, PlayerId(0), true);
+        let hq = game.view.headquarters().unwrap();
+        let mobile = game
+            .view
+            .units()
+            .find_map(|(id, unit)| {
+                (unit.owner == PlayerId(0) && !game.view.rules().unit(unit.kind).building)
+                    .then_some(id)
+            })
+            .unwrap();
+        let mut selection = Selection::default();
+        let mut feedback = OrderFeedback::default();
+        let mut targeting = Targeting::None;
+        let edge = game.view.world_size();
+        let position = to_world(edge);
+        assert!(!order_from_minimap(
+            position,
+            &selection,
+            &mut game,
+            &mut feedback,
+            0.0,
+            &mut targeting
+        ));
+        selection.units.insert(mobile);
+        assert!(order_from_minimap(
+            position,
+            &selection,
+            &mut game,
+            &mut feedback,
+            0.0,
+            &mut targeting
+        ));
+        assert_eq!(
+            game.pending,
+            [Command::Move {
+                units: vec![mobile],
+                target: edge - SimPos::ONE
+            }]
+        );
+
+        game.pending.clear();
+        selection.units.clear();
+        selection.units.insert(hq);
+        assert!(order_from_minimap(
+            position,
+            &selection,
+            &mut game,
+            &mut feedback,
+            0.0,
+            &mut targeting
+        ));
+        assert_eq!(
+            game.pending,
+            [Command::SetRallyPoint {
+                units: vec![hq],
+                target: edge - SimPos::ONE
+            }]
+        );
+
+        game.pending.clear();
+        game.accepts_orders = false;
+        assert!(!order_from_minimap(
+            position,
+            &selection,
+            &mut game,
+            &mut feedback,
+            0.0,
+            &mut targeting
+        ));
+        assert_eq!(game.pending, []);
     }
 
     fn test_app() -> App {

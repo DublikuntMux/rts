@@ -219,6 +219,8 @@ pub struct OwnUnitState {
     pub construction_remaining: Option<u32>,
     pub cargo: Option<(ResourceKind, u32)>,
     pub production: Option<Vec<Training>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rally_point: Option<IVec2>,
 }
 
 /// A deposit as last seen.
@@ -474,6 +476,7 @@ impl PlayerKnowledge {
                 construction_remaining: sim.construction_remaining(id),
                 cargo: sim.cargo(id),
                 production: sim.production(id).map(<[_]>::to_vec),
+                rally_point: sim.rally_point(id),
             })
         } else {
             unit.cooldown = 0;
@@ -766,6 +769,11 @@ impl PlayerView {
                 && unit.owner.0 < self.intro.players
                 && inside(self.intro.size, unit.pos)
                 && own == view.own.is_some()
+                && view.own.as_ref().is_none_or(|state| {
+                    state.rally_point.is_none_or(|point| {
+                        state.production.is_some() && inside(self.intro.size, point)
+                    })
+                })
                 && self.rules.get_unit(unit.kind).is_some_and(|def| {
                     unit.soldiers.len() == usize::from(def.squad)
                         && unit
@@ -911,6 +919,11 @@ impl PlayerView {
     #[must_use]
     pub fn own(&self, id: UnitId) -> Option<&OwnUnitState> {
         self.units.get(&id)?.own.as_ref()
+    }
+
+    #[must_use]
+    pub fn rally_point(&self, id: UnitId) -> Option<IVec2> {
+        self.own(id)?.rally_point
     }
 
     #[must_use]

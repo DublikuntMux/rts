@@ -62,6 +62,48 @@ fn player_perspective_replays_roundtrip_and_replay_the_view() {
 }
 
 #[test]
+fn open_view_replays_restore_the_server_fog_setting_and_owned_rallies() {
+    let setup = setup();
+    let mut sim = setup.simulation().unwrap();
+    let player = PlayerId(0);
+    let mut knowledge = PlayerKnowledge::with_fog(&sim, player, false);
+    let mut replay =
+        ViewReplay::new("Frontier".into(), setup.rules, knowledge.intro(&sim)).unwrap();
+    replay.push(knowledge.observe(&sim)).unwrap();
+    let target = rts_base::IVec2::new(9 * TILE, 12 * TILE);
+    let command = Command::SetRallyPoint {
+        units: vec![sim.headquarters(player).unwrap()],
+        target,
+    };
+    let input = rts_net::ClientMessage::Input {
+        tick: 1,
+        commands: vec![command.clone()],
+    };
+    assert_eq!(
+        rts_net::decode_client(&rts_net::encode_client(&input).unwrap()).unwrap(),
+        input
+    );
+    sim.step_with_commands([(player, command)]);
+    let frame = knowledge.observe(&sim);
+    let update = rts_net::ServerMessage::View {
+        frame: frame.clone(),
+    };
+    assert_eq!(
+        rts_net::decode_server(&rts_net::encode_server(&update).unwrap()).unwrap(),
+        update
+    );
+    replay.push(frame).unwrap();
+
+    let text = Recording::View(replay.clone()).to_ron().unwrap();
+    let (decoded, _) = Recording::from_ron(&text).unwrap();
+    assert_eq!(decoded, Recording::View(replay.clone()));
+    let view = replay.playback().unwrap();
+    assert!(view.intro().fog_disabled);
+    assert!(view.terrain_tiles().iter().all(Option::is_some));
+    assert_eq!(view.rally_point(view.headquarters().unwrap()), Some(target));
+}
+
+#[test]
 fn corrupt_view_replays_are_rejected() {
     let replay = record(PlayerId(1), 20);
     for index in 0..4 {

@@ -25,7 +25,7 @@ raw-deflate compressed), the ``Setup`` payload contains:
      - Meaning
    * - ``version``
      - LEB128 ``u32``
-     - Protocol version, currently 10.
+     - Protocol version, currently 12.
    * - ``players``
      - ``u8``
      - Player count, 1 to 8.
@@ -63,7 +63,7 @@ A client accepts the frame only if every check passes, before it sends
 2. When bit ``0x80`` is set, raw DEFLATE inflation is bounded before
    allocating beyond the limit and rejects truncated, trailing, or corrupt
    streams.
-3. The protocol version matches (currently 11) and player count is 1 to 8.
+3. The protocol version matches (currently 12) and player count is 1 to 8.
 4. Both ``map`` and ``rules`` are valid UTF-8 within their length bounds.
 5. The rules parse and validate.
 

@@ -885,7 +885,7 @@ fn lobby_validates_host_receiver_slot_count_and_names() {
 
 #[test]
 fn older_protocol_versions_are_rejected_on_live_wire() {
-    for old_version in [7_u8, 8, 9, 10] {
+    for old_version in [7_u8, 8, 9, 10, 11] {
         assert!(decode_client(&[0, old_version]).is_err());
     }
 }

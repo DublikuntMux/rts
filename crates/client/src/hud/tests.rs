@@ -494,7 +494,7 @@ fn minimap_markers_track_removal_and_recreated_hud_without_duplicates() {
     let expected = app.world().resource::<Match>().view.units().count();
     let mut markers = app
         .world_mut()
-        .query_filtered::<Entity, With<minimap::UnitMarker>>();
+        .query_filtered::<Entity, With<minimap::Marker>>();
     assert_eq!(markers.iter(app.world()).count(), expected);
     let removed = app
         .world()

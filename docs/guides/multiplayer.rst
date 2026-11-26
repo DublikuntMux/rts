@@ -136,7 +136,7 @@ enemy units disappear when they leave sight.
 Clients can have different bundled content from the server. The server sends
 its own rules (plus any custom textures and translations configured with
 ``--assets``), and clients use them for the match. Clients only need
-compatible game code and the same protocol version (currently 11).
+compatible game code and the same protocol version (currently 12).
 
 Each client records the match as it saw it. **Watch replay** and **Save to
 library** on the last match keep that private replay; it never contains the

@@ -40,6 +40,7 @@ pub enum Targeting {
     None,
     Move,
     Barracks,
+    Rally,
 }
 
 impl Targeting {
@@ -48,6 +49,7 @@ impl Targeting {
             Self::None => "",
             Self::Move => loc.t("hud.target_move"),
             Self::Barracks => loc.t("hud.target_barracks"),
+            Self::Rally => loc.t("hud.target_rally"),
         }
     }
 }

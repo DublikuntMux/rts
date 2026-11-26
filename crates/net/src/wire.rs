@@ -62,6 +62,7 @@ const CMD_BUILD_BARRACKS: u8 = 4;
 const CMD_TRAIN_WORKER: u8 = 5;
 const CMD_TRAIN_RIFLE_SQUAD: u8 = 6;
 const CMD_TRAIN_SCOUT: u8 = 7;
+const CMD_SET_RALLY_POINT: u8 = 8;
 
 // ViewFrame presence bits.
 const VF_EXPLORED: u8 = 1 << 0;
@@ -88,6 +89,7 @@ const OWN_BUILD: u8 = 1 << 3;
 const OWN_CONSTRUCTION: u8 = 1 << 4;
 const OWN_CARGO: u8 = 1 << 5;
 const OWN_PRODUCTION: u8 = 1 << 6;
+const OWN_RALLY_POINT: u8 = 1 << 7;
 
 /// Encodes a validated client message into compact binary wire bytes.
 pub fn encode_client(message: &ClientMessage) -> Result<Vec<u8>, NetError> {
@@ -462,6 +464,11 @@ fn write_command(w: &mut Writer, command: &Command) -> Result<(), NetError> {
             w.write_u8(CMD_TRAIN_SCOUT)?;
             write_unit_ids(w, units)?;
         }
+        Command::SetRallyPoint { units, target } => {
+            w.write_u8(CMD_SET_RALLY_POINT)?;
+            write_unit_ids(w, units)?;
+            w.write_ivec2(*target)?;
+        }
     }
     Ok(())
 }
@@ -490,6 +497,10 @@ fn read_command(r: &mut Reader<'_>) -> Result<Command, NetError> {
         CMD_TRAIN_WORKER => Ok(Command::TrainWorker { units }),
         CMD_TRAIN_RIFLE_SQUAD => Ok(Command::TrainRifleSquad { units }),
         CMD_TRAIN_SCOUT => Ok(Command::TrainScout { units }),
+        CMD_SET_RALLY_POINT => Ok(Command::SetRallyPoint {
+            units,
+            target: r.read_ivec2()?,
+        }),
         _ => Err(NetError::invalid("unknown command tag")),
     }
 }
@@ -968,6 +979,9 @@ fn write_own_unit_state(w: &mut Writer, own: &OwnUnitState, origin: IVec2) -> Re
     if own.production.is_some() {
         flags |= OWN_PRODUCTION;
     }
+    if own.rally_point.is_some() {
+        flags |= OWN_RALLY_POINT;
+    }
     w.write_u8(flags)?;
     if let Some(target) = own.move_target {
         write_delta_pos(w, target, origin)?;
@@ -995,14 +1009,14 @@ fn write_own_unit_state(w: &mut Writer, own: &OwnUnitState, origin: IVec2) -> Re
             w.write_u32(job.remaining)?;
         }
     }
+    if let Some(target) = own.rally_point {
+        write_delta_pos(w, target, origin)?;
+    }
     Ok(())
 }
 
 fn read_own_unit_state(r: &mut Reader<'_>, origin: IVec2) -> Result<OwnUnitState, NetError> {
     let flags = r.read_u8()?;
-    if flags & !0x7f != 0 {
-        return Err(NetError::invalid("unknown own-unit state flag"));
-    }
     let move_target = if flags & OWN_MOVE != 0 {
         Some(read_delta_pos(r, origin)?)
     } else {
@@ -1055,6 +1069,11 @@ fn read_own_unit_state(r: &mut Reader<'_>, origin: IVec2) -> Result<OwnUnitState
         construction_remaining,
         cargo,
         production,
+        rally_point: if flags & OWN_RALLY_POINT != 0 {
+            Some(read_delta_pos(r, origin)?)
+        } else {
+            None
+        },
     })
 }
 

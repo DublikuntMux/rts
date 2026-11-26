@@ -130,6 +130,9 @@ of ``std::hash::Hasher``:
    * - Skirmish state
      - Headquarters IDs, outcome, stockpiles, deposits, worker jobs and
        cargo, and training queues. Present only for opted-in maps.
+   * - ``rally_points``
+     - Production building destinations in unit ID order. Present only after
+       a player sets a point, preserving old hashes when the table is empty.
 
 Rules and terrain are fixed at setup and are not hashed; the setup checksum
 covers them instead. Fractional movement state is hashed, so two peers that

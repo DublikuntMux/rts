@@ -221,7 +221,7 @@ Tokio QUIC client task. After completing the TLS 1.3 handshake and opening
 ``STREAM_GAME``, the client runs asset sync on ``STREAM_ASSETS``, verifies
 hashes against ``<data_dir>/asset_cache/``, downloads only missing textures and
 translations, emits ``SyncedAssets`` to Bevy, and then sends
-``Rooms { version: 10 }``. The first ``Rooms`` reply marks the server
+``Rooms { version: 12 }``. The first ``Rooms`` reply marks the server
 ``Connected``. Create and join use this same connection.
 
 ``poll_network`` runs in ``PreUpdate`` and handles up to 128 events per frame:

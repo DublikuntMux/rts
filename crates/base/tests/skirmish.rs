@@ -47,6 +47,40 @@ fn simulation(map: &str) -> Sim {
 }
 
 #[test]
+fn a_producer_rallies_new_units_and_keeps_its_point_private() {
+    let mut sim = simulation(MAP);
+    let player = PlayerId(0);
+    let hq = sim.headquarters(player).unwrap();
+    let enemy = sim.headquarters(PlayerId(1)).unwrap();
+    let target = IVec2::new(3 * TILE + 190, TILE + 95);
+    let previous = sim.state_hash();
+    sim.step_with_commands([
+        (
+            player,
+            Command::SetRallyPoint {
+                units: vec![hq, enemy, UnitId(3)],
+                target,
+            },
+        ),
+        (player, Command::TrainWorker { units: vec![hq] }),
+    ]);
+    assert_eq!(sim.rally_point(hq), Some(target));
+    assert_eq!(sim.rally_point(enemy), None);
+    assert_eq!(sim.rally_point(UnitId(3)), None);
+    assert_ne!(sim.state_hash(), previous);
+    let own = rts_base::PlayerView::observe(&sim, player).1;
+    assert_eq!(own.rally_point(own.headquarters().unwrap()), Some(target));
+    let other = rts_base::PlayerView::observe(&sim, PlayerId(1)).1;
+    assert!(other.units().all(|(id, _)| other.rally_point(id).is_none()));
+    for _ in 0..40 {
+        sim.step();
+    }
+    assert_eq!(sim.unit(UnitId(5)).unwrap().pos, target);
+    sim.remove_unit(hq);
+    assert_eq!(sim.rally_point(hq), None);
+}
+
+#[test]
 fn headquarters_are_stationary_and_the_enemy_can_destroy_them() {
     let mut sim = simulation(MAP);
     let own = sim.headquarters(PlayerId(0)).unwrap();

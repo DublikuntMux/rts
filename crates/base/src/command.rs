@@ -39,6 +39,11 @@ pub enum Command {
     TrainScout {
         units: Vec<UnitId>,
     },
+    /// Sets the destination for units trained by these production buildings.
+    SetRallyPoint {
+        units: Vec<UnitId>,
+        target: IVec2,
+    },
 }
 
 impl Command {
@@ -51,6 +56,7 @@ impl Command {
             | Self::Attack { units, .. }
             | Self::Gather { units, .. }
             | Self::BuildBarracks { units, .. }
+            | Self::SetRallyPoint { units, .. }
             | Self::TrainWorker { units }
             | Self::TrainRifleSquad { units }
             | Self::TrainScout { units } => units,
@@ -65,6 +71,7 @@ impl Command {
             | Self::Attack { units, .. }
             | Self::Gather { units, .. }
             | Self::BuildBarracks { units, .. }
+            | Self::SetRallyPoint { units, .. }
             | Self::TrainWorker { units }
             | Self::TrainRifleSquad { units }
             | Self::TrainScout { units } => units,
@@ -112,6 +119,11 @@ impl Hash for Command {
             Self::TrainScout { units } => {
                 7_u8.hash(state);
                 units.hash(state);
+            }
+            Self::SetRallyPoint { units, target } => {
+                8_u8.hash(state);
+                units.hash(state);
+                target.hash(state);
             }
         }
     }

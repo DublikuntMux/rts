@@ -183,7 +183,7 @@ When the match starts, each player receives
    participant Client as C
    participant Server as S
    S -> S : startup: validate rules and map\n(or the random layout generator),\ncompute LobbySetup checksum K
-   C -> S : Join { version: 10, code, name }
+   C -> S : Join { version: 12, code, name }
    S --> C : Setup (rules + map name, compact binary + deflate)
    C -> C : inflate with bounds, parse rules
    C -> S : Loaded { checksum: k }
@@ -201,7 +201,7 @@ When the match starts, each player receives
 Room browsing and readiness
 ---------------------------
 
-A connection can request ``Rooms { version: 10 }`` before creating or joining
+A connection can request ``Rooms { version: 12 }`` before creating or joining
 a room. The response lists at most 64 public rooms with space that have not
 started, sorted by code. Private rooms require their code. Creating or
 joining supplies a display name. Lobby updates carry room visibility and

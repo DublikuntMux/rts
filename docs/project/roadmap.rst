@@ -256,6 +256,11 @@ Android crash report export
    **Export report** writes a text file to Android's Downloads collection.
    The live log and pending report use app-private storage.
 
+Rally points and minimap orders
+   Headquarters and barracks can send new units to an owner-set rally
+   point. A minimap tap moves selected units or sets the selected building's
+   rally point. Protocol 12 carries the new command and private rally state.
+
 Upcoming
 --------
 
@@ -263,7 +268,7 @@ M4 — Combat
    Attack-move and patrol orders, with a long-press context menu on touch.
 
 M5 — Economy and production
-   Rally points, a supply cap, and an expanded building and unit roster.
+   A supply cap and an expanded building and unit roster.
 
 M6 — Scripting
    omnilua in the simulation, deterministic math and random numbers, map

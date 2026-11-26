@@ -129,6 +129,7 @@ pub struct Sim {
     attack_orders: BTreeMap<UnitId, UnitId>,
     fog_navigation: Option<FogNavigation>,
     skirmish: Option<skirmish::Skirmish>,
+    rally_points: BTreeMap<UnitId, IVec2>,
     /// Volleys of the latest tick, for presentation. Excluded from the state hash.
     volleys: Vec<Volley>,
 }
@@ -194,6 +195,7 @@ impl Sim {
             attack_orders: BTreeMap::new(),
             fog_navigation: None,
             skirmish: None,
+            rally_points: BTreeMap::new(),
             volleys: Vec::new(),
         };
         let mut occupancy = Occupancy::new(sim.terrain.size());
@@ -386,6 +388,10 @@ impl Sim {
                 self.order_training(player, units, TrainingKind::RifleSquad);
                 return;
             }
+            Command::SetRallyPoint { units, target } => {
+                self.order_rally_point(player, units, target);
+                return;
+            }
         };
         units.sort_unstable();
         units.dedup();
@@ -519,6 +525,7 @@ impl Sim {
         self.cancel_exploration(id);
         self.cancel_work(id);
         self.remove_economy_unit(id);
+        self.rally_points.remove(&id);
         self.units.remove(&id)
     }
 
@@ -538,6 +545,9 @@ impl Sim {
         }
         if let Some(navigation) = &self.fog_navigation {
             navigation.hash(&mut hasher);
+        }
+        if !self.rally_points.is_empty() {
+            self.rally_points.hash(&mut hasher);
         }
         hasher.finish()
     }

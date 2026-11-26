@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use workers::Work;
 
 use crate::{
-    IVec2, LoadError, PlayerId, Sim, SkirmishMap, TILE, UnitId, UnitKind, coords::de_tile_pos,
-    tile_of,
+    Command, IVec2, LoadError, PlayerId, Sim, SkirmishMap, TILE, UnitId, UnitKind,
+    coords::de_tile_pos, tile_of,
 };
 
 /// Maximum number of paid training jobs per producer, including its current job.
@@ -286,6 +286,34 @@ impl Sim {
         Some(economy.production.get(&producer).map_or(&[], Vec::as_slice))
     }
 
+    /// Destination for new units trained at this building.
+    #[must_use]
+    pub fn rally_point(&self, producer: UnitId) -> Option<IVec2> {
+        self.rally_points.get(&producer).copied()
+    }
+
+    pub(crate) fn order_rally_point(
+        &mut self,
+        player: PlayerId,
+        units: Vec<UnitId>,
+        target: IVec2,
+    ) {
+        if !target.cmpge(IVec2::ZERO).all()
+            || !target.cmplt(self.terrain.size() * TILE).all()
+            || self.can_target(player, target)
+                && self.terrain.speed_modifier(target, &self.rules) == 0
+        {
+            return;
+        }
+        for id in units {
+            if self.unit(id).is_some_and(|unit| unit.owner == player)
+                && self.production(id).is_some()
+            {
+                self.rally_points.insert(id, target);
+            }
+        }
+    }
+
     pub(crate) fn remove_economy_unit(&mut self, id: UnitId) {
         if let Some(economy) = self.economy_mut() {
             economy.cargo.remove(&id);
@@ -397,7 +425,18 @@ impl Sim {
         if queue.is_empty() {
             queues.remove(&producer);
         }
-        self.spawn_unit(kind, owner, pos);
+        let unit = self.spawn_unit(kind, owner, pos);
+        if let Some(target) = self.rally_point(producer) {
+            // A new recruit issues its own move; it does not join a player-issued group.
+            self.apply_command(
+                owner,
+                Command::Move {
+                    units: vec![unit],
+                    target,
+                },
+                (self.tick, 0),
+            );
+        }
     }
 
     fn available_neighbors(&self, target: IVec2, kind: UnitKind) -> impl Iterator<Item = IVec2> {

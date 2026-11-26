@@ -6,10 +6,10 @@ use bevy::{
     image::ImageSampler,
     picking::{
         Pickable,
-        events::{PointerClick, PointerDrag},
-        pointer::PointerButton,
+        events::{PointerCancel, PointerClick, PointerDrag, PointerDragEnd, PointerPress},
+        pointer::{PointerButton, PointerId},
     },
-    platform::collections::HashMap,
+    platform::collections::{HashMap, HashSet},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     ui_widgets::observe,
@@ -18,31 +18,37 @@ use bevy::{
 use rts_assets::Graphics;
 use rts_base::{IVec2, PlayerView, TileVisibility, UnitId};
 
-use super::{HUD_HEIGHT, HudLayout, PhoneHud, PhonePanel, hud_inset};
+use super::{HUD_HEIGHT, HudLayout, PhoneHud, PhonePanel, Targeting, hud_inset};
 use crate::{
     camera::RtsCamera,
     game::Match,
-    input::Selection,
+    input::{OrderFeedback, Selection, order_from_minimap},
     map::{MapBounds, to_world},
+    menu::Menu,
     menu::widgets::{FIELD, INK, RAIL, SIGNAL, bevel_recessed},
-    pause_menu::PauseMenu,
+    pause_menu::{PauseMenu, world_input_blocked},
 };
 
-#[derive(Component)]
-pub(super) struct Minimap;
+#[derive(Component, Default)]
+pub(super) struct Minimap {
+    dragging: HashSet<PointerId>,
+}
 #[derive(Component)]
 pub(super) struct MapImage(u32);
 #[derive(Component)]
 pub(super) struct CameraFootprint;
-#[derive(Component)]
-pub(super) struct UnitMarker(UnitId);
+#[derive(Component, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Marker {
+    Unit(UnitId),
+    Rally(UnitId),
+}
 
 pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<Image>) -> Entity {
     let image = images.add(terrain_image(&game.view));
     let aspect = game.view.size().as_vec2();
     let root = commands
         .spawn((
-            Minimap,
+            Minimap::default(),
             Name::new("Minimap"),
             Node {
                 width: px(HUD_HEIGHT),
@@ -54,6 +60,11 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
                 ..default()
             },
             BackgroundColor(RAIL),
+            observe(press_map),
+            observe(click_map),
+            observe(drag_map),
+            observe(end_map_drag),
+            observe(cancel_map_drag),
         ))
         .id();
     commands.entity(root).with_children(|well| {
@@ -70,8 +81,7 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
             ImageNode::new(image),
             bevel_recessed(),
             BackgroundColor(FIELD),
-            observe(click_map),
-            observe(drag_map),
+            Pickable::IGNORE,
         ))
         .with_children(|map| {
             map.spawn((
@@ -161,7 +171,7 @@ type MapNodes<'a> = (
     Has<CameraFootprint>,
 );
 type MarkerFilter = (
-    With<UnitMarker>,
+    With<Marker>,
     Without<Minimap>,
     Without<MapImage>,
     Without<CameraFootprint>,
@@ -178,12 +188,12 @@ pub(super) fn update_minimap(
     phone: Res<PhoneHud>,
     bounds: Res<MapBounds>,
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
-    mut nodes: Query<MapNodes, Without<UnitMarker>>,
+    mut nodes: Query<MapNodes, Without<Marker>>,
     map: Single<Entity, With<MapImage>>,
     root: Single<Entity, With<Minimap>>,
-    markers: Query<(Entity, &UnitMarker)>,
+    markers: Query<(Entity, &Marker)>,
     mut marker_styles: Query<(&mut Node, &mut BackgroundColor), MarkerFilter>,
-    mut existing: Local<HashMap<UnitId, Entity>>,
+    mut existing: Local<HashMap<Marker, Entity>>,
 ) {
     let size = window.size() / scale.0;
     let layout = HudLayout::new(size, !selection.units.is_empty(), phone.panel);
@@ -246,36 +256,38 @@ pub(super) fn update_minimap(
         }
     }
     existing.clear();
-    existing.extend(markers.iter().map(|(entity, marker)| (marker.0, entity)));
-    for (id, unit) in game.view.units() {
-        let position = map_fraction(to_world(unit.pos), bounds.0);
-        let node = Node {
-            position_type: PositionType::Absolute,
-            left: percent(position.x * 100.0),
-            top: percent(position.y * 100.0),
-            width: px(4),
-            height: px(4),
-            margin: UiRect::all(px(-2)),
-            ..default()
-        };
+    existing.extend(markers.iter().map(|(entity, marker)| (*marker, entity)));
+    let units = game.view.units().map(|(id, unit)| {
         let color = if selection.units.contains(&id) {
             SIGNAL
         } else {
             graphics.player_color(unit.owner.0)
         };
-        if let Some(entity) = existing.remove(&id) {
+        (Marker::Unit(id), unit.pos, color, 4.0)
+    });
+    let rallies = selection.units.iter().filter_map(|&id| {
+        let point = game.view.rally_point(id)?;
+        Some((Marker::Rally(id), point, INK, 6.0))
+    });
+    for (marker, position, color, size) in units.chain(rallies) {
+        let position = map_fraction(to_world(position), bounds.0);
+        let node = Node {
+            position_type: PositionType::Absolute,
+            left: percent(position.x * 100.0),
+            top: percent(position.y * 100.0),
+            width: px(size),
+            height: px(size),
+            margin: UiRect::all(px(-size / 2.0)),
+            ..default()
+        };
+        if let Some(entity) = existing.remove(&marker) {
             if let Ok((mut old_node, mut fill)) = marker_styles.get_mut(entity) {
                 old_node.set_if_neq(node);
                 fill.set_if_neq(BackgroundColor(color));
             }
         } else {
             let marker = commands
-                .spawn((
-                    UnitMarker(id),
-                    Pickable::IGNORE,
-                    node,
-                    BackgroundColor(color),
-                ))
+                .spawn((marker, Pickable::IGNORE, node, BackgroundColor(color)))
                 .id();
             commands.entity(*map).add_child(marker);
         }
@@ -301,77 +313,118 @@ fn footprint(center: Vec2, screen: Vec2, zoom: f32, bounds: Rect) -> Rect {
     )
 }
 
+fn press_map(event: On<PointerPress>, mut map: Single<&mut Minimap>) {
+    if event.button == PointerButton::Primary {
+        map.dragging.remove(&event.pointer.id);
+    }
+}
+
+fn end_map_drag(event: On<PointerDragEnd>, mut map: Single<&mut Minimap>) {
+    if event.button == PointerButton::Primary {
+        map.dragging.remove(&event.pointer.id);
+    }
+}
+
+fn cancel_map_drag(event: On<PointerCancel>, mut map: Single<&mut Minimap>) {
+    map.dragging.remove(&event.pointer.id);
+}
+
 fn click_map(
     event: On<PointerClick>,
-    nodes: Query<(&ComputedNode, &UiGlobalTransform), With<MapImage>>,
+    node: Single<(&ComputedNode, &UiGlobalTransform), With<MapImage>>,
     window: Single<&Window, With<PrimaryWindow>>,
     bounds: Res<MapBounds>,
     pause: Res<PauseMenu>,
+    menu: Option<Res<Menu>>,
     scale: Res<UiScale>,
     mut phone: ResMut<PhoneHud>,
-    map: Single<Entity, With<MapImage>>,
+    map: Single<&Minimap>,
     camera: Single<(&mut Transform, &Projection), With<RtsCamera>>,
+    mut game: ResMut<Match>,
+    selection: Res<Selection>,
+    mut feedback: ResMut<OrderFeedback>,
+    time: Res<Time>,
+    mut targeting: ResMut<Targeting>,
 ) {
-    if event.button == PointerButton::Primary && !pause.open {
-        if super::phone_layout(window.size() / scale.0) && phone.panel != Some(PhonePanel::Map) {
-            phone.panel = Some(PhonePanel::Map);
-            return;
-        }
-        recenter(
-            *map,
-            event.pointer.position,
-            &nodes,
-            &window,
-            bounds.0,
-            scale.0,
-            camera,
-        );
+    if event.button != PointerButton::Primary
+        || map.dragging.contains(&event.pointer.id)
+        || world_input_blocked(Some(&pause), menu.as_deref())
+        || phone.panel == Some(PhonePanel::Selection)
+    {
+        return;
     }
+    let Some(target) = map_point(node.into_inner(), event.pointer.position, &window, bounds.0)
+    else {
+        return;
+    };
+    if order_from_minimap(
+        target,
+        &selection,
+        &mut game,
+        &mut feedback,
+        time.elapsed_secs_f64(),
+        &mut targeting,
+    ) {
+        return;
+    }
+    if super::phone_layout(window.size() / scale.0) && phone.panel != Some(PhonePanel::Map) {
+        phone.panel = Some(PhonePanel::Map);
+        return;
+    }
+    recenter(target, &window, bounds.0, scale.0, camera);
 }
 
 fn drag_map(
     event: On<PointerDrag>,
-    nodes: Query<(&ComputedNode, &UiGlobalTransform), With<MapImage>>,
+    node: Single<(&ComputedNode, &UiGlobalTransform), With<MapImage>>,
     window: Single<&Window, With<PrimaryWindow>>,
     bounds: Res<MapBounds>,
     pause: Res<PauseMenu>,
+    menu: Option<Res<Menu>>,
     scale: Res<UiScale>,
     phone: Res<PhoneHud>,
-    map: Single<Entity, With<MapImage>>,
+    mut map: Single<&mut Minimap>,
     camera: Single<(&mut Transform, &Projection), With<RtsCamera>>,
 ) {
-    if event.button == PointerButton::Primary
-        && !pause.open
-        && (!super::phone_layout(window.size() / scale.0) || phone.panel == Some(PhonePanel::Map))
+    if event.button != PointerButton::Primary
+        || world_input_blocked(Some(&pause), menu.as_deref())
+        || phone.panel == Some(PhonePanel::Selection)
     {
-        recenter(
-            *map,
-            event.pointer.position,
-            &nodes,
-            &window,
-            bounds.0,
-            scale.0,
-            camera,
-        );
+        return;
+    }
+    if event.distance.length_squared() >= 64.0 {
+        map.dragging.insert(event.pointer.id);
+    }
+    if map.dragging.contains(&event.pointer.id)
+        && (!super::phone_layout(window.size() / scale.0) || phone.panel == Some(PhonePanel::Map))
+        && let Some(target) =
+            map_point(node.into_inner(), event.pointer.position, &window, bounds.0)
+    {
+        recenter(target, &window, bounds.0, scale.0, camera);
     }
 }
 
-fn recenter(
-    entity: Entity,
+fn map_point(
+    (node, transform): (&ComputedNode, &UiGlobalTransform),
     position: Vec2,
-    nodes: &Query<(&ComputedNode, &UiGlobalTransform), With<MapImage>>,
+    window: &Window,
+    bounds: Rect,
+) -> Option<Vec2> {
+    let point = node.normalize_point(*transform, position * window.scale_factor())?;
+    let point = (point + Vec2::splat(0.5)).clamp(Vec2::ZERO, Vec2::ONE);
+    Some(Vec2::new(
+        bounds.width().mul_add(point.x, bounds.min.x),
+        bounds.height().mul_add(-point.y, bounds.max.y),
+    ))
+}
+
+fn recenter(
+    target: Vec2,
     window: &Window,
     bounds: Rect,
     scale: f32,
     camera: Single<(&mut Transform, &Projection), With<RtsCamera>>,
 ) {
-    let Ok((node, transform)) = nodes.get(entity) else {
-        return;
-    };
-    let Some(point) = node.normalize_point(*transform, position * window.scale_factor()) else {
-        return;
-    };
-    let point = (point + Vec2::splat(0.5)).clamp(Vec2::ZERO, Vec2::ONE);
     let (mut transform, projection) = camera.into_inner();
     let Projection::Orthographic(projection) = projection else {
         return;
@@ -379,10 +432,6 @@ fn recenter(
     let inset = hud_inset(window.size() / scale) * scale;
     let visible_size = Vec2::new(window.width(), (window.height() - inset).max(1.0));
     let half = (visible_size * projection.scale / 2.0).min(bounds.half_size());
-    let target = Vec2::new(
-        bounds.width().mul_add(point.x, bounds.min.x),
-        bounds.height().mul_add(-point.y, bounds.max.y),
-    );
     let target = target.clamp(bounds.min + half, bounds.max - half);
     transform.translation =
         (target - Vec2::Y * inset * projection.scale / 2.0).extend(transform.translation.z);

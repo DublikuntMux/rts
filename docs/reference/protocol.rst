@@ -3,7 +3,7 @@ Multiplayer protocol
 
 Clients and the server exchange compact binary messages over QUIC, defined in
 ``rts_net`` (``crates/net/src/lib.rs``, ``wire.rs``, ``assets.rs``, and
-``quic.rs``). The current protocol version is **11**. Older clients are
+``quic.rs``). The current protocol version is **12**. Older clients are
 incompatible. Version 8 and 9 replays still load; see :doc:`replay-format`.
 
 Encoding and streams
@@ -47,6 +47,7 @@ Shared types
        TrainWorker { units: Vec<UnitId> },
        TrainRifleSquad { units: Vec<UnitId> },
        TrainScout { units: Vec<UnitId> },
+       SetRallyPoint { units: Vec<UnitId>, target: IVec2 },
    }
 
    struct LobbySetup { rules: String, map: String, players: u8 }
@@ -73,6 +74,7 @@ full replays (:doc:`replay-format`).
 The ``ViewIntro`` flags byte carries skirmish in bit 0 and the server's
 fog-disabled setting in bit 1. With fog disabled, the initial view frame
 contains every terrain tile in row-major order and all current units.
+An owner-only unit state carries the rally destination in its bit 7 field.
 
 Client messages
 ---------------
@@ -169,9 +171,9 @@ Message sequence
    hide footbox
    participant Client as C
    participant Server as S
-   C -> S : Rooms { version: 10 }
+   C -> S : Rooms { version: 12 }
    S --> C : Rooms { rooms }
-   C -> S : Create { version: 10, name, public }\nor Join { version: 10, code, name }
+   C -> S : Create { version: 12, name, public }\nor Join { version: 12, code, name }
    S --> C : Setup (compact binary + deflate)
    S --> C : Lobby { code, player, public, slots }
    C -> C : parse rules,\ncompute checksum

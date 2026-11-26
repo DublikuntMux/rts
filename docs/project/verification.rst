@@ -24,6 +24,11 @@ exact simulation target and packs its sprites inside the destination tile.
 Downloads and keeps its pending copy when publication fails. No Android
 device or emulator was available to exercise the Downloads provider.
 
+**Rally points and minimap orders (2026-11-26).** Tests cover queued minimap
+orders at the map boundary, owner-only rally state, recruit movement and
+producer removal, and binary and replay round-trips. The menu regression
+checks that a button disabled during a press comes back unpressed.
+
 **Solo match restart (2026-11-26).** Client tests exercise canceling and
 confirming the pause-menu action, reloading the opening simulation state,
 preserving the difficulty and legacy replay rules, and clearing selection.

@@ -84,11 +84,14 @@ The match screen
    @endsalt
 
 * The top-left **pause button**, or Escape, opens the menu with **Resume**,
-  **Save game** (solo only), **Save replay**, and **Leave**. The current
+  **Restart match** and **Save game** (solo only), **Save replay**, and
+  **Leave**. The current
   session message also appears there. Solo games and replays pause while
   the menu is open. Online matches continue; world controls are blocked.
 * The bottom-left **minimap** shows terrain, player-colored units, and the
-  camera outline. Click, tap, or drag it to move the camera.
+  camera outline. Click or tap to move the selected units. With a production
+  building selected, the click sets its rally point. Drag the minimap or
+  click it with an empty selection to move the camera.
 * The center shows the selection's name or count, health, order status, and
   portraits. Click a group portrait to select that unit alone.
 * The right **command card** has **Move**, **Stop**, and **Clear**. In a
@@ -97,7 +100,7 @@ The match screen
   disabled without a selection or during replay playback.
 
 On phones, the bottom bar is replaced by floating controls. Tap the top-right
-map thumbnail to open the minimap. Selecting units shows a small command dock
+map thumbnail without a selection to open the minimap. Selecting units shows a small command dock
 in the bottom-right corner: two rows in portrait, one row in landscape. Tap
 its unit portrait to see selection details. With no selection, the command
 dock disappears. On Frontier, phone economy actions appear in a separate
@@ -107,6 +110,11 @@ on narrow screens. The rest of the battlefield stays playable. This layout
 also applies to short landscape windows and accounts for interface scale.
 
 Buttons are at least 48 logical pixels tall before interface scaling.
+
+Select a headquarters or barracks and choose **Set rally point**, then pick
+a world location or a point on the minimap. A flag appears at the destination
+while the building is selected. New units spawn beside their building and
+move toward its rally point.
 
 Select units
 ------------
