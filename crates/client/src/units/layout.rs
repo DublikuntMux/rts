@@ -189,9 +189,9 @@ impl UnitLayout {
                     .map(|unit| unit.position - origin + unit.bounds.offset * scale)
                     .sum::<Vec2>()
                     / count as f32;
-            // Keep the formation anchored to travel between ticks. Tile boundaries are
-            // only a constraint after the occupants stop.
-            let center = if count == 1 || group.iter().any(|unit| unit.traveling) {
+            // A traveling formation follows its anchor across tiles. A passing
+            // unit does not pull stationary neighbors out of the tile.
+            let center = if count == 1 || group.iter().all(|unit| unit.traveling) {
                 preferred
             } else {
                 let (x, y) = group[0].tile;
@@ -394,6 +394,12 @@ mod tests {
                 assert!(actual_offset.abs_diff_eq(expected_offset, 0.0001));
                 assert_eq!(layout.placements[id].scale, reference[id].scale);
             }
+        }
+        let edge = SimPos::new(TILE - 1, TILE / 2);
+        let packed = layout_units(group(edge));
+        layout.update(group(edge).map(|(id, pos, bounds)| (id, pos, bounds, id == UnitId(1))));
+        for id in packed.keys() {
+            assert_eq!(layout.placements[id].position, packed[id].position);
         }
     }
 

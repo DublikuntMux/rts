@@ -122,12 +122,14 @@ fn sync_units(
         layout,
         soldiers,
     } = &mut *visuals;
+    let tick = game.view.tick();
+    let now = time.elapsed_secs_f64();
+    let tick_seconds = fixed.timestep().as_secs_f64();
     layout.update(game.view.units().map(|(id, unit)| {
         let bounds = UnitBounds::from_definition(game.view.rules().unit(unit.kind));
-        let traveling = game.view.move_target(id).is_some()
-            || motion
-                .get(&id)
-                .is_some_and(|motion| motion.is_traveling(to_world(unit.pos), game.view.tick()));
+        let traveling = motion
+            .get(&id)
+            .is_some_and(|motion| motion.is_traveling(to_world(unit.pos), tick, now, tick_seconds));
         (id, unit.pos, bounds, traveling)
     }));
     for (id, unit) in game.view.units() {
@@ -135,16 +137,11 @@ fn sync_units(
         let bounds = UnitBounds::from_definition(definition);
         let position = to_world(unit.pos);
         let target = layout.placement(id);
-        let motion = motion.entry(id).or_insert_with(|| {
-            UnitMotion::new(position, target, game.view.tick(), fixed.elapsed_secs_f64())
-        });
-        motion.observe(position, game.view.tick(), fixed.elapsed_secs_f64());
-        let placement = motion.draw(
-            target,
-            time.elapsed_secs_f64(),
-            fixed.timestep().as_secs_f64(),
-            time.delta_secs(),
-        );
+        let motion = motion
+            .entry(id)
+            .or_insert_with(|| UnitMotion::new(position, target, tick, fixed.elapsed_secs_f64()));
+        motion.observe(position, tick, fixed.elapsed_secs_f64());
+        let placement = motion.draw(target, now, tick_seconds, time.delta_secs());
         let image = images
             .entry(unit.kind)
             .or_insert_with(|| load_image(server_assets.as_deref(), &assets, &definition.sprite));
@@ -944,20 +941,27 @@ mod tests {
             },
         );
         let mut app = scene_app(sim);
+        let arrived = move |game: &Match| {
+            (0..4).map(UnitId).all(|id| {
+                game.view.unit(id).unwrap().pos == target && game.view.move_target(id).is_none()
+            })
+        };
         app.insert_resource(Time::<Fixed>::from_hz(f64::from(rts_base::TICK_RATE)))
             .insert_resource(TimeUpdateStrategy::ManualDuration(
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             ))
-            .add_systems(FixedUpdate, |mut game: ResMut<Match>| game.step());
+            .add_systems(FixedUpdate, move |mut game: ResMut<Match>| {
+                if !arrived(&game) {
+                    game.step();
+                }
+            });
         let mut arrived_at = None;
         let mut arrival_checks = 0;
         for _ in 0..180 {
             app.update();
             let world = app.world();
             let game = world.resource::<Match>();
-            if (0..4).map(UnitId).all(|id| {
-                game.view.unit(id).unwrap().pos == target && game.view.move_target(id).is_none()
-            }) {
+            if arrived(game) {
                 let now = world.resource::<Time>().elapsed_secs_f64();
                 let arrival = *arrived_at.get_or_insert(now);
                 // Allow the final travel sample and the layout easing to settle.

@@ -24,7 +24,8 @@ replay serialization compatible with the original v9 view format.
 two squads sharing a tile, mixed bounds at tile edges, and fixed slot spacing
 across tile boundaries. Scene tests verify steady rendered travel for one or
 four workers and show the group packing inside the destination tile after
-reaching its exact simulation target.
+reaching its exact simulation target on the final available tick. A mixed
+tile keeps its packed layout while one occupant travels.
 
 **Android crash report export (2026-11-26).** Android writes the report to
 Downloads and keeps its pending copy when publication fails. Strict Clippy

@@ -171,9 +171,11 @@ Interpolation samples update only when the simulation tick changes. During a
 network stall, visuals finish the last segment and hold there; continuing fixed
 clock ticks cannot rewind the segment.
 
-Moving and stopped units in a tile share the grid. During travel, the grid
-follows the mean footprint center across tile boundaries. When the group
-settles, its layout eases into the tile interior.
+Moving and stopped units in a tile share the grid. When every occupant is
+traveling, the grid follows the mean footprint center across tile boundaries.
+A tile with stopped occupants keeps its packed layout. Once the last movement
+sample finishes, its layout eases into the tile interior even if playback has
+ended.
 
 Only the packing offset relative to the simulation position and the fit scale
 use exponential easing, with ``alpha = 1 - exp(-delta_seconds / 0.1)``. Stable

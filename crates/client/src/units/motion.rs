@@ -35,9 +35,9 @@ impl UnitMotion {
         }
     }
 
-    pub fn is_traveling(&self, position: Vec2, tick: u32) -> bool {
+    pub fn is_traveling(&self, position: Vec2, tick: u32, now: f64, tick_seconds: f64) -> bool {
         if self.tick == tick {
-            self.previous != self.current
+            self.previous != self.current && now - self.sampled_at < tick_seconds
         } else {
             self.current != position
         }
@@ -87,6 +87,8 @@ mod tests {
             scale: 1.0,
         };
         motion.observe(target.position, 1, 0.05);
+        assert!(motion.is_traveling(target.position, 1, 0.075, 0.05));
+        assert!(!motion.is_traveling(target.position, 1, 0.15, 0.05));
         for (now, x) in [
             (0.05, 0.0),
             (0.075, 8.0),
