@@ -34,6 +34,7 @@ pub enum AppState {
 pub struct Match {
     pub view: PlayerView,
     local: Option<LocalAuthority>,
+    replay_perspective: Option<ReplayPerspective>,
     /// The player this client controls.
     pub local_player: PlayerId,
     pub accepts_orders: bool,
@@ -41,6 +42,12 @@ pub struct Match {
     pub pending: Vec<Command>,
     /// Volleys of stepped ticks, by tick, until the effects layer draws them.
     pub volleys: Vec<(u32, Volley)>,
+}
+
+/// The other display perspective for a full replay. Both views follow every replay tick.
+struct ReplayPerspective {
+    other: PlayerView,
+    open_knowledge: PlayerKnowledge,
 }
 
 /// The authoritative simulation of a local match and what each player knows of it.
@@ -84,11 +91,31 @@ impl Match {
     /// A local match on `sim`, seen by `local_player`.
     pub fn new(sim: Sim, local_player: PlayerId, accepts_orders: bool) -> Self {
         let (knowledge, view) = PlayerView::observe(&sim, local_player);
+        Self::with_local(sim, knowledge, view, accepts_orders)
+    }
+
+    fn with_local(
+        sim: Sim,
+        knowledge: PlayerKnowledge,
+        view: PlayerView,
+        accepts_orders: bool,
+    ) -> Self {
         let mut game = Self::online(view, accepts_orders);
         game.local = Some(LocalAuthority {
             sim,
             knowledge,
             opponents: Vec::new(),
+        });
+        game
+    }
+
+    pub fn full_replay(sim: Sim, player: PlayerId) -> Self {
+        let (knowledge, view) = PlayerView::observe_full_replay(&sim, player, true);
+        let (open_knowledge, other) = PlayerView::observe_full_replay(&sim, player, false);
+        let mut game = Self::with_local(sim, knowledge, view, false);
+        game.replay_perspective = Some(ReplayPerspective {
+            other,
+            open_knowledge,
         });
         game
     }
@@ -99,6 +126,7 @@ impl Match {
         Self {
             view,
             local: None,
+            replay_perspective: None,
             local_player,
             accepts_orders,
             pending: Vec::new(),
@@ -115,6 +143,21 @@ impl Match {
         self.local.as_ref().map(|local| &local.sim)
     }
 
+    pub const fn can_toggle_replay_fog(&self) -> bool {
+        self.replay_perspective.is_some()
+    }
+
+    pub fn toggle_replay_fog(&mut self) {
+        if let Some(perspective) = &mut self.replay_perspective {
+            std::mem::swap(&mut self.view, &mut perspective.other);
+            self.volleys.clear();
+        }
+    }
+
+    pub const fn terrain_revision(&self) -> (u32, bool) {
+        (self.view.terrain_revision(), self.view.intro().fog_disabled)
+    }
+
     /// Updates every view after the local simulation stepped.
     pub fn observe_local(&mut self) {
         let Some(local) = &mut self.local else {
@@ -126,7 +169,19 @@ impl Match {
                 .apply(seat.knowledge.observe(&local.sim))
                 .expect("frames from the local authority");
         }
-        self.view
+        let fogged = if let Some(perspective) = &mut self.replay_perspective {
+            let (fogged, open) = if self.view.intro().fog_disabled {
+                (&mut perspective.other, &mut self.view)
+            } else {
+                (&mut self.view, &mut perspective.other)
+            };
+            open.apply(perspective.open_knowledge.observe(&local.sim))
+                .expect("frames from the local authority");
+            fogged
+        } else {
+            &mut self.view
+        };
+        fogged
             .apply(frame)
             .expect("frames from the local authority");
         self.record_volleys();

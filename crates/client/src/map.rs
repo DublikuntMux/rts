@@ -94,7 +94,7 @@ pub fn update_zoom_detail(
 }
 
 #[derive(Component)]
-struct TerrainChunk(u32);
+struct TerrainChunk((u32, bool));
 
 /// The original palette stays separate from the detailed terrain for distant zoom and minimaps.
 #[derive(Resource)]
@@ -146,7 +146,7 @@ fn spawn_terrain(
         .collect();
     commands.spawn((
         DespawnOnExit(AppState::InGame),
-        TerrainChunk(game.view.terrain_revision()),
+        TerrainChunk(game.terrain_revision()),
         TilemapChunk {
             chunk_size,
             tile_display_size: UVec2::splat(TILE_PX),
@@ -196,7 +196,7 @@ pub fn fog_tiles(view: &PlayerView) -> Vec<Option<TileData>> {
 
 /// Redraws only when discovery or current sight changes, or a new match starts.
 fn update_fog(game: Res<Match>, mut chunks: Query<(&mut TerrainChunk, &mut TilemapChunkTileData)>) {
-    let revision = game.view.terrain_revision();
+    let revision = game.terrain_revision();
     let size = game.view.size().as_uvec2();
     for (mut drawn, mut data) in &mut chunks {
         if drawn.0 != revision || game.is_added() {
@@ -502,7 +502,7 @@ mod tests {
         .unwrap();
         let sim = rts_base::Sim::new(rules(), &map).unwrap();
         let game = crate::game::Match::new(sim, rts_base::PlayerId(0), true);
-        let revision = game.view.terrain_revision();
+        let revision = game.terrain_revision();
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(game)
@@ -528,7 +528,6 @@ mod tests {
         assert_eq!(
             app.world()
                 .resource::<crate::game::Match>()
-                .view
                 .terrain_revision(),
             revision
         );
@@ -543,13 +542,13 @@ mod tests {
             },
         )]);
         for _ in 0..200 {
-            if game.view.terrain_revision() != revision {
+            if game.terrain_revision() != revision {
                 break;
             }
             game.step();
         }
         assert_ne!(
-            game.view.terrain_revision(),
+            game.terrain_revision(),
             revision,
             "the worker discovers terrain"
         );

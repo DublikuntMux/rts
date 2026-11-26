@@ -543,6 +543,38 @@ fn disabling_a_pressed_button_clears_its_press_before_reenabling() {
 }
 
 #[test]
+fn only_full_replays_spawn_a_fog_switch() {
+    use crate::{font::GameFont, game::Match, pause_menu::PauseMenuPlugin};
+    use bevy::ui_widgets::Activate;
+    use rts_base::PlayerId;
+
+    let mut app = app(1280);
+    app.add_plugins(PauseMenuPlugin)
+        .insert_resource(GameFont(Handle::default()));
+    let sim = setup("frontier").simulation().unwrap();
+    app.insert_resource(Match::full_replay(sim, PlayerId(0)));
+    status(&mut app).kind = MatchKind::Playback;
+    status(&mut app).running = true;
+    app.world_mut()
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::InGame);
+    settle(&mut app);
+
+    let toggle = app
+        .world_mut()
+        .query::<(Entity, &Name)>()
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == "Replay fog")
+        .unwrap()
+        .0;
+    assert!(texts(&mut app).contains(&"Hide fog of war".to_owned()));
+    app.world_mut().trigger(Activate { entity: toggle });
+    settle(&mut app);
+    assert!(app.world().resource::<Match>().view.intro().fog_disabled);
+    assert!(texts(&mut app).contains(&"Show fog of war".to_owned()));
+}
+
+#[test]
 fn browse_filters_orders_and_keeps_a_valid_selection() {
     let record = |id: &str, map: &str, saved_at| Record {
         id: id.into(),

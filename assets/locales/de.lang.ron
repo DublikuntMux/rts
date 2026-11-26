@@ -214,6 +214,8 @@
         "pause.leave": "Verlassen",
         "pause.main_menu": "Hauptmenü",
         "pause.online_msg": "Das Online-Spiel läuft weiter, während dieses Menü offen ist.",
+        "replay.show_fog": "Kriegsnebel anzeigen",
+        "replay.hide_fog": "Kriegsnebel ausblenden",
         "pause.replay_msg": "Wiederholung pausiert.",
         "pause.solo_msg": "Spiel pausiert.",
         "result.victory": "Sieg",

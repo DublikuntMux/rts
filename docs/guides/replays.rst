@@ -1,9 +1,9 @@
 Save games and watch replays
 =============================
 
-Every solo and online match records its setup and turns automatically.
-Playback re-simulates those turns and verifies the final state hash. Online
-recordings include only turns whose hash matches the server's.
+Solo matches record the setup and turns. Playback re-simulates those turns
+and verifies the final state hash. Online matches record the player's
+server-provided view frames, including the server's fog setting.
 
 Save and load a game
 ---------------------
@@ -40,6 +40,11 @@ hash before starting playback. Playback runs at 20 ticks per second. The
 pause menu shows the playback status and pauses the replay while open. Order
 buttons stay disabled. At the end, the status reads *Replay finished and
 verified.* Choose **Leave** in the pause menu to return at once.
+
+A full solo replay has **Hide fog of war** and **Show fog of war** on the
+right side of the screen. Switching keeps playback on the current tick.
+Online replays display the terrain and units the server included in the
+recording.
 
 Storage
 --------

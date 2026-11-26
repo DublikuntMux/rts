@@ -412,12 +412,11 @@ impl Session {
     /// Watches a recording that is known to be valid: recorded here or verified by the library.
     fn begin_replay(&mut self, replay: Recording, now: f64) -> Result<Match, String> {
         let game = match &replay {
-            Recording::Match(replay) => Match::new(
+            Recording::Match(replay) => Match::full_replay(
                 replay
                     .simulation()
                     .map_err(|error| format!("Cannot load replay map: {error}"))?,
                 PlayerId(0),
-                false,
             ),
             Recording::View(replay) => Match::online(
                 replay

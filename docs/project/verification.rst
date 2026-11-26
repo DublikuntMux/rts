@@ -29,6 +29,10 @@ orders at the map boundary, owner-only rally state, recruit movement and
 producer removal, and binary and replay round-trips. The menu regression
 checks that a button disabled during a press comes back unpressed.
 
+**Full replay fog control (2026-11-26).** Client tests exercise the right-side
+switch, show and hide terrain and units, and verify that the view switch
+preserves replay timing and the deterministic simulation hash.
+
 **Solo match restart (2026-11-26).** Client tests exercise canceling and
 confirming the pause-menu action, reloading the opening simulation state,
 preserving the difficulty and legacy replay rules, and clearing selection.

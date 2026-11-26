@@ -34,7 +34,7 @@ pub(super) struct Minimap {
     dragging: HashSet<PointerId>,
 }
 #[derive(Component)]
-pub(super) struct MapImage(u32);
+pub(super) struct MapImage((u32, bool));
 #[derive(Component)]
 pub(super) struct CameraFootprint;
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,7 +69,7 @@ pub(super) fn spawn(commands: &mut Commands, game: &Match, images: &mut Assets<I
         .id();
     commands.entity(root).with_children(|well| {
         well.spawn((
-            MapImage(game.view.terrain_revision()),
+            MapImage(game.terrain_revision()),
             Node {
                 width: px(168),
                 height: px(168.0 * aspect.y / aspect.x),
@@ -154,7 +154,7 @@ pub(super) fn update_minimap_fog(
     map: Single<(&ImageNode, &mut MapImage)>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let revision = game.view.terrain_revision();
+    let revision = game.terrain_revision();
     let (map, mut drawn) = map.into_inner();
     if (drawn.0 != revision || game.is_added())
         && let Some(mut image) = images.get_mut(&map.image)

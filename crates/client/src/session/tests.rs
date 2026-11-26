@@ -217,6 +217,37 @@ fn skirmish_save_resume_result_restart_and_playback_use_the_same_setup() {
 }
 
 #[test]
+fn full_replay_fog_switches_views_without_changing_the_simulation() {
+    let recording = Recording::Match(Replay::new(setup()).unwrap());
+    let mut session = Session::default();
+    let mut game = session.begin_replay(recording, 0.0).unwrap();
+    assert!(game.can_toggle_replay_fog());
+    assert!(!game.accepts_orders);
+    let opening_hash = game.local_sim().unwrap().state_hash();
+    let opening_units = game.view.units().count();
+    let opening_terrain = game.view.terrain_tiles().to_vec();
+    let opening_revision = game.terrain_revision();
+
+    game.toggle_replay_fog();
+    assert!(game.view.terrain_tiles().iter().all(Option::is_some));
+    assert!(game.view.units().count() > opening_units);
+    assert_ne!(game.terrain_revision(), opening_revision);
+    assert_eq!(game.local_sim().unwrap().state_hash(), opening_hash);
+    game.step();
+    assert_eq!(game.view.tick(), 1);
+
+    game.toggle_replay_fog();
+    assert_eq!(game.view.tick(), 1);
+    assert_eq!(game.view.terrain_tiles(), opening_terrain);
+    assert_eq!(game.view.units().count(), opening_units);
+    assert_eq!(game.terrain_revision(), opening_revision);
+    let mut solo = session.begin(setup(), 0.0).unwrap();
+    assert!(!solo.can_toggle_replay_fog());
+    solo.toggle_replay_fog();
+    assert!(!solo.view.intro().fog_disabled);
+}
+
+#[test]
 fn playback_keeps_the_original_recording_available_after_finishing_and_leaving() {
     let replay = Recording::Match(Replay::new(setup()).unwrap());
     let mut session = Session::default();

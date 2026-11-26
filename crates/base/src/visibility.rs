@@ -248,17 +248,47 @@ impl ViewDeposit {
 struct Aliases<Id> {
     by_authority: BTreeMap<Id, u32>,
     by_view: Vec<Id>,
+    use_authority_ids: bool,
 }
 
-impl<Id: Copy + Ord> Aliases<Id> {
+trait ViewId: Copy + Ord {
+    fn from_raw(raw: u32) -> Self;
+    fn raw(self) -> u32;
+}
+
+impl ViewId for UnitId {
+    fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl ViewId for DepositId {
+    fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl<Id: ViewId> Aliases<Id> {
     const fn new() -> Self {
         Self {
             by_authority: BTreeMap::new(),
             by_view: Vec::new(),
+            use_authority_ids: false,
         }
     }
 
     fn observe(&mut self, id: Id) -> u32 {
+        if self.use_authority_ids {
+            return id.raw();
+        }
         *self.by_authority.entry(id).or_insert_with(|| {
             let alias = u32::try_from(self.by_view.len()).expect("fewer than 2^32 aliases");
             self.by_view.push(id);
@@ -267,10 +297,16 @@ impl<Id: Copy + Ord> Aliases<Id> {
     }
 
     fn get(&self, id: Id) -> Option<u32> {
+        if self.use_authority_ids {
+            return Some(id.raw());
+        }
         self.by_authority.get(&id).copied()
     }
 
     fn resolve(&self, alias: u32) -> Option<Id> {
+        if self.use_authority_ids {
+            return Some(Id::from_raw(alias));
+        }
         self.by_view.get(usize::try_from(alias).ok()?).copied()
     }
 }
@@ -648,7 +684,27 @@ impl PlayerView {
     /// Panics if the player is not in this match.
     #[must_use]
     pub fn observe(sim: &Sim, player: PlayerId) -> (PlayerKnowledge, Self) {
-        let mut knowledge = PlayerKnowledge::new(sim, player);
+        Self::from_observer(sim, PlayerKnowledge::new(sim, player))
+    }
+
+    /// Observes a locally reconstructed, full replay. Both perspectives use the authoritative
+    /// IDs so switching between them can keep the same sprites and markers.
+    ///
+    /// # Panics
+    /// Panics if the player is not in this match.
+    #[must_use]
+    pub fn observe_full_replay(
+        sim: &Sim,
+        player: PlayerId,
+        fog_enabled: bool,
+    ) -> (PlayerKnowledge, Self) {
+        let mut knowledge = PlayerKnowledge::with_fog(sim, player, fog_enabled);
+        knowledge.units.use_authority_ids = true;
+        knowledge.deposits.use_authority_ids = true;
+        Self::from_observer(sim, knowledge)
+    }
+
+    fn from_observer(sim: &Sim, mut knowledge: PlayerKnowledge) -> (PlayerKnowledge, Self) {
         let mut view =
             Self::new(sim.rules().clone(), knowledge.intro(sim)).expect("valid simulation");
         view.apply(knowledge.observe(sim))

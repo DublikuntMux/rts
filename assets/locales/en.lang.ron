@@ -214,6 +214,8 @@
         "pause.leave": "Leave",
         "pause.main_menu": "Main menu",
         "pause.online_msg": "Online match continues while this menu is open.",
+        "replay.show_fog": "Show fog of war",
+        "replay.hide_fog": "Hide fog of war",
         "pause.replay_msg": "Replay paused.",
         "pause.solo_msg": "Game paused.",
         "result.victory": "Victory",

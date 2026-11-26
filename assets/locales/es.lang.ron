@@ -214,6 +214,8 @@
         "pause.leave": "Salir",
         "pause.main_menu": "Menú principal",
         "pause.online_msg": "La partida en línea continúa mientras este menú está abierto.",
+        "replay.show_fog": "Mostrar niebla de guerra",
+        "replay.hide_fog": "Ocultar niebla de guerra",
         "pause.replay_msg": "Repetición en pausa.",
         "pause.solo_msg": "Partida en pausa.",
         "result.victory": "Victoria",

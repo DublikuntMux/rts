@@ -214,6 +214,8 @@
         "pause.leave": "Вийти",
         "pause.main_menu": "Головне меню",
         "pause.online_msg": "Мережевий матч триває, поки це меню відкрите.",
+        "replay.show_fog": "Показати туман війни",
+        "replay.hide_fog": "Приховати туман війни",
         "pause.replay_msg": "Повтор на паузі.",
         "pause.solo_msg": "Гру призупинено.",
         "result.victory": "Перемога",

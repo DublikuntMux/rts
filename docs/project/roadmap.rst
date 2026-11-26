@@ -261,6 +261,11 @@ Rally points and minimap orders
    point. A minimap tap moves selected units or sets the selected building's
    rally point. Protocol 12 carries the new command and private rally state.
 
+Fog controls for full replays
+   Full replays can switch between the recorded player's perspective and
+   an unobscured view of the same tick. Online replays retain the server's
+   recorded perspective.
+
 Upcoming
 --------
 

@@ -1,17 +1,25 @@
 //! The pause button and in-game pause menu.
 
 use bevy::{
-    input::InputSystems, input_focus::InputFocus, picking::hover::Hovered, prelude::*,
-    ui_widgets::Button,
+    input::InputSystems,
+    input_focus::InputFocus,
+    picking::hover::Hovered,
+    prelude::*,
+    ui::Pressed,
+    ui_widgets::{Activate, Button, observe},
+    window::PrimaryWindow,
 };
 
 use crate::{
-    game::AppState,
-    hud::{PhoneHud, Targeting},
+    font::GameFont,
+    game::{AppState, Match},
+    hud::{HudLayout, PhoneHud, Targeting},
     locale::Localization,
     menu::{
         Action, DialogHost, Menu, MenuActions, View,
-        widgets::{INK, INK_MUTED, ShowIf, Tone, bound_text, dialog_with_title, wide_button},
+        widgets::{
+            INK, INK_MUTED, ShowIf, Tone, bound_text, button_look, dialog_with_title, wide_button,
+        },
     },
     session::{MatchKind, MatchResult, SessionAction, SessionStatus},
 };
@@ -35,7 +43,10 @@ impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseMenu>()
             .init_resource::<Localization>()
-            .add_systems(OnEnter(AppState::InGame), (reset_pause, spawn_pause_menu))
+            .add_systems(
+                OnEnter(AppState::InGame),
+                (reset_pause, spawn_pause_menu, spawn_replay_fog),
+            )
             .add_systems(OnExit(AppState::InGame), reset_pause)
             .add_systems(
                 PreUpdate,
@@ -45,10 +56,113 @@ impl Plugin for PauseMenuPlugin {
             )
             .add_systems(
                 Update,
-                show_pause_menu
+                (show_pause_menu, update_replay_fog)
                     .after(MenuActions)
                     .run_if(in_state(AppState::InGame)),
             );
+    }
+}
+
+#[derive(Component)]
+struct ReplayFogButton;
+
+#[derive(Component)]
+struct ReplayFogLabel;
+
+fn spawn_replay_fog(mut commands: Commands, game: Option<Res<Match>>, font: Option<Res<GameFont>>) {
+    let Some(font) = font.filter(|_| game.as_deref().is_some_and(Match::can_toggle_replay_fog))
+    else {
+        return;
+    };
+    commands.spawn((
+        Name::new("Replay fog"),
+        DespawnOnExit(AppState::InGame),
+        ReplayFogButton,
+        Button,
+        Hovered::default(),
+        GlobalZIndex(11),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(12),
+            right: px(12),
+            min_height: px(48),
+            padding: UiRect::horizontal(px(12)),
+            border: UiRect::all(px(2)),
+            display: Display::None,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor::default(),
+        BorderColor::default(),
+        observe(toggle_replay_fog),
+        children![(
+            ReplayFogLabel,
+            Pickable::IGNORE,
+            Text::default(),
+            crate::hud::text_font(&font.0, 13.0),
+            TextColor(INK),
+        )],
+    ));
+}
+
+fn toggle_replay_fog(
+    _: On<Activate>,
+    mut game: ResMut<Match>,
+    menu: Res<Menu>,
+    phone: Option<Res<PhoneHud>>,
+) {
+    if menu.dialog.is_none() && phone.as_deref().is_none_or(|phone| phone.panel.is_none()) {
+        game.toggle_replay_fog();
+    }
+}
+
+type FogButtonStyle<'a> = (
+    &'a mut Node,
+    &'a Hovered,
+    Has<Pressed>,
+    &'a mut BackgroundColor,
+    &'a mut BorderColor,
+);
+
+fn update_replay_fog(
+    game: Option<Res<Match>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    scale: Res<UiScale>,
+    menu: Res<Menu>,
+    phone: Option<Res<PhoneHud>>,
+    loc: Res<Localization>,
+    mut buttons: Query<FogButtonStyle, With<ReplayFogButton>>,
+    mut labels: Query<(&mut Text, &mut TextColor), With<ReplayFogLabel>>,
+) {
+    let (Some(game), Ok(window)) = (game, window.single()) else {
+        return;
+    };
+    let hud = HudLayout::new(window.size() / scale.0, false, None);
+    let visible =
+        menu.dialog.is_none() && phone.as_deref().is_none_or(|phone| phone.panel.is_none());
+    let key = if game.view.intro().fog_disabled {
+        "replay.show_fog"
+    } else {
+        "replay.hide_fog"
+    };
+    for (mut node, hover, pressed, mut fill, mut border) in &mut buttons {
+        node.top = px(if hud.phone {
+            hud.minimap.max.y + 8.0
+        } else {
+            12.0
+        });
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        let look = button_look(Tone::Secondary, false, hover.get(), pressed, false);
+        fill.set_if_neq(BackgroundColor(look.fill));
+        border.set_if_neq(look.border);
+        for (mut label, mut ink) in &mut labels {
+            label.set_if_neq(Text::new(loc.t(key)));
+            ink.set_if_neq(TextColor(look.ink));
+        }
     }
 }
 
