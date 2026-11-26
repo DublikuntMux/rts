@@ -123,11 +123,12 @@ fn sync_units(
         soldiers,
     } = &mut *visuals;
     layout.update(game.view.units().map(|(id, unit)| {
-        (
-            id,
-            unit.pos,
-            UnitBounds::from_definition(game.view.rules().unit(unit.kind)),
-        )
+        let bounds = UnitBounds::from_definition(game.view.rules().unit(unit.kind));
+        let traveling = game.view.move_target(id).is_some()
+            || motion
+                .get(&id)
+                .is_some_and(|motion| motion.is_traveling(to_world(unit.pos), game.view.tick()));
+        (id, unit.pos, bounds, traveling)
     }));
     for (id, unit) in game.view.units() {
         let definition = game.view.rules().unit(unit.kind);
@@ -402,20 +403,24 @@ mod tests {
 
     #[test]
     fn rendered_travel_keeps_constant_speed_through_tile_centers() {
-        for fps in [30_u16, 60, 120, 144] {
+        for (fps, count) in [30_u16, 60, 120, 144]
+            .into_iter()
+            .flat_map(|fps| [1, 4].map(|count| (fps, count)))
+        {
             let rules =
                 Rules::from_ron(include_str!("../../../../assets/data/core.rules.ron")).unwrap();
             let speed = to_world_distance(rules.unit(UnitKind(0)).speed);
-            let map = MapData::from_ron(
+            let units = r#"(kind:"worker",owner:0,pos:(0.5,0.5)),"#.repeat(count);
+            let map = MapData::from_ron(&format!(
                 r#"(name: "steady travel", players: [(start: (0.5,0.5))],
-                tiles: ["........."], units: [(kind:"worker",owner:0,pos:(0.5,0.5))])"#,
-            )
+                tiles: ["........."], units: [{units}])"#,
+            ))
             .unwrap();
             let mut sim = Sim::new(rules, &map).unwrap();
             sim.queue_command(
                 PlayerId(0),
                 Command::Move {
-                    units: vec![UnitId(0)],
+                    units: (0..u32::try_from(count).unwrap()).map(UnitId).collect(),
                     target: SimPos::new(15 * TILE / 2, TILE / 2),
                 },
             );
@@ -445,7 +450,7 @@ mod tests {
                     let tolerance = to_world_distance(1) + 0.02;
                     assert!(
                         (step.x - expected).abs() < tolerance,
-                        "{fps} FPS at {now}s: step {} instead of {expected}",
+                        "{count} workers at {fps} FPS and {now}s: step {} instead of {expected}",
                         step.x
                     );
                     assert_eq!(step.y, 0.0);
@@ -956,7 +961,7 @@ mod tests {
                 let now = world.resource::<Time>().elapsed_secs_f64();
                 let arrival = *arrived_at.get_or_insert(now);
                 // Allow the final travel sample and the layout easing to settle.
-                if now - arrival > 0.6 {
+                if now - arrival > 0.9 {
                     let visuals = world.resource::<UnitVisuals>();
                     let center = visuals
                         .entities
@@ -970,7 +975,11 @@ mod tests {
                         })
                         .sum::<Vec2>()
                         / 4.0;
-                    assert!(center.abs_diff_eq(tile_center, 0.1));
+                    assert!(
+                        center.abs_diff_eq(tile_center, 0.1),
+                        "{center:?} did not settle near {tile_center:?} after {:.2}s",
+                        now - arrival,
+                    );
                     arrival_checks += 1;
                 }
             }

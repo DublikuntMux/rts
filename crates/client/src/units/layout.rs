@@ -124,6 +124,7 @@ struct LayoutUnit {
     id: UnitId,
     position: Vec2,
     bounds: UnitBounds,
+    traveling: bool,
 }
 
 impl UnitLayout {
@@ -136,17 +137,19 @@ impl UnitLayout {
         clippy::cast_precision_loss,
         reason = "tile capacity bounds each group to at most u16::MAX units"
     )]
-    pub fn update(&mut self, units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>) {
+    pub fn update(&mut self, units: impl Iterator<Item = (UnitId, SimPos, UnitBounds, bool)>) {
         self.units.clear();
-        self.units.extend(units.map(|(id, position, bounds)| {
-            let tile = tile_of(position);
-            LayoutUnit {
-                tile: (tile.x, tile.y),
-                id,
-                position: to_world(position),
-                bounds,
-            }
-        }));
+        self.units
+            .extend(units.map(|(id, position, bounds, traveling)| {
+                let tile = tile_of(position);
+                LayoutUnit {
+                    tile: (tile.x, tile.y),
+                    id,
+                    position: to_world(position),
+                    bounds,
+                    traveling,
+                }
+            }));
         self.units.sort_unstable_by_key(|unit| (unit.tile, unit.id));
         self.placements.clear();
         for group in self.units.chunk_by(|a, b| a.tile == b.tile) {
@@ -186,7 +189,9 @@ impl UnitLayout {
                     .map(|unit| unit.position - origin + unit.bounds.offset * scale)
                     .sum::<Vec2>()
                     / count as f32;
-            let center = if count == 1 {
+            // Keep the formation anchored to travel between ticks. Tile boundaries are
+            // only a constraint after the occupants stop.
+            let center = if count == 1 || group.iter().any(|unit| unit.traveling) {
                 preferred
             } else {
                 let (x, y) = group[0].tile;
@@ -221,7 +226,7 @@ fn layout_units(
     units: impl Iterator<Item = (UnitId, SimPos, UnitBounds)>,
 ) -> HashMap<UnitId, Placement> {
     let mut layout = UnitLayout::default();
-    layout.update(units);
+    layout.update(units.map(|(id, pos, bounds)| (id, pos, bounds, false)));
     layout.placements
 }
 
@@ -279,20 +284,25 @@ mod tests {
             (UnitId(4), position + SimPos::X * TILE, bounds),
         ];
         let mut layout = UnitLayout::default();
-        layout.update(units.into_iter());
+        let stationary = || {
+            units
+                .into_iter()
+                .map(|(id, pos, bounds)| (id, pos, bounds, false))
+        };
+        layout.update(stationary());
         let expected = layout.placements.clone();
         assert_packed(&units[..4]);
         assert_eq!(layout.placement(UnitId(4)).position, to_world(units[4].1));
         let scratch = layout.units.as_ptr();
         let capacity = layout.placements.capacity();
-        layout.update(units.into_iter().rev());
+        layout.update(stationary().rev());
         assert_eq!(layout.units.as_ptr(), scratch);
         assert_eq!(layout.placements.capacity(), capacity);
         for (id, placement) in expected {
             assert_eq!(layout.placement(id).position, placement.position);
             assert_eq!(layout.placement(id).scale, placement.scale);
         }
-        layout.update(units[..1].iter().copied());
+        layout.update(stationary().take(1));
         assert_eq!(layout.placements.len(), 1);
         assert_eq!(layout.placement(UnitId(0)).position, to_world(position));
         layout.update(std::iter::empty());
@@ -374,17 +384,16 @@ mod tests {
         let group = |position| (0..4).map(move |id| (UnitId(id), position, circle(38.375)));
         let start = SimPos::splat(TILE / 2);
         let reference = layout_units(group(start));
+        let mut layout = UnitLayout::default();
         for step in 0..=80 {
-            let units: Vec<_> = group(SimPos::new(step * TILE / 20, TILE / 2)).collect();
-            let placements = layout_units(units.iter().copied());
-            let anchor = UnitId(0);
+            let position = SimPos::new(step * TILE / 20, TILE / 2);
+            layout.update(group(position).map(|(id, pos, bounds)| (id, pos, bounds, true)));
             for id in reference.keys() {
-                let expected_offset = reference[id].position - reference[&anchor].position;
-                let actual_offset = placements[id].position - placements[&anchor].position;
+                let expected_offset = reference[id].position - to_world(start);
+                let actual_offset = layout.placements[id].position - to_world(position);
                 assert!(actual_offset.abs_diff_eq(expected_offset, 0.0001));
-                assert_eq!(placements[id].scale, reference[id].scale);
+                assert_eq!(layout.placements[id].scale, reference[id].scale);
             }
-            assert_packed(&units);
         }
     }
 

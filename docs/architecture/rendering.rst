@@ -150,7 +150,7 @@ orientation minimizes its longest side. Cells have a nominal four-world-pixel
 gap (scaled with the group) and four world pixels of border padding. The last
 row is centered.
 
-A packed group fits within the tile interior. It uses the largest shared scale
+A stopped group fits within the tile interior. It uses the largest shared scale
 that fits and stays as close as possible to its members' mean footprint center.
 The mean sums offsets from one member to avoid precision loss far from the
 origin. An isolated unit stays at its simulation position and keeps its size
@@ -171,9 +171,9 @@ Interpolation samples update only when the simulation tick changes. During a
 network stall, visuals finish the last segment and hold there; continuing fixed
 clock ticks cannot rewind the segment.
 
-Moving and stopped units in a tile share the grid. Starting or stopping an
-order alone does not regroup its occupants. During tile crossings, the
-existing easing blends the offsets and can briefly draw over the tile edge.
+Moving and stopped units in a tile share the grid. During travel, the grid
+follows the mean footprint center across tile boundaries. When the group
+settles, its layout eases into the tile interior.
 
 Only the packing offset relative to the simulation position and the fit scale
 use exponential easing, with ``alpha = 1 - exp(-delta_seconds / 0.1)``. Stable

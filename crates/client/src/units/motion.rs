@@ -35,6 +35,14 @@ impl UnitMotion {
         }
     }
 
+    pub fn is_traveling(&self, position: Vec2, tick: u32) -> bool {
+        if self.tick == tick {
+            self.previous != self.current
+        } else {
+            self.current != position
+        }
+    }
+
     pub fn draw(
         &mut self,
         target: Placement,

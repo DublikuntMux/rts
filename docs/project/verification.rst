@@ -22,8 +22,9 @@ replay serialization compatible with the original v9 view format.
 
 **Tile formation packing (2026-11-26).** Client tests cover four workers or
 two squads sharing a tile, mixed bounds at tile edges, and fixed slot spacing
-across tile boundaries. A scene test verifies that a moving group reaches its
-exact simulation target and packs its sprites inside the destination tile.
+across tile boundaries. Scene tests verify steady rendered travel for one or
+four workers and show the group packing inside the destination tile after
+reaching its exact simulation target.
 
 **Android crash report export (2026-11-26).** Android writes the report to
 Downloads and keeps its pending copy when publication fails. Strict Clippy
